@@ -538,6 +538,8 @@ optimization to prevent disk rescanning if they are
 asked for again.
 ====================
 */
+#include "../rd-common/tr_bsp_register.inc"
+
 static qhandle_t RE_RegisterModel_Actual( const char *name )
 {
 	model_t		*mod;
@@ -596,26 +598,7 @@ Ghoul2 Insert Start
 Ghoul2 Insert End
 */
 
-	if (name[0] == '#')
-	{
-		char		temp[MAX_QPATH];
-
-		tr.numBSPModels++;
-#ifndef DEDICATED
-		RE_LoadWorldMap_Actual(va("maps/%s.bsp", name + 1), tr.bspModels[tr.numBSPModels - 1], tr.numBSPModels);	//this calls R_LoadSubmodels which will put them into the Hash
-#endif
-		Com_sprintf(temp, MAX_QPATH, "*%d-0", tr.numBSPModels);
-		hash = generateHashValue(temp, FILE_HASH_SIZE);
-		for (mh=mhHashTable[hash]; mh; mh=mh->next)
-		{
-			if (Q_stricmp(mh->name, temp) == 0)
-			{
-				return mh->handle;
-			}
-		}
-
-		return 0;
-	}
+	if (name[0] == '#')return JAR_RegisterBSPModel(name);
 
 	// allocate a new model_t
 
@@ -1004,6 +987,7 @@ R_ModelInit
 */
 void R_ModelInit( void )
 {
+	R_ClearBSPGridInstances();
 	static CachedModels_t singleton;	// sorry vv, your dynamic allocation was a (false) memory leak
 	CachedModels = &singleton;
 
@@ -1118,7 +1102,7 @@ static md3Tag_t *R_GetTag( md3Header_t *mod, int frame, const char *tagName ) {
 R_LerpTag
 ================
 */
-void	R_LerpTag( orientation_t *tag, qhandle_t handle, int startFrame, int endFrame,
+int	R_LerpTag( orientation_t *tag, qhandle_t handle, int startFrame, int endFrame,
 					 float frac, const char *tagName ) {
 	md3Tag_t	*start, *finish;
 	int		i;
@@ -1135,13 +1119,13 @@ void	R_LerpTag( orientation_t *tag, qhandle_t handle, int startFrame, int endFra
 	{
 		AxisClear( tag->axis );
 		VectorClear( tag->origin );
-		return;
+		return qfalse;
 	}
 
 	if ( !start || !finish ) {
 		AxisClear( tag->axis );
 		VectorClear( tag->origin );
-		return;
+		return qfalse;
 	}
 
 	frontLerp = frac;
@@ -1156,6 +1140,7 @@ void	R_LerpTag( orientation_t *tag, qhandle_t handle, int startFrame, int endFra
 	VectorNormalize( tag->axis[0] );
 	VectorNormalize( tag->axis[1] );
 	VectorNormalize( tag->axis[2] );
+	return qtrue;
 }
 
 

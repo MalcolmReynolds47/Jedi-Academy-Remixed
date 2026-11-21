@@ -35,6 +35,7 @@ we need it...
 #include "b_local.h"
 #include "g_functions.h"
 #include "g_nav.h"
+#include "g_npc_ammo.h"
 
 extern cvar_t	*g_AIsurrender;
 extern	qboolean	showBBoxes;
@@ -243,7 +244,9 @@ void NPC_BSCinematic( void )
 		if (TIMER_Done(NPC, "NoAnimFireDelay"))
 		{
 			TIMER_Set(NPC, "NoAnimFireDelay", NPC_AttackDebounceForWeapon());
-			FireWeapon(NPC, (qboolean)((NPCInfo->scriptFlags&SCF_ALT_FIRE) != 0));
+			const bool alternate = (NPCInfo->scriptFlags & SCF_ALT_FIRE) != 0;
+			if (G_NPCConsumeScriptShot(*NPC, alternate))
+				FireWeapon(NPC, alternate ? qtrue : qfalse);
 		}
 	}
 
@@ -1693,7 +1696,7 @@ void NPC_JawaFleeSound( void )
 }
 
 extern gentity_t *NPC_SearchForWeapons( void );
-extern qboolean G_CanPickUpWeapons( gentity_t *other );
+extern qboolean G_CanPickUpWeapons( const gentity_t *other );
 qboolean NPC_BSFlee( void )
 {
 	bool		enemyRecentlySeen	= false;

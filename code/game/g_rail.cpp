@@ -50,6 +50,7 @@ class	CRailMover;
 // Includes
 ////////////////////////////////////////////////////////////////////////////////////////
 #include "b_local.h"
+#include "g_rail_portable.inc"
 #if !defined(RATL_ARRAY_VS_INC)
 	#include "../Ratl/array_vs.h"
 #endif

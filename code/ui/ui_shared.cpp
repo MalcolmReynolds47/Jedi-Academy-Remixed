@@ -29,6 +29,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../server/exe_headers.h"
 
 #include "ui_local.h"
+#include "ui_jar.h"
 
 //rww - added for ui ghoul2 models
 #define UI_SHARED_CPP
@@ -1843,6 +1844,9 @@ Menu_TransitionItemByName
 */
 void Menu_TransitionItemByName(menuDef_t *menu, const char *p, const rectDef_t *rectFrom, const rectDef_t *rectTo, int time, float amt)
 {
+    rectDef_t mappedFrom,mappedTo=*rectTo;
+    UI_JAR_NativeAnimatedRect(menu,p,mappedTo);rectTo=&mappedTo;
+    if(rectFrom){mappedFrom=*rectFrom;UI_JAR_NativeAnimatedRect(menu,p,mappedFrom);rectFrom=&mappedFrom;}
 	itemDef_t *item;
 	int i;
 	int count = Menu_ItemsMatchingGroup(menu, p);
@@ -2017,6 +2021,7 @@ qboolean Script_SetItemRect(itemDef_t *item, const char **args)
 			return qtrue;
 		}
 
+        UI_JAR_NativeAnimatedRect((menuDef_t*)item->parent,itemname,rect);
 		for (j = 0; j < count; j++)
 		{
 			item2 = Menu_GetMatchingItemByNumber((menuDef_t *) item->parent, j, itemname);
@@ -5833,6 +5838,18 @@ qboolean Menu_Parse(char *inbuffer, menuDef_t *menu)
 Menu_New
 ===============
 */
+menuDef_t *Menu_CreateJAR(const char *name)
+{
+    if (menuCount >= MAX_MENUS) {
+        Com_Printf("JA:R: menu capacity exhausted\n");
+        return nullptr;
+    }
+    menuDef_t *menu = &Menus[menuCount++];
+    Menu_Init(menu);
+    menu->window.name = const_cast<char *>(String_Alloc(name));
+    return menu;
+}
+
 void Menu_New(char *buffer)
 {
 	menuDef_t *menu = &Menus[menuCount];
@@ -5978,8 +5995,27 @@ int Menu_Count(void)
 Menu_PaintAll
 =================
 */
+static char jarTooltip[1024];
+static void JAR_PaintTooltip(){
+ if(!jarTooltip[0])return;
+ const int font=UI_MenuFontToReal(4);const float scale=.55f;
+ char lines[3][1024]{};int row=0,length=0,lastSpace=-1;
+ for(const char*p=jarTooltip;*p&&row<3;++p){
+  if(length>=1022)break;lines[row][length++]=*p;lines[row][length]=0;if(*p==' ')lastSpace=length-1;
+  if(*p=='\n'||DC->textWidth(lines[row],scale,font)>598){
+   if(*p=='\n'){lines[row][--length]=0;}
+   else if(lastSpace>=0){p-=length-lastSpace-1;lines[row][lastSpace]=0;}
+   else {lines[row][--length]=0;--p;}
+   ++row;length=0;lastSpace=-1;
+  }
+ }
+ const int count=std::min(3,row+1);vec4_t background={.08f,.08f,.08f,.96f},foreground={.95f,.95f,.95f,1};
+ DC->fillRect(8,8,624,8+count*17,background);
+ for(int i=0;i<count;++i)DC->drawText(14,12+i*17,scale,foreground,lines[i],0,ITEM_TEXTSTYLE_SHADOWED,font);
+}
 void Menu_PaintAll(void)
 {
+ jarTooltip[0]=0;
 	int i;
 	if (captureFunc)
 	{
@@ -5990,6 +6026,7 @@ void Menu_PaintAll(void)
 	{
 		Menu_Paint(&Menus[i], qfalse);
 	}
+	JAR_PaintTooltip();
 
 	if (uis.debugMode)
 	{
@@ -7784,6 +7821,8 @@ void Item_Slider_Paint(itemDef_t *item)
 Item_Paint
 =================
 */
+#include "ui/jar_item_motion.inc"
+
 static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 {
 	int		xPos,textWidth;
@@ -7808,149 +7847,8 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 		}
 	}
 
-	if (item->window.flags & WINDOW_ORBITING)
-	{
-		if (DC->realTime > item->window.nextTime)
-		{
-			float rx, ry, a, c, s, w, h;
-			item->window.nextTime = DC->realTime + item->window.offsetTime;
-			// translate
-			w = item->window.rectClient.w / 2;
-			h = item->window.rectClient.h / 2;
-			rx = item->window.rectClient.x + w - item->window.rectEffects.x;
-			ry = item->window.rectClient.y + h - item->window.rectEffects.y;
-			a = (float) (3 * M_PI / 180);
-  			c = cos(a);
-			s = sin(a);
-			item->window.rectClient.x = (rx * c - ry * s) + item->window.rectEffects.x - w;
-			item->window.rectClient.y = (rx * s + ry * c) + item->window.rectEffects.y - h;
-			Item_UpdatePosition(item);
-
-		}
-	}
-
-
-	if (item->window.flags & WINDOW_INTRANSITION)
-	{
-		if (DC->realTime > item->window.nextTime)
-		{
-			int done = 0;
-			item->window.nextTime = DC->realTime + item->window.offsetTime;
-
-			// transition the x,y
-			if (item->window.rectClient.x == item->window.rectEffects.x)
-			{
-				done++;
-			}
-			else
-			{
-				if (item->window.rectClient.x < item->window.rectEffects.x)
-				{
-					item->window.rectClient.x += item->window.rectEffects2.x;
-					if (item->window.rectClient.x > item->window.rectEffects.x)
-					{
-						item->window.rectClient.x = item->window.rectEffects.x;
-						done++;
-					}
-				}
-				else
-				{
-					item->window.rectClient.x -= item->window.rectEffects2.x;
-					if (item->window.rectClient.x < item->window.rectEffects.x)
-					{
-						item->window.rectClient.x = item->window.rectEffects.x;
-						done++;
-					}
-				}
-			}
-
-			if (item->window.rectClient.y == item->window.rectEffects.y)
-			{
-				done++;
-			}
-			else
-			{
-				if (item->window.rectClient.y < item->window.rectEffects.y)
-				{
-					item->window.rectClient.y += item->window.rectEffects2.y;
-					if (item->window.rectClient.y > item->window.rectEffects.y)
-					{
-						item->window.rectClient.y = item->window.rectEffects.y;
-						done++;
-					}
-				}
-				else
-				{
-					item->window.rectClient.y -= item->window.rectEffects2.y;
-					if (item->window.rectClient.y < item->window.rectEffects.y)
-					{
-						item->window.rectClient.y = item->window.rectEffects.y;
-						done++;
-					}
-				}
-			}
-
-			if (item->window.rectClient.w == item->window.rectEffects.w)
-			{
-				done++;
-			}
-			else
-			{
-				if (item->window.rectClient.w < item->window.rectEffects.w)
-				{
-					item->window.rectClient.w += item->window.rectEffects2.w;
-					if (item->window.rectClient.w > item->window.rectEffects.w)
-					{
-						item->window.rectClient.w = item->window.rectEffects.w;
-						done++;
-					}
-				}
-				else
-				{
-					item->window.rectClient.w -= item->window.rectEffects2.w;
-					if (item->window.rectClient.w < item->window.rectEffects.w)
-					{
-						item->window.rectClient.w = item->window.rectEffects.w;
-						done++;
-					}
-				}
-			}
-
-			if (item->window.rectClient.h == item->window.rectEffects.h)
-			{
-				done++;
-			}
-			else
-			{
-				if (item->window.rectClient.h < item->window.rectEffects.h)
-				{
-					item->window.rectClient.h += item->window.rectEffects2.h;
-					if (item->window.rectClient.h > item->window.rectEffects.h)
-					{
-						item->window.rectClient.h = item->window.rectEffects.h;
-						done++;
-					}
-				}
-				else
-				{
-					item->window.rectClient.h -= item->window.rectEffects2.h;
-					if (item->window.rectClient.h < item->window.rectEffects.h)
-					{
-						item->window.rectClient.h = item->window.rectEffects.h;
-						done++;
-					}
-				}
-			}
-
-			Item_UpdatePosition(item);
-
-			if (done == 4)
-			{
-				item->window.flags &= ~WINDOW_INTRANSITION;
-			}
-
-		}
-	}
+    static cvar_t *motion = Cvar_Get("jar_uiMotion","1",CVAR_ARCHIVE);
+    Item_JAR_Motion(item,motion->integer);
 
 #ifdef _TRANS3
 
@@ -8273,50 +8171,8 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 				vec4_t color = {1, 1, 1, 1};
 				Item_TextColor(item, &color);
 
-				float fDescScale = parent->descScale ? parent->descScale : 1;
-				float fDescScaleCopy = fDescScale;
-				while (1)
-				{
-					// FIXME - add some type of parameter in the menu file like descfont to specify the font for the descriptions for this menu.
-					textWidth = DC->textWidth(textPtr, fDescScale, UI_MenuFontToReal(4));	//  item->font);
+                Q_strncpyz(jarTooltip,textPtr,sizeof(jarTooltip));
 
-					if (parent->descAlignment == ITEM_ALIGN_RIGHT)
-					{
-						xPos = parent->descX - textWidth;	// Right justify
-					}
-					else if (parent->descAlignment == ITEM_ALIGN_CENTER)
-					{
-						xPos = parent->descX - (textWidth/2);	// Center justify
-					}
-					else										// Left justify
-					{
-						xPos = parent->descX;
-					}
-
-					if (parent->descAlignment == ITEM_ALIGN_CENTER)
-					{
-						// only this one will auto-shrink the scale until we eventually fit...
-						//
-						if (xPos + textWidth > (SCREEN_WIDTH-4)) {
-							fDescScale -= 0.001f;
-							continue;
-						}
-					}
-
-
-					// Try to adjust it's y placement if the scale has changed...
-					//
-					int iYadj = 0;
-					if (fDescScale != fDescScaleCopy)
-					{
-						int iOriginalTextHeight = DC->textHeight(textPtr, fDescScaleCopy, uiInfo.uiDC.Assets.qhMediumFont);
-						iYadj = iOriginalTextHeight - DC->textHeight(textPtr, fDescScale, uiInfo.uiDC.Assets.qhMediumFont);
-					}
-
-					// FIXME - add some type of parameter in the menu file like descfont to specify the font for the descriptions for this menu.
-					DC->drawText(xPos, parent->descY + iYadj, fDescScale, parent->descColor, textPtr, 0, parent->descTextStyle, UI_MenuFontToReal(4));	//item->font);
-					break;
-				}
 			}
 		}
 	}
@@ -11549,3 +11405,6 @@ void UI_Cursor_Show(qboolean flag)
 		DC->cursorShow = qtrue;
 	}
 }
+
+bool UI_JAR_TextEntryActive(){return g_editingField && g_editItem && g_editItem->cvar && (!strcmp(g_editItem->cvar,"jar_spawnSearch") || !strcmp(g_editItem->cvar,"ui_jar_mapSearch") || !strncmp(g_editItem->cvar,"ui_jar_context",14));}
+void UI_JAR_EndTextEntry(){if(UI_JAR_TextEntryActive()){g_editingField=qfalse;g_editItem=NULL;}}

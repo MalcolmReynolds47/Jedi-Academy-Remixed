@@ -99,8 +99,11 @@ static void WP_DisruptorMainFire( gentity_t *ent )
 
 	// always render a shot beam, doing this the old way because I don't much feel like overriding the effect.
 	tent = G_TempEntity( tr.endpos, EV_DISRUPTOR_MAIN_SHOT );
-	tent->svFlags |= SVF_BROADCAST;
-	VectorCopy( muzzle, tent->s.origin2 );
+	if (tent)
+	{
+		tent->svFlags |= SVF_BROADCAST;
+		VectorCopy( muzzle, tent->s.origin2 );
+	}
 
 	if ( render_impact )
 	{
@@ -297,8 +300,11 @@ void WP_DisruptorAltFire( gentity_t *ent )
 				{
 					 // we only make this mark on things that can't break or move
 					tent = G_TempEntity( tr.endpos, EV_DISRUPTOR_SNIPER_MISS );
-					tent->svFlags |= SVF_BROADCAST;
-					VectorCopy( tr.plane.normal, tent->pos1 );
+					if (tent)
+					{
+						tent->svFlags |= SVF_BROADCAST;
+						VectorCopy( tr.plane.normal, tent->pos1 );
+					}
 					break; // hit solid, but doesn't take damage, so stop the shot...we _could_ allow it to shoot through walls, might be cool?
 				}
 			}
@@ -315,9 +321,12 @@ void WP_DisruptorAltFire( gentity_t *ent )
 	}
 	//just draw one solid beam all the way to the end...
 	tent = G_TempEntity( tr.endpos, EV_DISRUPTOR_SNIPER_SHOT );
-	tent->svFlags |= SVF_BROADCAST;
-	tent->alt_fire = fullCharge; // mark us so we can alter the effect
-	VectorCopy( muzzle, tent->s.origin2 );
+	if (tent)
+	{
+		tent->svFlags |= SVF_BROADCAST;
+		tent->alt_fire = fullCharge; // mark us so we can alter the effect
+		VectorCopy( muzzle, tent->s.origin2 );
+	}
 
 	// now go along the trail and make sight events
 	VectorSubtract( tr.endpos, muzzle, dir );

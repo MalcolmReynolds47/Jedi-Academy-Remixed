@@ -5522,6 +5522,31 @@ void Item_TextScroll_Paint(itemDef_t *item)
 #define COLOR_MAX 255.0f
 
 // Draw routine for list boxes
+static void Item_PlayerPortraitLabel(const itemDef_t *item, int index, float x, float y,
+                                   float width, float height)
+{
+	if ((int)item->special != FEEDER_Q3HEADS)
+		return;
+	qhandle_t images[3];
+	const char *model = DC->feederItemText(item->special, index, 0, &images[0], &images[1], &images[2]);
+	if (!model || !*model)
+		return;
+	if (!Q_stricmpn(model, "jar_player_", 11))
+		model += 11;
+	char label[MAX_QPATH];
+	Q_strncpyz(label, model, sizeof(label));
+	char *skin = strchr(label, '/');
+	if (skin && !Q_stricmp(skin, "/default"))
+		*skin = '\0';
+	float scale = .46f;
+	const float textWidth = DC->textWidth(label, scale, item->iMenuFont);
+	if (textWidth > width - 6)
+		scale *= (width - 6) / textWidth;
+	static vec4_t background = {0, 0, 0, .72f};
+	DC->fillRect(x+1, y+height-12, width-2, 11, background);
+	DC->drawText(x+3, y+height-3, scale, colorWhite, label, 0, 0, ITEM_TEXTSTYLE_SHADOWED, item->iMenuFont);
+}
+
 void Item_ListBox_Paint(itemDef_t *item) {
 	float x, y, sizeWidth, count, i, i2,sizeHeight, thumb;
 	int startPos;
@@ -5718,6 +5743,7 @@ void Item_ListBox_Paint(itemDef_t *item) {
 		#endif
 							DC->drawHandlePic(x+1, y+1, listPtr->elementWidth - 2, listPtr->elementHeight - 2, image);
 						}
+						Item_PlayerPortraitLabel(item, i, x, y, listPtr->elementWidth, listPtr->elementHeight);
 
 						if (i == item->cursorPos)
 						{
@@ -5762,6 +5788,7 @@ void Item_ListBox_Paint(itemDef_t *item) {
 					{
 						DC->drawHandlePic(x+1, y+1, listPtr->elementWidth - 2, listPtr->elementHeight - 2, image);
 					}
+					Item_PlayerPortraitLabel(item, i, x, y, listPtr->elementWidth, listPtr->elementHeight);
 
 					if (i == item->cursorPos)
 					{
@@ -5943,6 +5970,8 @@ void Item_OwnerDraw_Paint(itemDef_t *item) {
 }
 
 
+#include "ui/jar_item_motion.inc"
+
 void Item_Paint(itemDef_t *item)
 {
 	vec4_t		red;
@@ -5960,149 +5989,7 @@ void Item_Paint(itemDef_t *item)
 
 	parent = (menuDef_t*)item->parent;
 
-	if (item->window.flags & WINDOW_ORBITING)
-	{
-		if (DC->realTime > item->window.nextTime)
-		{
-			float rx, ry, a, c, s, w, h;
-
-			item->window.nextTime = DC->realTime + item->window.offsetTime;
-			// translate
-			w = item->window.rectClient.w / 2;
-			h = item->window.rectClient.h / 2;
-			rx = item->window.rectClient.x + w - item->window.rectEffects.x;
-			ry = item->window.rectClient.y + h - item->window.rectEffects.y;
-			a = 3 * M_PI / 180;
-			c = cos(a);
-			s = sin(a);
-			item->window.rectClient.x = (rx * c - ry * s) + item->window.rectEffects.x - w;
-			item->window.rectClient.y = (rx * s + ry * c) + item->window.rectEffects.y - h;
-			Item_UpdatePosition(item);
-		}
-	}
-
-
-	if (item->window.flags & WINDOW_INTRANSITION)
-	{
-		if (DC->realTime > item->window.nextTime)
-		{
-			int done = 0;
-			item->window.nextTime = DC->realTime + item->window.offsetTime;
-
-			// transition the x,y
-			if (item->window.rectClient.x == item->window.rectEffects.x)
-			{
-				done++;
-			}
-			else
-			{
-				if (item->window.rectClient.x < item->window.rectEffects.x)
-				{
-					item->window.rectClient.x += item->window.rectEffects2.x;
-					if (item->window.rectClient.x > item->window.rectEffects.x)
-					{
-						item->window.rectClient.x = item->window.rectEffects.x;
-						done++;
-					}
-				}
-				else
-				{
-					item->window.rectClient.x -= item->window.rectEffects2.x;
-					if (item->window.rectClient.x < item->window.rectEffects.x)
-					{
-						item->window.rectClient.x = item->window.rectEffects.x;
-						done++;
-					}
-				}
-			}
-
-			if (item->window.rectClient.y == item->window.rectEffects.y)
-			{
-				done++;
-			}
-			else
-			{
-				if (item->window.rectClient.y < item->window.rectEffects.y)
-				{
-					item->window.rectClient.y += item->window.rectEffects2.y;
-					if (item->window.rectClient.y > item->window.rectEffects.y)
-					{
-						item->window.rectClient.y = item->window.rectEffects.y;
-						done++;
-					}
-				}
-				else
-				{
-					item->window.rectClient.y -= item->window.rectEffects2.y;
-					if (item->window.rectClient.y < item->window.rectEffects.y)
-					{
-						item->window.rectClient.y = item->window.rectEffects.y;
-						done++;
-					}
-				}
-			}
-
-			if (item->window.rectClient.w == item->window.rectEffects.w)
-			{
-				done++;
-			}
-			else
-			{
-				if (item->window.rectClient.w < item->window.rectEffects.w)
-				{
-					item->window.rectClient.w += item->window.rectEffects2.w;
-					if (item->window.rectClient.w > item->window.rectEffects.w)
-					{
-						item->window.rectClient.w = item->window.rectEffects.w;
-						done++;
-					}
-				}
-				else
-				{
-					item->window.rectClient.w -= item->window.rectEffects2.w;
-					if (item->window.rectClient.w < item->window.rectEffects.w)
-					{
-						item->window.rectClient.w = item->window.rectEffects.w;
-						done++;
-					}
-				}
-			}
-
-			if (item->window.rectClient.h == item->window.rectEffects.h)
-			{
-				done++;
-			}
-			else
-			{
-				if (item->window.rectClient.h < item->window.rectEffects.h)
-				{
-					item->window.rectClient.h += item->window.rectEffects2.h;
-					if (item->window.rectClient.h > item->window.rectEffects.h)
-					{
-						item->window.rectClient.h = item->window.rectEffects.h;
-						done++;
-					}
-				}
-				else
-				{
-					item->window.rectClient.h -= item->window.rectEffects2.h;
-					if (item->window.rectClient.h < item->window.rectEffects.h)
-					{
-						item->window.rectClient.h = item->window.rectEffects.h;
-						done++;
-					}
-				}
-			}
-
-			Item_UpdatePosition(item);
-
-			if (done == 4)
-			{
-				item->window.flags &= ~WINDOW_INTRANSITION;
-			}
-
-		}
-	}
+	Item_JAR_Motion(item,(int)DC->getCVarValue("jar_uiMotion"));
 
 #ifdef _TRANS3
 
@@ -9361,6 +9248,12 @@ void Menu_New(int handle) {
 	}
 }
 
+menuDef_t *Menu_CreateJAR(const char *name) {
+ menuDef_t *menu=Menus_FindByName(name);if(menu)return menu;
+ if(menuCount>=MAX_MENUS)return NULL;
+ menu=&Menus[menuCount++];Menu_Init(menu);menu->window.name=String_Alloc(name);return menu;
+}
+menuDef_t *Menu_JARAt(int index){return index>=0&&index<menuCount?&Menus[index]:NULL;}
 int Menu_Count() {
 	return menuCount;
 }

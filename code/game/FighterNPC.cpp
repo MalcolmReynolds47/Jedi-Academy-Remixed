@@ -55,6 +55,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #ifdef QAGAME //including game headers on cgame is FORBIDDEN ^_^
 #include "g_local.h"
+#include "g_space.h"
 #elif defined _JK2MP
 #include "bg_public.h"
 #endif
@@ -286,15 +287,9 @@ static float PredictedAngularDecrement(float scale, float timeMod, float origina
 #ifdef QAGAME//only do this check on GAME side, because if it's CGAME, it's being predicted, and it's only predicted if the local client is the driver
 qboolean FighterIsInSpace( gentity_t *gParent )
 {
-	if ( gParent
-		&& gParent->client
-		&& gParent->client->inSpaceIndex
-		&& gParent->client->inSpaceIndex < ENTITYNUM_WORLD )
-	{
-		return qtrue;
-	}
-	return qfalse;
+	return G_SpaceActive(gParent)?qtrue:qfalse;
 }
+
 #endif
 
 qboolean FighterOverValidLandingSurface( Vehicle_t *pVeh )

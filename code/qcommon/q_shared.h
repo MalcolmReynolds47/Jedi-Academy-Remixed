@@ -28,6 +28,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // q_shared.h -- included first by ALL program modules.
 // A user mod should never modify this file
 
+#include "jar_capacity.h"
 #include "qcommon/q_math.h"
 #include "qcommon/q_color.h"
 #include "qcommon/q_string.h"
@@ -74,12 +75,12 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define HOMEPATH_NAME_WIN "OpenJO"
 #define HOMEPATH_NAME_MACOSX HOMEPATH_NAME_WIN
 #else
-#define PRODUCT_NAME			"openjk_sp"
+#define PRODUCT_NAME			"jar_sp"
 
-#define CLIENT_WINDOW_TITLE "OpenJK (SP)"
-#define CLIENT_CONSOLE_TITLE "OpenJK Console (SP)"
-#define HOMEPATH_NAME_UNIX "openjk"
-#define HOMEPATH_NAME_WIN "OpenJK"
+#define CLIENT_WINDOW_TITLE "Jedi Academy Remixed"
+#define CLIENT_CONSOLE_TITLE "Jedi Academy Remixed Console"
+#define HOMEPATH_NAME_UNIX "jedi-academy-remixed"
+#define HOMEPATH_NAME_WIN "JediAcademyRemixed"
 #define HOMEPATH_NAME_MACOSX HOMEPATH_NAME_WIN
 #endif
 
@@ -368,6 +369,7 @@ qboolean COM_ParseVec4( const char **buffer, vec4_t *c);
 
 void	COM_MatchToken( char**buf_p, char *match );
 
+qboolean SkipBracedSection (const char **program, int depth);
 void SkipBracedSection (const char **program);
 void SkipRestOfLine ( const char **data );
 
@@ -547,7 +549,7 @@ Ghoul2 Insert End
 		saved_game.write<>(plane);
 		saved_game.write<int8_t>(surfaceFlags);
 		saved_game.write<int8_t>(contents);
-		saved_game.write<int8_t>(entityNum);
+		saved_game.write<int32_t>(entityNum);
 		saved_game.write<>(G2CollisionMap);
 	}
 
@@ -561,7 +563,7 @@ Ghoul2 Insert End
 		saved_game.read<>(plane);
 		saved_game.read<int8_t>(surfaceFlags);
 		saved_game.read<int8_t>(contents);
-		saved_game.read<int8_t>(entityNum);
+		saved_game.read<int32_t>(entityNum);
 		saved_game.read<>(G2CollisionMap);
 	}
 } trace_t;
@@ -618,7 +620,7 @@ typedef struct {
 #define	MAX_CLIENTS			1 // 128		// absolute limit
 #define MAX_TERRAINS		1 //32
 
-#define	GENTITYNUM_BITS		10		// don't need to send any more
+#define	GENTITYNUM_BITS		JAR_ENTITY_BITS
 #define	MAX_GENTITIES		(1<<GENTITYNUM_BITS)
 
 // entitynums are communicated with GENTITY_BITS, so any reserved
@@ -2335,7 +2337,9 @@ typedef enum {// !!!!!!!!!!! LOADSAVE-affecting struct !!!!!!!!!!
 	TR_LINEAR_STOP,
 	TR_NONLINEAR_STOP,
 	TR_SINE,					// value = base + sin( time / duration ) * delta
-	TR_GRAVITY
+	TR_GRAVITY,
+	// JA:R: trBase is a world orientation, trDelta a world axis times degrees.
+	TR_AXIS_STATIONARY, TR_AXIS_LINEAR, TR_AXIS_SINE, TR_AXIS_INTERPOLATE
 } trType_t;
 
 typedef struct {// !!!!!!!!!!! LOADSAVE-affecting struct !!!!!!!!!!

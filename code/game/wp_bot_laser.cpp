@@ -29,6 +29,7 @@ void WP_BotLaser( gentity_t *ent )
 //---------------------------------------------------------
 {
 	gentity_t	*missile = CreateMissile( muzzle, forwardVec, BRYAR_PISTOL_VEL, 10000, ent );
+	if (!missile) return;
 
 	missile->classname = "bryar_proj";
 	missile->s.weapon = WP_BRYAR_PISTOL;

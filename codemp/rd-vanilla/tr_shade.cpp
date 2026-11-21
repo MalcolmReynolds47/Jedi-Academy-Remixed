@@ -24,6 +24,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // tr_shade.c
 
 #include "tr_local.h"
+#include "../../code/rd-common/tr_bsp_fog_context.inc"
+
 #include "tr_quicksprite.h"
 
 /*
@@ -644,7 +646,7 @@ static void ProjectDlightTexture2( void ) {
 		//and screw the tri up -rww
 		if (r_drawfog->value == 2 &&
 			tr.world &&
-			(tess.fogNum == tr.world->globalFog || tess.fogNum == tr.world->numfogs))
+			RB_BSPFogIsGlobal(tess.fogNum, true))
 		{
 			fogging = qglIsEnabled(GL_FOG);
 
@@ -996,7 +998,7 @@ static void ProjectDlightTexture( void ) {
 		//and screw the tri up -rww
 		if (r_drawfog->value == 2 &&
 			tr.world &&
-			(tess.fogNum == tr.world->globalFog || tess.fogNum == tr.world->numfogs))
+			RB_BSPFogIsGlobal(tess.fogNum, true))
 		{
 			fogging = qglIsEnabled(GL_FOG);
 
@@ -1098,7 +1100,8 @@ Blends a fog texture on top of everything else
 ===================
 */
 static void RB_FogPass( void ) {
-	fog_t		*fog;
+	const fog_t fogValue = RB_BSPFog(tess.fogNum);
+	const fog_t *fog = &fogValue;
 	int			i;
 
 	qglEnableClientState( GL_COLOR_ARRAY );
@@ -1107,7 +1110,6 @@ static void RB_FogPass( void ) {
 	qglEnableClientState( GL_TEXTURE_COORD_ARRAY);
 	qglTexCoordPointer( 2, GL_FLOAT, 0, tess.svars.texcoords[0] );
 
-	fog = tr.world->fogs + tess.fogNum;
 
 	for ( i = 0; i < tess.numVertexes; i++ ) {
 		byteAlias_t *ba = (byteAlias_t *)&tess.svars.colors[i];
@@ -1264,9 +1266,9 @@ static void ComputeColors( shaderStage_t *pStage, int forceRGBGen )
 			break;
 		case CGEN_FOG:
 			{
-				fog_t		*fog;
+				const fog_t fogValue = RB_BSPFog(tess.fogNum);
+	const fog_t *fog = &fogValue;
 
-				fog = tr.world->fogs + tess.fogNum;
 
 				for ( i = 0; i < tess.numVertexes; i++ ) {
 					byteAlias_t *ba = (byteAlias_t *)&tess.svars.colors[i];
@@ -1569,12 +1571,12 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 	int stage;
 	bool	UseGLFog = false;
 	bool	FogColorChange = false;
-	fog_t	*fog = NULL;
+	const fog_t fogValue = RB_BSPFog(tess.fogNum);
+	const fog_t *fog = &fogValue;
 
-	if (tess.fogNum && tess.shader->fogPass && (tess.fogNum == tr.world->globalFog || tess.fogNum == tr.world->numfogs)
+	if (tess.fogNum && tess.shader->fogPass && RB_BSPFogIsGlobal(tess.fogNum, true)
 		&& r_drawfog->value == 2)
 	{	// only gl fog global fog and the "special fog"
-		fog = tr.world->fogs + tess.fogNum;
 
 		if (tr.rangedFog)
 		{ //ranged fog, used for sniper scope
@@ -1876,7 +1878,7 @@ void RB_StageIteratorGeneric( void )
 	//
 	// now do fog
 	//
-	if (tr.world && (tess.fogNum != tr.world->globalFog || r_drawfog->value != 2) && r_drawfog->value && tess.fogNum && tess.shader->fogPass)
+	if (tr.world && (!RB_BSPFogIsGlobal(tess.fogNum) || r_drawfog->value != 2) && r_drawfog->value && tess.fogNum && tess.shader->fogPass)
 	{
 		RB_FogPass();
 	}
@@ -1913,7 +1915,7 @@ void RB_StageIteratorGeneric( void )
 	//don't disable the hardware fog til after we do surface sprites
 	if (r_drawfog->value == 2 &&
 		tess.fogNum && tess.shader->fogPass &&
-		(tess.fogNum == tr.world->globalFog || tess.fogNum == tr.world->numfogs))
+		RB_BSPFogIsGlobal(tess.fogNum, true))
 	{
 		qglDisable(GL_FOG);
 	}
@@ -1923,84 +1925,4 @@ void RB_StageIteratorGeneric( void )
 /*
 ** RB_EndSurface
 */
-void RB_EndSurface( void ) {
-	shaderCommands_t *input;
-
-	input = &tess;
-
-	if (input->numIndexes == 0) {
-		return;
-	}
-
-	if (input->indexes[SHADER_MAX_INDEXES-1] != 0) {
-		Com_Error (ERR_DROP, "RB_EndSurface() - SHADER_MAX_INDEXES hit");
-	}
-	if (input->xyz[SHADER_MAX_VERTEXES-1][0] != 0) {
-		Com_Error (ERR_DROP, "RB_EndSurface() - SHADER_MAX_VERTEXES hit");
-	}
-
-	if ( tess.shader == tr.shadowShader ) {
-		RB_ShadowTessEnd();
-		return;
-	}
-
-	// for debugging of sort order issues, stop rendering after a given sort value
-	if ( r_debugSort->integer && r_debugSort->integer < tess.shader->sort ) {
-		return;
-	}
-
-	if ( skyboxportal )
-	{
-		// world
-		if(!(backEnd.refdef.rdflags & RDF_SKYBOXPORTAL))
-		{
-			if(tess.currentStageIteratorFunc == RB_StageIteratorSky)
-			{	// don't process these tris at all
-				return;
-			}
-		}
-		// portal sky
-		else
-		{
-			if(!drawskyboxportal)
-			{
-				if( !(tess.currentStageIteratorFunc == RB_StageIteratorSky))
-				{	// /only/ process sky tris
-					return;
-				}
-			}
-		}
-	}
-
-	//
-	// update performance counters
-	//
-	backEnd.pc.c_shaders++;
-	backEnd.pc.c_vertexes += tess.numVertexes;
-	backEnd.pc.c_indexes += tess.numIndexes;
-	backEnd.pc.c_totalIndexes += tess.numIndexes * tess.numPasses;
-	if (tess.fogNum && tess.shader->fogPass && r_drawfog->value == 1)
-	{
-		backEnd.pc.c_totalIndexes += tess.numIndexes;
-	}
-
-	//
-	// call off to shader specific tess end function
-	//
-	tess.currentStageIteratorFunc();
-
-	//
-	// draw debugging stuff
-	//
-	if ( r_showtris->integer ) {
-		DrawTris (input);
-	}
-	if ( r_shownormals->integer ) {
-		DrawNormals (input);
-	}
-	// clear shader so we can tell we don't have any unclosed surfaces
-	tess.numIndexes = 0;
-
-	GLimp_LogComment( "----------\n" );
-}
-
+#include "tr_jar_end_surface.inc"

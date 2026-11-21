@@ -61,10 +61,10 @@ extern void AS_Free( void );
 #define	PAINTBUFFER_SIZE	1024
 
 
-// !!! if this is changed, the asm code must change !!!
+// JA:R uses the portable mixer with 64-bit accumulators for 512 voices.
 typedef struct {
-	int			left;	// the final values will be clamped to +/- 0x00ffff00 and shifted down
-	int			right;
+	int64_t		left;	// the final values will be clamped to +/- 0x00ffff00 and shifted down
+	int64_t		right;
 } portable_samplepair_t;
 
 
@@ -147,6 +147,8 @@ typedef struct
 
 	qboolean	fixed_origin;	// use origin instead of fetching entnum's origin
 	sfx_t		*thesfx;		// sfx structure
+    const sfx_t *jarLogicalSource; // Original control-cue identity, independent of replacement audio.
+    int jarMaxSamples; // Dialogue retains authored duration; shorter replacements leave silence.
 	qboolean	loopSound;		// from an S_AddLoopSound call, cleared each frame
 	//
 	MP3STREAM	MP3StreamHeader;
@@ -186,7 +188,7 @@ typedef struct {
 
 //====================================================================
 
-#define	MAX_CHANNELS			32
+#define	MAX_CHANNELS			(32 * JAR_CAPACITY_MULTIPLIER)
 extern	channel_t   s_channels[MAX_CHANNELS];
 
 extern	int		s_paintedtime;

@@ -43,6 +43,7 @@ set(SPGameGameFiles
 	"${SPDir}/game/AI_Default.cpp"
 	"${SPDir}/game/AI_Droid.cpp"
 	"${SPDir}/game/AI_GalakMech.cpp"
+	"${SPDir}/game/AI_GalakMech_legacy.cpp"
 	"${SPDir}/game/AI_Grenadier.cpp"
 	"${SPDir}/game/AI_HazardTrooper.cpp"
 	"${SPDir}/game/AI_Howler.cpp"
@@ -70,17 +71,24 @@ set(SPGameGameFiles
 	"${SPDir}/game/g_client.cpp"
 	"${SPDir}/game/g_cmds.cpp"
 	"${SPDir}/game/g_combat.cpp"
+	"${SPDir}/game/g_explosives.cpp"
+	"${SPDir}/game/g_radius_damage.cpp"
 	"${SPDir}/game/g_emplaced.cpp"
 	"${SPDir}/game/g_functions.cpp"
 	"${SPDir}/game/g_fx.cpp"
 	"${SPDir}/game/g_inventory.cpp"
 	"${SPDir}/game/g_itemLoad.cpp"
 	"${SPDir}/game/g_items.cpp"
+	"${SPDir}/game/g_item_registration.cpp"
+	"${SPDir}/game/g_randomizer.cpp"
+	"${SPDir}/game/g_workshop.cpp"
 	"${SPDir}/game/g_main.cpp"
+	"${SPDir}/game/g_diagnostics.cpp"
 	"${SPDir}/game/g_mem.cpp"
 	"${SPDir}/game/g_misc.cpp"
 	"${SPDir}/game/g_misc_model.cpp"
 	"${SPDir}/game/g_missile.cpp"
+	"${SPDir}/game/g_sandbox_charges.cpp"
 	"${SPDir}/game/g_mover.cpp"
 	"${SPDir}/game/g_nav.cpp"
 	"${SPDir}/game/g_navigator.cpp"
@@ -254,6 +262,7 @@ source_group("ui" FILES ${SPGameUIFiles})
 set(SPGameFiles ${SPGameFiles} ${SPGameUIFiles})
 
 set(SPGameCommonFiles
+	"${SPDir}/qcommon/md4.cpp"
 	"${SPDir}/qcommon/tri_coll_test.cpp"
 	"${SPDir}/qcommon/sstring.h"
 	"${SPDir}/qcommon/tags.h"
@@ -373,6 +382,16 @@ if(WIN32)
 	set(SPGameFiles ${SPGameFiles} ${SPGameWin32Files})
 endif(WIN32)
 
+set(BOX3D_VALIDATE ON CACHE BOOL "Validate debug physics" FORCE)
+set(BOX3D_PROFILE OFF CACHE BOOL "No external profiler" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Static dependencies" FORCE)
+add_subdirectory("${CMAKE_SOURCE_DIR}/lib/box3d" "${CMAKE_BINARY_DIR}/box3d")
+set_property(TARGET box3d PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+if(MSVC)
+  target_compile_options(box3d PRIVATE /fp:precise)
+endif()
+list(APPEND SPGameFiles "${SPDir}/game/jar_physics.cpp")
+list(APPEND SPGameLibraries box3d)
 add_library(${SPGame} SHARED ${SPGameFiles})
 
 # Hide symbols not explicitly marked public.

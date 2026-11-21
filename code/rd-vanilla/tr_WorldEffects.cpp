@@ -61,6 +61,9 @@ float		mMillisecondsElapsed = 0;
 float		mSecondsElapsed = 0;
 bool		mFrozen = false;
 
+#include "qcommon/jar_weather_zones.h"
+static jar::weather::Zones jarWeatherZones;
+static jar::weather::Frame jarWeather;
 CVec3		mGlobalWindVelocity;
 CVec3		mGlobalWindDirection;
 float		mGlobalWindSpeed;
@@ -387,7 +390,8 @@ ratl::vector_vs<CWindZone*, MAX_WIND_ZONES>		mLocalWindZones;
 
 bool R_GetWindVector(vec3_t windVector, vec3_t atpoint)
 {
-	VectorCopy(mGlobalWindDirection.v, windVector);
+	vec3_t local;jar::weather::LocalWind(jarWeatherZones,atpoint,local);
+ jar::weather::ClassicWindBase(jarWeather,mGlobalWindDirection.v,mGlobalWindVelocity.v,windVector,local);
 	if (atpoint && mLocalWindZones.size())
 	{
 		for (int curLocalWindZone=0; curLocalWindZone<mLocalWindZones.size(); curLocalWindZone++)
@@ -397,14 +401,14 @@ bool R_GetWindVector(vec3_t windVector, vec3_t atpoint)
 				VectorAdd(windVector, mLocalWindZones[curLocalWindZone]->mCurrentVelocity.v, windVector);
 			}
 		}
-		VectorNormalize(windVector);
 	}
+	if(jar::weather::HasWind(jarWeather)||VectorLengthSquared(local)>0||(atpoint&&mLocalWindZones.size()))VectorNormalize(windVector);
 	return true;
 }
 
 bool R_GetWindSpeed(float &windSpeed, vec3_t atpoint)
 {
-	windSpeed = mGlobalWindSpeed;
+	vec3_t combined,local;jar::weather::LocalWind(jarWeatherZones,atpoint,local);VectorAdd(mGlobalWindVelocity.v,jarWeather.wind,combined);VectorAdd(combined,local,combined);windSpeed = (jar::weather::HasWind(jarWeather)||VectorLengthSquared(local)>0)?VectorLength(combined):mGlobalWindSpeed;
 	if (atpoint && mLocalWindZones.size())
 	{
 		for (int curLocalWindZone=0; curLocalWindZone<mLocalWindZones.size(); curLocalWindZone++)
@@ -887,19 +891,21 @@ void R_AddWeatherZone(vec3_t mins, vec3_t maxs)
 	mOutside.AddWeatherZone(mins, maxs);
 }
 
-bool R_IsOutside(vec3_t pos)
-{
-	return mOutside.PointOutside(pos);
+static bool JAR_WeatherOutside(const CVec3&pos,float width=0,float height=0){
+ const int rule=jar::weather::ExposureAt(jarWeatherZones,pos.v);if(rule==1)return false;
+ if(rule==2)return !(ri.CM_PointContents(pos.v,0)&(CONTENTS_SOLID|CONTENTS_WATER));
+ return width||height?mOutside.PointOutside(pos,width,height):mOutside.PointOutside(pos);
 }
+bool R_IsOutside(vec3_t pos){return JAR_WeatherOutside(CVec3(pos));}
 
 bool R_IsShaking(vec3_t pos)
 {
-	return (mOutside.mOutsideShake && mOutside.PointOutside(pos));
+	return (mOutside.mOutsideShake && R_IsOutside(pos));
 }
 
 float R_IsOutsideCausingPain(vec3_t pos)
 {
-	return (mOutside.mOutsidePain && mOutside.PointOutside(pos));
+	return ((mOutside.mOutsidePain || (jarWeather.layers[0].count&&jarWeather.layers[0].mode==3)) && R_IsOutside(pos));
 }
 
 bool R_SetTempGlobalFogColor(vec3_t color)
@@ -1230,6 +1236,7 @@ public:
 			// Apply Wind Velocity
 			//---------------------
 			force    += mGlobalWindVelocity;
+			for(int axis=0;axis<3;++axis)force[axis]+=jarWeather.wind[axis];
 		}
 
 
@@ -1308,6 +1315,7 @@ public:
 				}
 			}
 
+			vec3_t local;jar::weather::LocalWind(jarWeatherZones,part->mPosition.v,local);for(int a=0;a<3;++a)partForce[a]+=local[a];
 			partForce /= part->mMass;
 
 
@@ -1320,7 +1328,7 @@ public:
 
 			partToCamera	= (part->mPosition - mCameraPosition);
 			partRendering	= part->mFlags.get_bit(WFXParticle::FLAG_RENDER);
-			partOutside		= mOutside.PointOutside(part->mPosition, mWidth, mHeight);
+			partOutside		= JAR_WeatherOutside(part->mPosition, mWidth, mHeight);
 			partInRange		= mRange.In(part->mPosition);
 			partInView		= (partOutside && partInRange && (partToCamera.Dot(mCameraForward)>0.0f));
 
@@ -1557,6 +1565,7 @@ public:
 	}
 };
 ratl::vector_vs<CParticleCloud, MAX_PARTICLE_CLOUDS>	mParticleClouds;
+#include "tr_jar_weather.inc"
 
 
 
@@ -1565,6 +1574,8 @@ ratl::vector_vs<CParticleCloud, MAX_PARTICLE_CLOUDS>	mParticleClouds;
 ////////////////////////////////////////////////////////////////////////////////////////
 void R_InitWorldEffects(void)
 {
+ jarWeatherZones={};
+ JAR_WeatherReset();
 	for (int i=0; i<mParticleClouds.size(); i++)
 	{
 		mParticleClouds[i].Reset();
@@ -1595,7 +1606,7 @@ void RB_RenderWorldEffects(void)
 	if (!tr.world ||
 		(tr.refdef.rdflags & RDF_NOWORLDMODEL) ||
 		(backEnd.refdef.rdflags & RDF_SKYBOXPORTAL) ||
-		!mParticleClouds.size() ||
+		(!mParticleClouds.size() && !jar::weather::Active(jarWeather)) ||
 		ri.CL_IsRunningInGameCinematic())
 	{	//  no world rendering or no world or no particle clouds
 		return;
@@ -1653,6 +1664,7 @@ void RB_RenderWorldEffects(void)
 			mParticleClouds[i].Update();
 			mParticleClouds[i].Render();
 		}
+		for(int i=0;i<3;++i)if(jarWeather.layers[i].count){jarWeatherClouds[i].Update();jarWeatherClouds[i].Render();}
 		if (false)
 		{
 			Com_Printf( "Weather: %d Particles Rendered\n", mParticlesRendered);
@@ -1712,6 +1724,8 @@ qboolean WE_ParseVector( const char **text, int count, float *v ) {
 
 void R_WorldEffectCommand(const char *command)
 {
+ if(command&&!strncmp(command,"jar_weather_zones",17)){jar::weather::Zones z;if(jar::weather::Decode(command,z))jarWeatherZones=z;return;}
+ if(command&&!strncmp(command,"jar_weather",11)){jar::weather::Frame f;if(jar::weather::Decode(command,f))JAR_WeatherApply(f);return;}
 	if ( !command )
 	{
 		return;
@@ -2165,6 +2179,7 @@ float R_GetChanceOfSaberFizz()
 			numWater ++;
 		}
 	}
+ for(int i=0;i<3;++i)if(jarWeather.layers[i].count&&jarWeatherClouds[i].mWaterParticles){chance+=jarWeatherClouds[i].mGravity/20000.f;++numWater;}
 	if (numWater)
 	{
 		return (chance / numWater);
@@ -2174,12 +2189,12 @@ float R_GetChanceOfSaberFizz()
 
 bool R_IsRaining()
 {
-	return !mParticleClouds.empty();
+	return !mParticleClouds.empty()||jarWeather.layers[0].count;
 }
 
 bool R_IsPuffing()
 {
-	return false;
+	return jarWeather.layers[2].count!=0;
 }
 
 

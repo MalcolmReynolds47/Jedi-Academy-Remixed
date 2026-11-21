@@ -33,6 +33,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 //
 ////////////////////////////////////////////////////////////////////////////////////////
 #include "b_local.h"
+#include "g_combat_points.h"
 #include "../Ravl/CVec.h"
 
 
@@ -607,7 +608,7 @@ void		Boba_DoSniper( gentity_t *self)
 		}
 	}
 
-    if (Distance(NPC->currentOrigin, level.combatPoints[NPCInfo->combatPoint].origin)<50.0f)
+    if (G_CombatPointAvailable(NPCInfo->combatPoint) && Distance(NPC->currentOrigin, level.combatPoints[NPCInfo->combatPoint].origin)<50.0f)
 	{
 		Boba_FireDecide();
 	}
@@ -1154,6 +1155,7 @@ void	Boba_Update()
 ////////////////////////////////////////////////////////////////////////////////////////
 bool	Boba_Flee()
 {
+	if (!G_CombatPointAvailable(NPCInfo->combatPoint)) { NPCInfo->surrenderTime=0; return false; }
 	bool	EnemyRecentlySeen	= ((level.time - NPCInfo->enemyLastSeenTime)<10000);
 	bool	ReachedEscapePoint	= (Distance(level.combatPoints[NPCInfo->combatPoint].origin, NPC->currentOrigin)<50.0f);
 	bool	HasBeenGoneEnough	= (level.time>NPCInfo->surrenderTime || (level.time - NPCInfo->enemyLastSeenTime)>400000);

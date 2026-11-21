@@ -25,6 +25,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // cl_main.c  -- client main loop
 
 #include "client.h"
+#include "qcommon/jar_mp_model_hull.h"
 
 #include <limits.h>
 #include "ghoul2/G2.h"
@@ -272,7 +273,7 @@ Begins recording a demo from the current position
 static char		demoName[MAX_QPATH];	// compiler bug workaround
 void CL_Record_f( void ) {
 	char		name[MAX_OSPATH];
-	byte		bufData[MAX_MSGLEN];
+	static byte		bufData[MAX_MSGLEN];
 	msg_t	buf;
 	int			i;
 	int			len;
@@ -442,7 +443,7 @@ CL_ReadDemoMessage
 void CL_ReadDemoMessage( void ) {
 	int			r;
 	msg_t		buf;
-	byte		bufData[ MAX_MSGLEN ];
+	static byte		bufData[ MAX_MSGLEN ];
 	int			s;
 
 	if ( !clc.demofile ) {
@@ -1180,6 +1181,8 @@ doesn't know what graphics to reload
 =================
 */
 extern bool g_nOverrideChecked;
+#include "cl_jar_display.inc"
+
 void CL_Vid_Restart_f( void ) {
 	// Settings may have changed so stop recording now
 	if( CL_VideoRecording( ) ) {
@@ -1241,6 +1244,7 @@ void CL_Vid_Restart_f( void ) {
 		// send pure checksums
 		CL_SendPureChecksums();
 	}
+	CL_JAR_DisplayRestarted();
 }
 
 /*
@@ -2187,6 +2191,7 @@ void CL_Frame ( int msec ) {
 		return;
 	}
 
+	CL_JAR_DisplayFrame();
 	SE_CheckForLanguageUpdates();	// will take zero time to execute unless language changes, then will reload strings.
 									//	of course this still doesn't work for menus...
 
@@ -2310,6 +2315,7 @@ CL_ShutdownRef
 ============
 */
 static void CL_ShutdownRef( qboolean restarting ) {
+	JAR_MP_ClearModelHulls();
 	if ( re )
 	{
 		if ( re->Shutdown )
@@ -2412,38 +2418,14 @@ static IHeapAllocator *GetG2VertSpaceServer( void ) {
 	return G2VertSpaceServer;
 }
 
-#define DEFAULT_RENDER_LIBRARY "rd-vanilla"
+#include "cl_jar_renderer_mode.inc"
+#include "cl_jar_renderer_loader.inc"
 
 void CL_InitRef( void ) {
-	static refimport_t ri;
-	refexport_t	*ret;
-	GetRefAPI_t	GetRefAPI;
-	char		dllName[MAX_OSPATH];
-
+	refimport_t ri = {};
 	Com_Printf( "----- Initializing Renderer ----\n" );
-
-	cl_renderer = Cvar_Get( "cl_renderer", DEFAULT_RENDER_LIBRARY, CVAR_ARCHIVE|CVAR_LATCH, "Which renderer library to use" );
-
-	Com_sprintf( dllName, sizeof( dllName ), "%s_" ARCH_STRING DLL_EXT, cl_renderer->string );
-
-	if( !(rendererLib = Sys_LoadDll( dllName, qfalse )) && strcmp( cl_renderer->string, cl_renderer->resetString ) )
-	{
-		Com_Printf( "failed: trying to load fallback renderer\n" );
-		Cvar_ForceReset( "cl_renderer" );
-
-		Com_sprintf( dllName, sizeof( dllName ), DEFAULT_RENDER_LIBRARY "_" ARCH_STRING DLL_EXT );
-		rendererLib = Sys_LoadDll( dllName, qfalse );
-	}
-
-	if ( !rendererLib ) {
-		Com_Error( ERR_FATAL, "Failed to load renderer\n" );
-	}
-
-	memset( &ri, 0, sizeof( ri ) );
-
-	GetRefAPI = (GetRefAPI_t)Sys_LoadFunction( rendererLib, "GetRefAPI" );
-	if ( !GetRefAPI )
-		Com_Error( ERR_FATAL, "Can't load symbol GetRefAPI: '%s'", Sys_LibraryError() );
+	cl_renderer = Cvar_Get( "cl_renderer", JAR_MPClassic, CVAR_ARCHIVE|CVAR_LATCH, "Which renderer library to use" );
+	const bool rend2 = Cvar_Get("jar_mpRend2", "0", CVAR_INIT, "Try MP Rend2 for this launch")->integer == 1;
 
 	//set up the import table
 	ri.Printf = CL_RefPrintf;
@@ -2471,7 +2453,7 @@ void CL_InitRef( void ) {
 	ri.Cvar_VariableStringBuffer = Cvar_VariableStringBuffer;
 	ri.Cvar_VariableString = Cvar_VariableString;
 	ri.Cvar_VariableValue = Cvar_VariableValue;
-	ri.Cvar_VariableIntegerValue = Cvar_VariableIntegerValue;
+	ri.Cvar_VariableIntegerValue = CL_RendererCvarInteger;
 	ri.Sys_LowPhysicalMemory = Sys_LowPhysicalMemory;
 	ri.SE_GetString = SE_GetString;
 	ri.FS_FreeFile = FS_FreeFile;
@@ -2529,15 +2511,11 @@ void CL_InitRef( void ) {
 	ri.PD_Store = PD_Store;
 	ri.PD_Load = PD_Load;
 
-	ret = GetRefAPI( REF_API_VERSION, &ri );
-
-//	Com_Printf( "-------------------------------\n");
-
-	if ( !ret ) {
-		Com_Error (ERR_FATAL, "Couldn't initialize refresh" );
-	}
-
-	re = ret;
+	bool fallback;
+	re = CL_JAR_LoadRenderer(cl_renderer->string, rend2, &ri, &rendererLib, &fallback);
+	if (!re) Com_Error(ERR_FATAL, "Failed to load a compatible multiplayer renderer\n");
+	if (fallback && !rend2) Cvar_ForceReset("cl_renderer");
+	Cvar_Set2("ui_jarRendererActive", rend2 && !fallback ? JAR_MPRend2 : fallback ? JAR_MPClassic : cl_renderer->string, CVAR_ROM, qtrue);
 
 	// unpause so the cgame definately gets a snapshot and renders a frame
 	Cvar_Set( "cl_paused", "0" );
@@ -2875,6 +2853,7 @@ void CL_Init( void ) {
 	Cmd_AddCommand ("configstrings", CL_Configstrings_f, "Prints the configstrings list" );
 	Cmd_AddCommand ("clientinfo", CL_Clientinfo_f, "Prints the userinfo variables" );
 	Cmd_AddCommand ("snd_restart", CL_Snd_Restart_f, "Restart sound" );
+	CL_JAR_DisplayInit();
 	Cmd_AddCommand ("vid_restart", CL_Vid_Restart_f, "Restart the renderer - or change the resolution" );
 	Cmd_AddCommand ("disconnect", CL_Disconnect_f, "Disconnect from current server" );
 	Cmd_AddCommand ("cinematic", CL_PlayCinematic_f, "Play a cinematic video" );
@@ -2946,6 +2925,7 @@ void CL_Shutdown( void ) {
 	Cmd_RemoveCommand ("clientinfo");
 	Cmd_RemoveCommand ("snd_restart");
 	Cmd_RemoveCommand ("vid_restart");
+	Cmd_RemoveCommand("jar_display_read");Cmd_RemoveCommand("jar_display_begin");Cmd_RemoveCommand("jar_display_keep");Cmd_RemoveCommand("jar_display_revert");
 	Cmd_RemoveCommand ("disconnect");
 	Cmd_RemoveCommand ("record");
 	Cmd_RemoveCommand ("demo");

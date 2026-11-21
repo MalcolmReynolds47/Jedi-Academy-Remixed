@@ -253,7 +253,8 @@ void UI_InitMemory( void );
 
 
 #define MAX_COLOR_RANGES	10
-#define MAX_MENUITEMS		150
+// Context property pages share one unpaused menu; hidden fields count too.
+#define MAX_MENUITEMS		512 // The Sandbox entity editor builds all property pages in one menu.
 #define MAX_MENUS			64
 
 
@@ -507,6 +508,12 @@ qboolean	String_Parse(const char **p, const char **out);
 void		String_Report(void);
 void		UI_Cursor_Show(qboolean flag);
 itemDef_t *Menu_GetMatchingItemByNumber(menuDef_t *menu, int index, const char *name);
+
+void *UI_Alloc(int size);
+void Item_Init(itemDef_t *item);
+void Menu_PostParse(menuDef_t *menu);
+menuDef_t *Menus_FindByName(const char *name);
+menuDef_t *Menu_CreateJAR(const char *name);
 
 extern displayContextDef_t *DC;
 

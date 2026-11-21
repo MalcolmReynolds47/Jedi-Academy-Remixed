@@ -38,13 +38,17 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_shared.h"
 #include "bg_local.h"
 #include "g_local.h"
+#include "g_shipboundary.h"
 #include "g_functions.h"
 #include "anims.h"
 #include "../cgame/cg_local.h"	// yeah I know this is naughty, but we're shipping soon...
 
 #include "wp_saber.h"
 #include "g_vehicles.h"
+#include "g_sandbox_vehicle_push.h"
+#include "../../shared/game/jar_ladder_clearance.h"
 #include <float.h>
+#include "qcommon/jar_force_enlightenment.h"
 
 extern qboolean G_DoDismemberment( gentity_t *self, vec3_t point, int mod, int damage, int hitLoc, qboolean force = qfalse );
 extern qboolean G_EntIsUnlockedDoor( int entityNum );
@@ -273,12 +277,12 @@ qboolean PM_CheckGrabWall( trace_t *trace )
 	{//can't jump off of clip brushes
 		return qfalse;
 	}
-	if ( pm->gent->client->ps.forcePowerLevel[FP_LEVITATION] < FORCE_LEVEL_1 )
+	if ( jar::enlightenment::Rank(pm->gent->client->ps,FP_LEVITATION) < FORCE_LEVEL_1 )
 	{//must have at least FJ 1
 		return qfalse;
 	}
 	if ( (pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer())
-		&& pm->gent->client->ps.forcePowerLevel[FP_LEVITATION] < FORCE_LEVEL_3 )
+		&& jar::enlightenment::Rank(pm->gent->client->ps,FP_LEVITATION) < FORCE_LEVEL_3 )
 	{//player must have force jump 3
 		return qfalse;
 	}
@@ -426,44 +430,8 @@ qboolean PM_ClientImpact( trace_t *trace, qboolean damageSelf )
 
 ===============
 */
-qboolean PM_ClientImpact( trace_t *trace, qboolean damageSelf )
-{
-	gentity_t	*traceEnt;
-	int			otherEntityNum = trace->entityNum;
+#include "bg_client_impact.inc"
 
-	if ( !pm->gent )
-	{
-		return qfalse;
-	}
-
-	traceEnt = &g_entities[otherEntityNum];
-
-	if ( otherEntityNum == ENTITYNUM_WORLD
-		|| (traceEnt->bmodel && traceEnt->s.pos.trType == TR_STATIONARY ) )
-	{//hit world or a non-moving brush
-		if ( PM_CheckGrabWall( trace ) )
-		{//stopped on the wall
-			return qtrue;
-		}
-	}
-
-	if( (VectorLength( pm->ps->velocity )*(pm->gent->mass/10)) >= 100 && (pm->gent->client->NPC_class == CLASS_VEHICLE || pm->ps->lastOnGround+100<level.time) )//was 300 ||(other->material>=MAT_GLASS&&pm->gent->lastImpact+100<=level.time))
-	{
-		DoImpact( pm->gent, &g_entities[otherEntityNum], damageSelf, trace );
-	}
-
-	if ( otherEntityNum >= ENTITYNUM_WORLD )
-	{
-		return qfalse;
-	}
-
-	if ( !traceEnt || !(traceEnt->contents&pm->tracemask) )
-	{//it's dead or not in my way anymore
-		return qtrue;
-	}
-
-	return qfalse;
-}
 /*
 ===============
 PM_AddTouchEnt
@@ -991,7 +959,7 @@ qboolean PM_ForceJumpingUp( gentity_t *gent )
 	}
 	if ( gent->client->ps.groundEntityNum == ENTITYNUM_NONE //in air
 		&& ( (gent->client->ps.pm_flags&PMF_JUMPING) && gent->client->ps.velocity[2] > 0 )//jumped & going up or at water surface///*(gent->client->ps.waterHeightLevel==WHL_SHOULDERS&&gent->client->usercmd.upmove>0) ||*/
-		&& gent->client->ps.forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_0 //force-jump capable
+		&& jar::enlightenment::Rank(gent->client->ps,FP_LEVITATION) > FORCE_LEVEL_0 //force-jump capable
 		&& !(gent->client->ps.pm_flags&PMF_TRIGGER_PUSHED) )//not pushed by a trigger
 	{
 		if( gent->flags & FL_LOCK_PLAYER_WEAPONS ) // yes this locked weapons check also includes force powers, if we need a separate check later I'll make one
@@ -1176,7 +1144,7 @@ static qboolean PM_CheckJump( void )
 			}
 			else if ( (pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer()) //player-only for now
 				&& pm->cmd.upmove > 0 //trying to jump
-				&& pm->ps->forcePowerLevel[FP_LEVITATION] >= FORCE_LEVEL_3 //force jump 3 or better
+				&& jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) >= FORCE_LEVEL_3 //force jump 3 or better
 				&& pm->ps->forcePower >= FORCE_LONGJUMP_POWER //this costs 20 force to do
 				&& (pm->ps->forcePowersActive&(1<<FP_SPEED)) //force-speed is on
 				&& pm->cmd.forwardmove > 0 //pushing forward
@@ -1234,7 +1202,7 @@ static qboolean PM_CheckJump( void )
 				//check for max force jump level and cap off & cut z vel
 				if ( ( curHeight<=forceJumpHeight[0] ||//still below minimum jump height
 						(pm->ps->forcePower&&pm->cmd.upmove>=10) ) &&////still have force power available and still trying to jump up
-					curHeight < forceJumpHeight[pm->ps->forcePowerLevel[FP_LEVITATION]] )//still below maximum jump height
+					curHeight < forceJumpHeight[jar::enlightenment::Rank(*pm->ps,FP_LEVITATION)] )//still below maximum jump height
 				{//can still go up
 					//FIXME: after a certain amount of time of held jump, play force jump sound and flip if a dir is being held
 					//FIXME: if hit a wall... should we cut velocity or allow them to slide up it?
@@ -1281,7 +1249,7 @@ static qboolean PM_CheckJump( void )
 								if ( pm->cmd.forwardmove > 0 )
 								{
 									/*
-									if ( pm->ps->forcePowerLevel[FP_LEVITATION] < FORCE_LEVEL_2 )
+									if ( jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) < FORCE_LEVEL_2 )
 									{
 										anim = BOTH_ARIAL_F1;
 									}
@@ -1315,7 +1283,7 @@ static qboolean PM_CheckJump( void )
 
 								PM_SetAnim( pm, parts, anim, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
 							}
-							else if ( pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_1 )
+							else if ( jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_1 )
 							{//FIXME: really want to know how far off ground we are, probably...
 								vec3_t facingFwd, facingRight, facingAngles = {0, pm->ps->viewangles[YAW], 0};
 								int	anim = -1;
@@ -1392,12 +1360,12 @@ static qboolean PM_CheckJump( void )
 					}
 
 					//need to scale this down, start with height velocity (based on max force jump height) and scale down to regular jump vel
-					pm->ps->velocity[2] = (forceJumpHeight[pm->ps->forcePowerLevel[FP_LEVITATION]]-curHeight)/forceJumpHeight[pm->ps->forcePowerLevel[FP_LEVITATION]]*forceJumpStrength[pm->ps->forcePowerLevel[FP_LEVITATION]];//JUMP_VELOCITY;
+					pm->ps->velocity[2] = (forceJumpHeight[jar::enlightenment::Rank(*pm->ps,FP_LEVITATION)]-curHeight)/forceJumpHeight[jar::enlightenment::Rank(*pm->ps,FP_LEVITATION)]*forceJumpStrength[jar::enlightenment::Rank(*pm->ps,FP_LEVITATION)];//JUMP_VELOCITY;
 					pm->ps->velocity[2] /= 10;
 					pm->ps->velocity[2] += JUMP_VELOCITY;
 					pm->ps->pm_flags |= PMF_JUMP_HELD;
 				}
-				else if ( curHeight > forceJumpHeight[0] && curHeight < forceJumpHeight[pm->ps->forcePowerLevel[FP_LEVITATION]] - forceJumpHeight[0] )
+				else if ( curHeight > forceJumpHeight[0] && curHeight < forceJumpHeight[jar::enlightenment::Rank(*pm->ps,FP_LEVITATION)] - forceJumpHeight[0] )
 				{//still have some headroom, don't totally stop it
 					if ( pm->ps->velocity[2] > JUMP_VELOCITY )
 					{
@@ -1478,7 +1446,7 @@ static qboolean PM_CheckJump( void )
 	}
 	else if ( pm->cmd.upmove > 0 //want to jump
 		&& pm->waterlevel < 2 //not in water above ankles
-		&& pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_0 //have force jump ability
+		&& jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_0 //have force jump ability
 		&& !(pm->ps->pm_flags&PMF_JUMP_HELD)//not holding jump from a previous jump
 		//&& !PM_InKnockDown( pm->ps )//not in a knockdown
 		&& pm->ps->forceRageRecoveryTime < pm->cmd.serverTime	//not in a force Rage recovery period
@@ -1510,14 +1478,14 @@ static qboolean PM_CheckJump( void )
 						&& pm->ps->weapon == WP_SABER )
 					{
 						if ( (pm->ps->clientNum >= MAX_CLIENTS&&!PM_ControlledByPlayer())
-							|| pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_2 )
+							|| jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_2 )
 						{
 							anim = BOTH_BUTTERFLY_RIGHT;
 							forcePowerCostOverride = G_CostForSpecialMove( SABER_ALT_ATTACK_POWER_LR );
 						}
 					}
 					else if ( (pm->ps->clientNum >= MAX_CLIENTS&&!PM_ControlledByPlayer())
-						|| pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_1 )
+						|| jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_1 )
 					{
 						if ( !(pm->ps->saber[0].saberFlags&SFL_NO_CARTWHEELS)
 							&& (!pm->ps->dualSabers || !(pm->ps->saber[1].saberFlags&SFL_NO_CARTWHEELS)) )
@@ -1553,14 +1521,14 @@ static qboolean PM_CheckJump( void )
 						&& pm->ps->weapon == WP_SABER )
 					{
 						if ( (pm->ps->clientNum >= MAX_CLIENTS&&!PM_ControlledByPlayer())
-							|| pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_2 )
+							|| jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_2 )
 						{
 							anim = BOTH_BUTTERFLY_LEFT;
 							forcePowerCostOverride = G_CostForSpecialMove( SABER_ALT_ATTACK_POWER_LR );
 						}
 					}
 					else if ( (pm->ps->clientNum >= MAX_CLIENTS&&!PM_ControlledByPlayer())
-						|| pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_1 )
+						|| jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_1 )
 					{
 						if ( !(pm->ps->saber[0].saberFlags&SFL_NO_CARTWHEELS)
 							&& (!pm->ps->dualSabers || !(pm->ps->saber[1].saberFlags&SFL_NO_CARTWHEELS)) )
@@ -1590,7 +1558,7 @@ static qboolean PM_CheckJump( void )
 					}
 				}
 			}
-			else if ( pm->cmd.rightmove > 0 && pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_1 )
+			else if ( pm->cmd.rightmove > 0 && jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_1 )
 			{//strafing right
 				if ( pm->cmd.forwardmove > 0 )
 				{//wall-run
@@ -1611,7 +1579,7 @@ static qboolean PM_CheckJump( void )
 					}
 				}
 			}
-			else if ( pm->cmd.rightmove < 0 && pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_1 )
+			else if ( pm->cmd.rightmove < 0 && jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_1 )
 			{//strafing left
 				if ( pm->cmd.forwardmove > 0 )
 				{//wall-run
@@ -1635,11 +1603,11 @@ static qboolean PM_CheckJump( void )
 			else if ( /*pm->ps->clientNum >= MAX_CLIENTS//not the player
 				&& !PM_ControlledByPlayer() //not controlled by player
 				&&*/ pm->cmd.forwardmove > 0 //pushing forward
-				&& pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_1 )//have jump 2 or higher
+				&& jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_1 )//have jump 2 or higher
 			{//step off wall, flip backwards
 				if ( VectorLengthSquared( pm->ps->velocity ) > 40000 /*200*200*/)
 				{//have to be moving... FIXME: make sure it's opposite the wall... or at least forward?
-					if ( pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_2 )
+					if ( jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_2 )
 					{//run all the way up wwall
 						if ( !(pm->ps->saber[0].saberFlags&SFL_NO_WALL_RUNS)
 							&& (!pm->ps->dualSabers || !(pm->ps->saber[1].saberFlags&SFL_NO_WALL_RUNS)) )
@@ -2150,7 +2118,7 @@ static qboolean PM_CheckJump( void )
 			}
 			/*
 			else if ( pm->cmd.forwardmove < 0
-				&& pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_1
+				&& jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_1
 				&& !(pm->ps->pm_flags&PMF_JUMP_HELD) //not holding jump
 				&& (level.time - pm->ps->lastOnGround) <= 250 //just jumped
 				)//&& !(pm->cmd.buttons&BUTTON_ATTACK) )
@@ -2177,7 +2145,7 @@ static qboolean PM_CheckJump( void )
 			/*
 			else if ( pm->cmd.forwardmove > 0 //pushing forward
 				&& pm->ps->forceRageRecoveryTime < pm->cmd.serverTime	//not in a force Rage recovery period
-				&& pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_1 //have force jump 2 or higher
+				&& jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_1 //have force jump 2 or higher
 				&& (level.time - pm->ps->lastOnGround) <= 250//just jumped
 				&& (pm->ps->legsAnim == BOTH_JUMP1 || pm->ps->legsAnim == BOTH_INAIR1 )//not in a flip or spin or anything
 			{//run up wall, flip backwards
@@ -2186,7 +2154,7 @@ static qboolean PM_CheckJump( void )
 				int parts = SETANIM_LEGS;
 				int contents = CONTENTS_SOLID;
 				qboolean kick = qtrue;
-				if ( pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_2 )
+				if ( jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_2 )
 				{
 					wallWalkAnim = BOTH_FORCEWALLRUNFLIP_START;
 					parts = SETANIM_BOTH;
@@ -2277,7 +2245,7 @@ static qboolean PM_CheckJump( void )
 					&& !(pm->ps->pm_flags&PMF_JUMP_HELD)//have to have released jump since last press
 					&& (pm->cmd.forwardmove||pm->cmd.rightmove)//pushing in a direction
 					//&& pm->ps->forceRageRecoveryTime < pm->cmd.serverTime	//not in a force Rage recovery period
-					&& pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_2//level 3 jump or better
+					&& jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_2//level 3 jump or better
 					&& pm->ps->forcePower > 10 //have enough force power to do another one
 					&& (level.time-pm->ps->lastOnGround) > 250 //haven't been on the ground in the last 1/4 of a second
 					&& (!(pm->ps->pm_flags&PMF_JUMPING)//not jumping
@@ -2534,6 +2502,8 @@ static void PM_WaterJumpMove( void )
 
 	PM_StepSlideMove( 1 );
 
+	if (pm->moverRemoved)
+		return;
 	pm->ps->velocity[2] -= pm->ps->gravity * pml.frametime;
 	if (pm->ps->velocity[2] < 0)
 	{
@@ -2557,11 +2527,17 @@ static void PM_WaterMove( void ) {
 	float	scale;
 	float	vel;
 
-	if ( PM_CheckWaterJump() ) 	{
+	const bool onLadder = (pm->watertype & CONTENTS_LADDER) != 0;
+	if (onLadder) {
+		const float crouchHeight = pm->gent && pm->gent->client ? pm->gent->client->crouchheight : CROUCH_MAXS_2;
+		if (!PM_InKnockDown(pm->ps) && !PM_InRoll(pm->ps)) {
+			JAR_LadderCrouch(pm, pml.forward, pml.right, crouchHeight);
+		}
+	} else if ( PM_CheckWaterJump() ) 	{
 		PM_WaterJumpMove();
 		return;
 	}
-	else if ( pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_0 && pm->waterlevel < 3 )
+	else if ( jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_0 && pm->waterlevel < 3 )
 	{
 		if ( PM_CheckJump () ) {
 			// jumped away
@@ -2996,12 +2972,12 @@ static void PM_AirMove( void ) {
 	}
 
 	if ( (pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer())
-		&& pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_0
+		&& jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_0
 		&& pm->ps->forceJumpZStart
 		&& pm->ps->velocity[2] > 0 )
 	{//I am force jumping and I'm not holding the button anymore
 		float curHeight = pm->ps->origin[2] - pm->ps->forceJumpZStart + (pm->ps->velocity[2]*pml.frametime);
-		float maxJumpHeight = forceJumpHeight[pm->ps->forcePowerLevel[FP_LEVITATION]];
+		float maxJumpHeight = forceJumpHeight[jar::enlightenment::Rank(*pm->ps,FP_LEVITATION)];
 		if ( curHeight >= maxJumpHeight )
 		{//reached top, cut velocity
 			pm->ps->velocity[2] = 0;
@@ -3013,6 +2989,8 @@ static void PM_AirMove( void ) {
 	}
 	PM_StepSlideMove( gravMod );
 
+	if (pm->moverRemoved)
+		return;
   	if (pVeh && pm->ps->pm_flags&PMF_BUMPED)
 	{
 
@@ -4029,7 +4007,7 @@ static void PM_CrashLand( void )
 			}
 			delta = 1;
 		}
-		else if ( pm->ps->jumpZStart && (pm->ps->forcePowerLevel[FP_LEVITATION] >= FORCE_LEVEL_1||(pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer())) )
+		else if ( pm->ps->jumpZStart && (jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) >= FORCE_LEVEL_1||(pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer())) )
 		{//we were force-jumping
 			if ( pm->ps->origin[2] >= pm->ps->jumpZStart )
 			{//we landed at same height or higher than we landed
@@ -4042,7 +4020,7 @@ static void PM_CrashLand( void )
 			else
 			{//take off some of it, at least
 				delta = (pm->ps->jumpZStart-pm->ps->origin[2]);
-				float dropAllow = forceJumpHeight[pm->ps->forcePowerLevel[FP_LEVITATION]];
+				float dropAllow = forceJumpHeight[jar::enlightenment::Rank(*pm->ps,FP_LEVITATION)];
 				if ( dropAllow < 128 )
 				{//always allow a drop from 128, at least
 					dropAllow = 128;
@@ -6211,9 +6189,9 @@ qboolean PM_CheckRollGetup( void )
 		|| pm->ps->legsAnim == BOTH_PLAYER_PA_3_FLY
 		|| pm->ps->legsAnim == BOTH_RELEASED )
 	{//lying on back or front
-		if ( ((pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer()) && ( pm->cmd.rightmove || (pm->cmd.forwardmove&&pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_0) ) )//player pressing left or right
+		if ( ((pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer()) && ( pm->cmd.rightmove || (pm->cmd.forwardmove&&jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_0) ) )//player pressing left or right
 			|| ( (pm->ps->clientNum >= MAX_CLIENTS&&!PM_ControlledByPlayer()) && pm->gent->NPC//an NPC
-				&& pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_0//have at least force jump 1
+				&& jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_0//have at least force jump 1
 				&& pm->gent->enemy //I have an enemy
 				&& pm->gent->enemy->client//a client
 				&& pm->gent->enemy->enemy == pm->gent//he's mad at me!
@@ -6430,7 +6408,7 @@ qboolean PM_GettingUpFromKnockDown( float standheight, float crouchheight )
 					switch ( pm->ps->legsAnim )
 					{
 					case BOTH_KNOCKDOWN1:
-						if ( (pm->ps->clientNum&&pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_0) || ((pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer())&&pm->cmd.upmove>0&&pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_0) )//FORCE_LEVEL_1) )FORCE_LEVEL_1) )
+						if ( (pm->ps->clientNum&&jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_0) || ((pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer())&&pm->cmd.upmove>0&&jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_0) )//FORCE_LEVEL_1) )FORCE_LEVEL_1) )
 						{
 							anim = Q_irand( BOTH_FORCE_GETUP_B1, BOTH_FORCE_GETUP_B6 );//NOTE: BOTH_FORCE_GETUP_B5 takes soe steps forward at end
 							forceGetUp = qtrue;
@@ -6442,7 +6420,7 @@ qboolean PM_GettingUpFromKnockDown( float standheight, float crouchheight )
 						break;
 					case BOTH_KNOCKDOWN2:
 					case BOTH_PLAYER_PA_3_FLY:
-						if ( (pm->ps->clientNum&&pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_0) || ((pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer())&&pm->cmd.upmove>0&&pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_0) )//FORCE_LEVEL_1) )FORCE_LEVEL_1) )
+						if ( (pm->ps->clientNum&&jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_0) || ((pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer())&&pm->cmd.upmove>0&&jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_0) )//FORCE_LEVEL_1) )FORCE_LEVEL_1) )
 						{
 							anim = Q_irand( BOTH_FORCE_GETUP_B1, BOTH_FORCE_GETUP_B6 );//NOTE: BOTH_FORCE_GETUP_B5 takes soe steps forward at end
 							forceGetUp = qtrue;
@@ -6453,7 +6431,7 @@ qboolean PM_GettingUpFromKnockDown( float standheight, float crouchheight )
 						}
 						break;
 					case BOTH_KNOCKDOWN3:
-						if ( (pm->ps->clientNum&&pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_0) || ((pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer())&&pm->cmd.upmove>0&&pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_0) )//FORCE_LEVEL_1) )
+						if ( (pm->ps->clientNum&&jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_0) || ((pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer())&&pm->cmd.upmove>0&&jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_0) )//FORCE_LEVEL_1) )
 						{
 							anim = Q_irand( BOTH_FORCE_GETUP_F1, BOTH_FORCE_GETUP_F2 );
 							forceGetUp = qtrue;
@@ -6465,7 +6443,7 @@ qboolean PM_GettingUpFromKnockDown( float standheight, float crouchheight )
 						break;
 					case BOTH_KNOCKDOWN4:
 					case BOTH_RELEASED:
-						if ( (pm->ps->clientNum&&pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_0) || ((pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer())&&pm->cmd.upmove>0&&pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_0) )//FORCE_LEVEL_1) )FORCE_LEVEL_1) )
+						if ( (pm->ps->clientNum&&jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_0) || ((pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer())&&pm->cmd.upmove>0&&jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_0) )//FORCE_LEVEL_1) )FORCE_LEVEL_1) )
 						{
 							anim = Q_irand( BOTH_FORCE_GETUP_B1, BOTH_FORCE_GETUP_B6 );//NOTE: BOTH_FORCE_GETUP_B5 takes soe steps forward at end
 							forceGetUp = qtrue;
@@ -6477,7 +6455,7 @@ qboolean PM_GettingUpFromKnockDown( float standheight, float crouchheight )
 						break;
 					case BOTH_KNOCKDOWN5:
 					case BOTH_LK_DL_ST_T_SB_1_L:
-						if ( (pm->ps->clientNum&&pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_0) || ((pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer())&&pm->cmd.upmove>0&&pm->ps->forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_0) )//FORCE_LEVEL_1) )FORCE_LEVEL_1) )
+						if ( (pm->ps->clientNum&&jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_0) || ((pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer())&&pm->cmd.upmove>0&&jar::enlightenment::Rank(*pm->ps,FP_LEVITATION) > FORCE_LEVEL_0) )//FORCE_LEVEL_1) )FORCE_LEVEL_1) )
 						{
 							anim = Q_irand( BOTH_FORCE_GETUP_F1, BOTH_FORCE_GETUP_F2 );
 							forceGetUp = qtrue;
@@ -8015,40 +7993,16 @@ static void PM_Footsteps( void )
 		if ( pm->waterlevel > 0 )
 		{
 			if ( pm->watertype & CONTENTS_LADDER )
-			{//FIXME: check for watertype, save waterlevel for whether to play
-				//the get off ladder transition anim!
-				if ( pm->ps->velocity[2]  )
-				{//going up or down it
-					int	anim;
-					if ( pm->ps->velocity[2] > 0 )
-					{
-						anim = BOTH_LADDER_UP1;
-					}
-					else
-					{
-						anim = BOTH_LADDER_DWN1;
-					}
-					PM_SetAnim( pm, SETANIM_LEGS, anim, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
-					if ( pm->waterlevel >= 2 )	//arms on ladder
-					{
-						PM_SetAnim( pm, SETANIM_TORSO, anim, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
-					}
-					if (fabs(pm->ps->velocity[2]) >5) {
-						bobmove = 0.005 * fabs(pm->ps->velocity[2]);	// climbing bobs slow
-						if (bobmove > 0.3)
-							bobmove = 0.3F;
-						goto DoFootSteps;
-					}
-				}
-				else
-				{
-					PM_SetAnim( pm, SETANIM_LEGS, BOTH_LADDER_IDLE, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD|SETANIM_FLAG_RESTART );
-					pm->ps->legsAnimTimer += 300;
-					if ( pm->waterlevel >= 2 )	//arms on ladder
-					{
-						PM_SetAnim( pm, SETANIM_TORSO, BOTH_LADDER_IDLE, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD|SETANIM_FLAG_RESTART );
-						pm->ps->torsoAnimTimer += 300;
-					}
+			{
+				const float verticalSpeed = pm->ps->velocity[2];
+				const int anim = verticalSpeed > 5 ? BOTH_LADDER_UP1 :
+					verticalSpeed < -5 ? BOTH_LADDER_DWN1 : BOTH_LADDER_IDLE;
+				const int parts = pm->waterlevel >= 2 ? SETANIM_BOTH : SETANIM_LEGS;
+				// Match multiplayer for Academy models with no dedicated ladder clips.
+				PM_SetAnim(pm, parts, PM_HasAnimation(pm->gent, anim) ? anim : BOTH_HANG_IDLE, SETANIM_FLAG_OVERRIDE);
+				if (anim != BOTH_LADDER_IDLE) {
+					bobmove = fminf(.3f, .005f * fabsf(verticalSpeed));
+					goto DoFootSteps;
 				}
 				return;
 			}
@@ -10290,7 +10244,7 @@ void PM_SaberLockBreak( gentity_t *gent, gentity_t *genemy, saberLockResult_t re
 		}
 		if ( result == LOCK_VICTORY )
 		{//one person won
-			if ( Q_irand( FORCE_LEVEL_1, FORCE_LEVEL_2 ) < pm->ps->forcePowerLevel[FP_SABER_OFFENSE] )
+			if ( Q_irand( FORCE_LEVEL_1, FORCE_LEVEL_2 ) < jar::enlightenment::Rank(*pm->ps,FP_SABER_OFFENSE) )
 			{
 				vec3_t throwDir = {0,0,350};
 				int		winMove = pm->ps->saberMove;
@@ -10363,7 +10317,7 @@ void PM_SaberLockBreak( gentity_t *gent, gentity_t *genemy, saberLockResult_t re
 					}
 					if ( pm->ps->forcePowersActive&(1<<FP_RAGE) )
 					{
-						victoryStrength += gent->client->ps.forcePowerLevel[FP_RAGE];
+						victoryStrength += jar::enlightenment::Rank(gent->client->ps,FP_RAGE);
 					}
 					else if ( pm->ps->forceRageRecoveryTime > pm->cmd.serverTime )
 					{
@@ -10408,7 +10362,7 @@ int G_SaberLockStrength( gentity_t *gent )
 	}
 	if ( gent->client->ps.forcePowersActive&(1<<FP_RAGE) )
 	{
-		strength += gent->client->ps.forcePowerLevel[FP_RAGE];
+		strength += jar::enlightenment::Rank(gent->client->ps,FP_RAGE);
 	}
 	else if ( gent->client->ps.forceRageRecoveryTime > pm->cmd.serverTime )
 	{
@@ -10422,7 +10376,7 @@ int G_SaberLockStrength( gentity_t *gent )
 		}
 		else
 		{
-			strength += gent->client->ps.forcePowerLevel[FP_SABER_OFFENSE]+Q_irand(0,g_spskill->integer);
+			strength += jar::enlightenment::Rank(gent->client->ps,FP_SABER_OFFENSE)+Q_irand(0,g_spskill->integer);
 			if ( gent->NPC )
 			{
 				if ( (gent->NPC->aiFlags&NPCAI_BOSS_CHARACTER)
@@ -10440,7 +10394,7 @@ int G_SaberLockStrength( gentity_t *gent )
 	}
 	else
 	{//player
-		strength += gent->client->ps.forcePowerLevel[FP_SABER_OFFENSE]+Q_irand(0,g_spskill->integer)+Q_irand(0,1);
+		strength += jar::enlightenment::Rank(gent->client->ps,FP_SABER_OFFENSE)+Q_irand(0,g_spskill->integer)+Q_irand(0,1);
 	}
 	return strength;
 }
@@ -11616,7 +11570,7 @@ qboolean PM_SaberBlocking( void )
 			&& pm->ps->saberBlocked <= BLOCKED_TOP
 			&& !PM_SaberInKnockaway( pm->ps->saberBounceMove ) )
 		{//if hitting attack during a parry (not already a knockaway)
-			if ( pm->ps->forcePowerLevel[FP_SABER_DEFENSE] > FORCE_LEVEL_2 )
+			if ( jar::enlightenment::Rank(*pm->ps,FP_SABER_DEFENSE) > FORCE_LEVEL_2 )
 			{//have high saber defense, turn the parry into a knockaway?
 				//FIXME: this could actually be bad for us...?  Leaves us open
 				pm->ps->saberBounceMove = PM_KnockawayForParry( pm->ps->saberBlocked );
@@ -11628,9 +11582,9 @@ qboolean PM_SaberBlocking( void )
 		{//can't attack for twice whatever your skill level's parry debounce time is
 			if ( pm->ps->clientNum == 0 || PM_ControlledByPlayer() )
 			{//player
-				if ( pm->ps->forcePowerLevel[FP_SABER_DEFENSE] <= FORCE_LEVEL_1 )
+				if ( jar::enlightenment::Rank(*pm->ps,FP_SABER_DEFENSE) <= FORCE_LEVEL_1 )
 				{
-					pm->ps->weaponTime = parryDebounce[pm->ps->forcePowerLevel[FP_SABER_DEFENSE]];
+					pm->ps->weaponTime = parryDebounce[jar::enlightenment::Rank(*pm->ps,FP_SABER_DEFENSE)];
 				}
 			}
 			else
@@ -11642,7 +11596,7 @@ qboolean PM_SaberBlocking( void )
 				}
 				else
 				{//WTF???
-					pm->ps->weaponTime = parryDebounce[pm->ps->forcePowerLevel[FP_SABER_DEFENSE]] * 2;
+					pm->ps->weaponTime = parryDebounce[jar::enlightenment::Rank(*pm->ps,FP_SABER_DEFENSE)] * 2;
 				}
 			}
 		}
@@ -12648,7 +12602,7 @@ void PM_WeaponLightsaber(void)
 					else */
 					if ( pm->ps->clientNum >= MAX_CLIENTS
 						&& !PM_ControlledByPlayer()
-						&& (Q_irand( 0, pm->ps->forcePowerLevel[FP_SABER_OFFENSE]-1 )
+						&& (Q_irand( 0, jar::enlightenment::Rank(*pm->ps,FP_SABER_OFFENSE)-1 )
 							|| (pm->gent&&pm->gent->enemy&&pm->gent->enemy->client&&PM_InKnockDownOnGround(&pm->gent->enemy->client->ps))//enemy knocked down, use some logic
 							|| ( pm->ps->saberAnimLevel == SS_FAST && pm->gent && pm->gent->NPC && pm->gent->NPC->rank >= RANK_LT_JG && Q_irand( 0, 1 ) ) ) )//minor change to make fast-attack users use the special attacks more
 					{//NPCs use more randomized attacks the more skilled they are
@@ -13002,7 +12956,7 @@ static bool PM_DoChargedWeapons( void )
 		{
 			if ( pm->ps->weaponstate != WEAPON_CHARGING_ALT && pm->ps->weaponstate != WEAPON_DROPPING )
 			{
-				if ( pm->ps->ammo[weaponData[pm->ps->weapon].ammoIndex] <= 0)
+			if ( !BG_WeaponHasAmmo(pm->ps->ammo[weaponData[pm->ps->weapon].ammoIndex], 1) )
 				{
 					PM_AddEvent( EV_NOAMMO );
 					pm->ps->weaponTime += 500;
@@ -13024,7 +12978,7 @@ static bool PM_DoChargedWeapons( void )
 
 			if ( pm->ps->weaponstate != WEAPON_CHARGING && pm->ps->weaponstate != WEAPON_DROPPING )
 			{
-				if ( pm->ps->ammo[weaponData[pm->ps->weapon].ammoIndex] <= 0)
+			if ( !BG_WeaponHasAmmo(pm->ps->ammo[weaponData[pm->ps->weapon].ammoIndex], 1) )
 				{
 					PM_AddEvent( EV_NOAMMO );
 					pm->ps->weaponTime += 500;
@@ -13324,8 +13278,10 @@ PM_Weapon
 Generates weapon events and modifes the weapon counter
 ==============
 */
+#include "bg_jar_fists.inc"
 static void PM_Weapon( void )
 {
+    int jarPunchCooldown=0;
 	int			addTime, amount, trueCount = 1;
 	qboolean	delayed_fire = qfalse;
 
@@ -13544,7 +13500,7 @@ static void PM_Weapon( void )
 		{//melee
 			if ( (pm->cmd.buttons&(BUTTON_ATTACK|BUTTON_ALT_ATTACK)) != (BUTTON_ATTACK|BUTTON_ALT_ATTACK) )
 			{//not holding both buttons
-				if ( (pm->cmd.buttons&BUTTON_ATTACK)&&(pm->ps->pm_flags&PMF_ATTACK_HELD) )
+				if ( (pm->cmd.buttons&BUTTON_ATTACK)&&(pm->ps->pm_flags&PMF_ATTACK_HELD) && !PM_JARContinuousPunch() )
 				{//held button
 					//clear it
 					pm->cmd.buttons &= ~BUTTON_ATTACK;
@@ -13660,6 +13616,11 @@ static void PM_Weapon( void )
 				break;
 
 			case WP_MELEE:
+                if (PM_JARContinuousPunch()) {
+                    jarPunchCooldown=PM_JARStartPunch();
+                    if (!jarPunchCooldown) return;
+                    break;
+                }
 
 				// since there's no RACE_BOTS, I listed all the droids that have might have melee attacks - dmv
 				if ( pm->gent && pm->gent->client )
@@ -13951,6 +13912,11 @@ static void PM_Weapon( void )
 			addTime = weaponData[pm->ps->weapon].fireTime;
 		}
 	}
+    else if (jarPunchCooldown>0)
+    {
+        PM_AddEvent(EV_FIRE_WEAPON);
+        addTime=jarPunchCooldown;
+    }
 	else if ( (pm->ps->weapon == WP_MELEE && (pm->ps->clientNum>=MAX_CLIENTS||!g_debugMelee->integer) )
 		|| pm->ps->weapon == WP_TUSKEN_STAFF
 		|| (pm->ps->weapon == WP_TUSKEN_RIFLE&&!(pm->cmd.buttons&BUTTON_ALT_ATTACK))  )
@@ -14040,13 +14006,14 @@ static void PM_Weapon( void )
 	pm->ps->lastShotTime = level.time;//so we know when the last time we fired our gun is
 
 	// HACK!!!!!
-	if ( pm->ps->ammo[weaponData[pm->ps->weapon].ammoIndex] <= 0 )
+	if ( !BG_WeaponHasAmmo(pm->ps->ammo[weaponData[pm->ps->weapon].ammoIndex], 1) )
 	{
 		if ( pm->ps->weapon == WP_THERMAL || pm->ps->weapon == WP_TRIP_MINE )
 		{
 			// because these weapons have the ammo attached to the hand, we should switch weapons when the last one is thrown, otherwise it will look silly
 			//	NOTE: could also switch to an empty had version, but was told we aren't getting any new models at this point
-			CG_OutOfAmmoChange();
+			if (pm->ps->clientNum < MAX_CLIENTS || PM_ControlledByPlayer())
+				CG_OutOfAmmoChange();
 			PM_SetAnim(pm,SETANIM_TORSO,TORSO_DROPWEAP1 + 2,SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD); // hack weapon down!
 			pm->ps->weaponTime = 50;
 		}
@@ -14408,8 +14375,6 @@ extern float cg_zoomFov;	//from cg_view.cpp
 void PM_AdjustAttackStates( pmove_t *pm )
 //-------------------------------------------
 {
-	int amount;
-
 	if ( !g_saberAutoBlocking->integer
 		&& !g_saberNewControlScheme->integer
 		&& (pm->cmd.buttons&BUTTON_FORCE_FOCUS) )
@@ -14418,15 +14383,10 @@ void PM_AdjustAttackStates( pmove_t *pm )
 		pm->cmd.buttons &= ~BUTTON_ATTACK;
 		pm->cmd.buttons &= ~BUTTON_ALT_ATTACK;
 	}
-	// get ammo usage
-	if ( pm->cmd.buttons & BUTTON_ALT_ATTACK )
-	{
-		amount = pm->ps->ammo[weaponData[ pm->ps->weapon ].ammoIndex] - weaponData[pm->ps->weapon].altEnergyPerShot;
-	}
-	else
-	{
-		amount = pm->ps->ammo[weaponData[ pm->ps->weapon ].ammoIndex] - weaponData[pm->ps->weapon].energyPerShot;
-	}
+	const auto& weapon = weaponData[pm->ps->weapon];
+	const int ammo = pm->ps->ammo[weapon.ammoIndex];
+	const bool alt = (pm->cmd.buttons & BUTTON_ALT_ATTACK) != 0;
+	bool hasAmmo = BG_WeaponHasAmmo(ammo, alt ? weapon.altEnergyPerShot : weapon.energyPerShot);
 
 	if ( pm->ps->weapon == WP_SABER && (!cg.zoomMode||pm->ps->clientNum) )
 	{//don't let the alt-attack be interpreted as an actual attack command
@@ -14496,14 +14456,13 @@ void PM_AdjustAttackStates( pmove_t *pm )
 			//	just use whatever ammo was selected from above
 			if ( cg.zoomMode == 2 )
 			{
-				amount = pm->ps->ammo[weaponData[ pm->ps->weapon ].ammoIndex] -
-							weaponData[pm->ps->weapon].altEnergyPerShot;
+				hasAmmo = BG_WeaponHasAmmo(ammo, weapon.altEnergyPerShot);
 			}
 		}
 		else
 		{
 			// alt-fire button pressing doesn't use any ammo
-			amount = 0;
+			hasAmmo = true;
 		}
 
 	}
@@ -14536,7 +14495,7 @@ void PM_AdjustAttackStates( pmove_t *pm )
 	}
 
 	// set the firing flag for continuous beam weapons, phaser will fire even if out of ammo
-	if ( (( pm->cmd.buttons & BUTTON_ATTACK || pm->cmd.buttons & BUTTON_ALT_ATTACK ) && ( amount >= 0 || pm->ps->weapon == WP_SABER )) )
+	if ( (( pm->cmd.buttons & BUTTON_ATTACK || pm->cmd.buttons & BUTTON_ALT_ATTACK ) && ( hasAmmo || pm->ps->weapon == WP_SABER )) )
 	{
 		if ( pm->cmd.buttons & BUTTON_ALT_ATTACK )
 		{
@@ -14677,42 +14636,6 @@ void PM_CheckInVehicleSaberAttackAnim( void )
 	pm->ps->saberBlocking = saberMoveData[pm->ps->saberMove].blocking;
 }
 
-//force the vehicle to turn and travel to its forced destination point
-void PM_VehForcedTurning( gentity_t *veh )
-{
-	gentity_t *dst = &g_entities[pm->ps->vehTurnaroundIndex];
-	float pitchD, yawD;
-	vec3_t dir;
-
-	if (!veh || !veh->m_pVehicle)
-	{
-		return;
-	}
-
-	if (!dst)
-	{ //can't find dest ent?
-		return;
-	}
-
-	pm->cmd.upmove = veh->m_pVehicle->m_ucmd.upmove = 127;
-	pm->cmd.forwardmove = veh->m_pVehicle->m_ucmd.forwardmove = 0;
-	pm->cmd.rightmove = veh->m_pVehicle->m_ucmd.rightmove = 0;
-
-	VectorSubtract(dst->s.origin, veh->currentOrigin, dir);
-	vectoangles(dir, dir);
-
-	yawD = AngleSubtract(pm->ps->viewangles[YAW], dir[YAW]);
-	pitchD = AngleSubtract(pm->ps->viewangles[PITCH], dir[PITCH]);
-
-	yawD *= 0.2f*pml.frametime;
-	pitchD *= 0.6f*pml.frametime;
-
-	pm->ps->viewangles[YAW] = AngleSubtract(pm->ps->viewangles[YAW], yawD);
-	pm->ps->viewangles[PITCH] = AngleSubtract(pm->ps->viewangles[PITCH], pitchD);
-
-	//PM_SetPMViewAngle(pm->ps, pm->ps->viewangles, &pm->cmd);
-	SetClientViewAngle(pm->gent, pm->ps->viewangles);
-}
 /*
 ================
 Pmove
@@ -14720,6 +14643,8 @@ Pmove
 Can be called by either the server or the client
 ================
 */
+#include "bg_jar_vehicle_push.inc"
+
 void Pmove( pmove_t *pmove )
 {
 	Vehicle_t *pVeh = NULL;
@@ -14733,6 +14658,7 @@ void Pmove( pmove_t *pmove )
 	pm->numtouch = 0;
 	pm->watertype = 0;
 	pm->waterlevel = 0;
+	pm->moverRemoved = qfalse;
 
 	// Clear the blocked flag
 	//pm->ps->pm_flags &= ~PMF_BLOCKED;
@@ -14784,11 +14710,7 @@ void Pmove( pmove_t *pmove )
 	}
 	else if ( pm->gent && PM_RidingVehicle() )
 	{
-		if ( pm->ps->vehTurnaroundIndex
-			&& pm->ps->vehTurnaroundTime > pm->cmd.serverTime )
-		{ //riding this vehicle, turn my view too
-			PM_VehForcedTurning( &g_entities[pm->gent->s.m_iVehicleNum] );
-		}
+		G_ShipBoundaryPilot(pm->gent, &pm->cmd);
 	}
 
 	PM_SetSpecialMoveValues();
@@ -14887,6 +14809,7 @@ void Pmove( pmove_t *pmove )
 	}
 
 	PM_DropTimers();
+	Vehicle_t* const pushedVehicle=PM_BeginVehiclePush(pVeh);
 
 	/*
 	if ( PM_RidingVehicle() )
@@ -14936,6 +14859,8 @@ void Pmove( pmove_t *pmove )
 		VectorCopy( pm->ps->origin, oldOrg );
 
 		PM_WalkMove();
+		if (pm->moverRemoved)
+			return;
 
 
 		float threshHold = 0.001f, movedDist = DistanceSquared( oldOrg, pm->ps->origin );
@@ -14962,7 +14887,11 @@ void Pmove( pmove_t *pmove )
 		}
 	}
 
-	//PM_Animate();
+	if (pm->moverRemoved)
+		return;
+	if(pushedVehicle)PM_MoveVehiclePush(*pushedVehicle);
+	if (pm->moverRemoved)
+		return;
 
 	// If we didn't move at all, then why bother doing this again -MW.
 	if(!(VectorCompare(pm->ps->origin,pml.previous_origin)))
@@ -15068,7 +14997,7 @@ void Pmove( pmove_t *pmove )
 	//-------------------------------------------------
 	if ( pm->gent )
 	{
-		pm->gent->resultspeed = ((Distance(pm->ps->origin, pm->gent->currentOrigin) / pml.msec) * 1000);
+		pm->gent->resultspeed = ((Distance(pm->ps->origin, pml.previous_origin) / pml.msec) * 1000);
 		if (pm->gent->resultspeed>5.0f)
 		{
 			pm->gent->lastMoveTime = level.time;

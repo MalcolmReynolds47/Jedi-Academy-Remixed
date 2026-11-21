@@ -23,8 +23,13 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 // cg_players.c -- handle the media and animation for player entities
 #include "cg_local.h"
+#include "game/jar_saber_rgb.h"
+#include "../../shared/qcommon/jar_galak_surfaces.h"
+#include "cg_jar_galak.inc"
 #include "ghoul2/G2.h"
 #include "game/bg_saga.h"
+#include "game/jar_mp_emplaced.h"
+#include <stdlib.h>
 
 extern vmCvar_t	cg_thirdPersonAlpha;
 
@@ -1592,11 +1597,13 @@ void CG_NewClientInfo( int clientNum, qboolean entitiesInitialized ) {
 	CG_ColorFromString( v, newInfo.color1 );
 
 	newInfo.icolor1 = atoi(v);
+	newInfo.customSaberRGB[0] = JAR_ParseSaberRGB(v, newInfo.saberRGB[0]);
 
 	v = Info_ValueForKey( configstring, "c2" );
 	CG_ColorFromString( v, newInfo.color2 );
 
 	newInfo.icolor2 = atoi(v);
+	newInfo.customSaberRGB[1] = JAR_ParseSaberRGB(v, newInfo.saberRGB[1]);
 
 	// bot skill
 	v = Info_ValueForKey( configstring, "skill" );
@@ -1727,12 +1734,14 @@ void CG_NewClientInfo( int clientNum, qboolean entitiesInitialized ) {
 				if (siegeClass->hasForcedSaberColor)
 				{
 					newInfo.icolor1 = siegeClass->forcedSaberColor;
+					newInfo.customSaberRGB[0] = qfalse;
 
 					CG_ColorFromInt( newInfo.icolor1, newInfo.color1 );
 				}
 				if (siegeClass->hasForcedSaber2Color)
 				{
 					newInfo.icolor2 = siegeClass->forcedSaber2Color;
+					newInfo.customSaberRGB[1] = qfalse;
 
 					CG_ColorFromInt( newInfo.icolor2, newInfo.color2 );
 				}
@@ -4102,6 +4111,9 @@ static void CG_G2SetHeadAnim( centity_t *cent, int anim )
 	}
 }
 
+#include "cg_jar_face.inc"
+#include "cg_jar_saber_extension.inc"
+
 qboolean CG_G2PlayerHeadAnims( centity_t *cent )
 {
 	clientInfo_t *ci = NULL;
@@ -5356,7 +5368,8 @@ static void CG_DoSaberLight( saberInfo_t *saber )
 	}
 }
 
-void CG_DoSaber( vec3_t origin, vec3_t dir, float length, float lengthMax, float radius, saber_colors_t color, int rfx, qboolean doLight )
+static void CG_DoSaber( vec3_t origin, vec3_t dir, float length, float lengthMax, float radius,
+	saber_colors_t color, const byte *customRGB, int rfx, qboolean doLight )
 {
 	vec3_t		mid;
 	qhandle_t	blade = 0, glow = 0;
@@ -5406,10 +5419,18 @@ void CG_DoSaber( vec3_t origin, vec3_t dir, float length, float lengthMax, float
 			break;
 	}
 
+	if (customRGB)
+	{
+		glow = trap->R_RegisterShader("gfx/jar/saber_rgb_glow");
+		blade = trap->R_RegisterShader("gfx/jar/saber_rgb_core");
+	}
+
 	if (doLight)
 	{	// always add a light because sabers cast a nice glow before they slice you in half!!  or something...
 		vec3_t rgb={1,1,1};
 		CG_RGBForSaberColor( color, rgb );
+		if (customRGB)
+			VectorSet(rgb, customRGB[0] / 255.0f, customRGB[1] / 255.0f, customRGB[2] / 255.0f);
 		trap->R_AddLightToScene( mid, (length*1.4f) + (Q_flrand(0.0f, 1.0f)*3.0f), rgb[0], rgb[1], rgb[2] );
 	}
 
@@ -5446,6 +5467,8 @@ void CG_DoSaber( vec3_t origin, vec3_t dir, float length, float lengthMax, float
 	saber.reType = RT_SABER_GLOW;
 	saber.customShader = glow;
 	saber.shaderRGBA[0] = saber.shaderRGBA[1] = saber.shaderRGBA[2] = saber.shaderRGBA[3] = 0xff;
+	if (customRGB)
+		memcpy(saber.shaderRGBA, customRGB, 3);
 	saber.renderfx = rfx;
 
 	trap->R_AddRefEntityToScene( &saber );
@@ -6044,6 +6067,7 @@ void CG_AddSaberBlade( centity_t *cent, centity_t *scent, refEntity_t *saber, in
 	vec3_t futureAngles;
 	effectTrailArgStruct_t fx;
 	int scolor = 0;
+	const byte *customRGB = NULL;
 	int	useModelIndex = 0;
 
 	if (cent->currentState.eType == ET_NPC)
@@ -6129,6 +6153,8 @@ void CG_AddSaberBlade( centity_t *cent, centity_t *scent, refEntity_t *saber, in
 	}
 	else
 	{
+		if (client->customSaberRGB[saberNum])
+			customRGB = client->saberRGB[saberNum];
 		if (saberNum == 0)
 		{
 			scolor = client->icolor1;
@@ -6147,10 +6173,12 @@ void CG_AddSaberBlade( centity_t *cent, centity_t *scent, refEntity_t *saber, in
 		if (client->team == TEAM_RED)
 		{
 			scolor = SABER_RED;
+			customRGB = NULL;
 		}
 		else if (client->team == TEAM_BLUE)
 		{
 			scolor = SABER_BLUE;
+			customRGB = NULL;
 		}
 	}
 
@@ -6393,6 +6421,9 @@ CheckTrail:
 							break;
 					}
 
+					if (customRGB)
+						VectorSet(rgb1, customRGB[0], customRGB[1], customRGB[2]);
+
 					//Here we will use the happy process of filling a struct in with arguments and passing it to a trap function
 					//so that we can take the struct and fill in an actual CTrail type using the data within it once we get it
 					//into the effects area
@@ -6528,7 +6559,7 @@ JustDoIt:
 	//CG_DoSaber( org_, axis_[0], saberLen, client->saber[saberNum].blade[bladeNum].lengthMax, client->saber[saberNum].blade[bladeNum].radius,
 	//	scolor, renderfx, (qboolean)(saberNum==0&&bladeNum==0) );
 	CG_DoSaber( org_, axis_[0], saberLen, client->saber[saberNum].blade[bladeNum].lengthMax, client->saber[saberNum].blade[bladeNum].radius,
-		scolor, renderfx, (qboolean)(client->saber[saberNum].numBlades < 3 && !(client->saber[saberNum].saberFlags2&SFL2_NO_DLIGHT)) );
+		scolor, customRGB, renderfx, (qboolean)(client->saber[saberNum].numBlades < 3 && !(client->saber[saberNum].saberFlags2&SFL2_NO_DLIGHT)) );
 }
 
 int CG_IsMindTricked(int trickIndex1, int trickIndex2, int trickIndex3, int trickIndex4, int client)
@@ -7514,38 +7545,7 @@ void CG_G2Animated( centity_t *cent )
 		return;
 	}
 
-	if (cent->npcLocalSurfOff != cent->currentState.surfacesOff ||
-		cent->npcLocalSurfOn != cent->currentState.surfacesOn)
-	{ //looks like it's time for an update.
-		int i = 0;
-
-		while (i < BG_NUM_TOGGLEABLE_SURFACES && bgToggleableSurfaces[i])
-		{
-			if (!(cent->npcLocalSurfOff & (1 << i)) &&
-				(cent->currentState.surfacesOff & (1 << i)))
-			{ //it wasn't off before but it's off now, so reflect this change in the g2 instance.
-				if (bgToggleableSurfaceDebris[i] > 0)
-				{ //make some local debris of this thing?
-					//FIXME: throw off the proper model effect, too
-					CG_CreateSurfaceDebris(cent, i, cgs.effects.mShipDestDestroyed, qtrue);
-				}
-
-				trap->G2API_SetSurfaceOnOff(cent->ghoul2, bgToggleableSurfaces[i], TURN_OFF);
-			}
-
-			if (!(cent->npcLocalSurfOn & (1 << i)) &&
-				(cent->currentState.surfacesOn & (1 << i)))
-			{ //same as above, but on instead of off.
-				trap->G2API_SetSurfaceOnOff(cent->ghoul2, bgToggleableSurfaces[i], TURN_ON);
-			}
-
-			i++;
-		}
-
-		cent->npcLocalSurfOff = cent->currentState.surfacesOff;
-		cent->npcLocalSurfOn = cent->currentState.surfacesOn;
-	}
-
+#include "cg_npc_surfaces.inc"
 
 	/*
 	if (cent->currentState.weapon &&
@@ -7727,20 +7727,17 @@ void CG_ForceFPLSPlayerModel(centity_t *cent, clientInfo_t *ci)
 }
 #endif
 
-//for allocating and freeing npc clientinfo structures.
-//Remember to free this before game shutdown no matter what
-//and don't stomp over it, as it is dynamic memory from the
-//exe.
+// NPC client records follow the entity lifetime. The shared BG arena has
+// map-lifetime data and cannot reclaim individual NPC allocations.
 void CG_CreateNPCClient(clientInfo_t **ci)
 {
-	//trap->TrueMalloc((void **)ci, sizeof(clientInfo_t));
-	*ci = (clientInfo_t *) BG_Alloc(sizeof(clientInfo_t));
+	*ci = calloc(1, sizeof(**ci));
 }
 
 void CG_DestroyNPCClient(clientInfo_t **ci)
 {
-	memset(*ci, 0, sizeof(clientInfo_t));
-	//trap->TrueFree((void **)ci);
+	free(*ci);
+	*ci = NULL;
 }
 
 static void CG_ForceElectrocution( centity_t *cent, const vec3_t origin, vec3_t tempAngles, qhandle_t shader, qboolean alwaysDo )
@@ -8442,6 +8439,23 @@ void CG_CheckThirdPersonAlpha( centity_t *cent, refEntity_t *legs )
 	}
 }
 
+static void CG_RiftBreath(centity_t *cent) {
+	if (!cent->ghoul2 || (cent->currentState.eFlags & (EF_DEAD | EF_NODRAW)) ||
+		(!cg.renderingThirdPerson && cent->currentState.number == cg.snap->ps.clientNum) ||
+		cent->jarColdBreathTime > cg.time || !CG_RiftSectionAir(cent->lerpOrigin)) return;
+	cent->jarColdBreathTime = cg.time + (trap->S_GetVoiceVolume(cent->currentState.number) > 0 ? 300 : 3000);
+	const int bolt = trap->G2API_AddBolt(cent->ghoul2, 0, "*head_front");
+	if (bolt < 0) return;
+	mdxaBone_t matrix;
+	if (!trap->G2API_GetBoltMatrix(cent->ghoul2, 0, bolt, &matrix, cent->turAngles, cent->lerpOrigin,
+		cg.time, cgs.gameModels, cent->modelScale)) return;
+	vec3_t mouth;
+	BG_GiveMeVectorFromMatrix(&matrix, ORIGIN, mouth);
+	if (CG_PointContents(mouth, cent->currentState.number) & (CONTENTS_WATER | CONTENTS_SLIME | CONTENTS_LAVA)) return;
+	const int effect = trap->FX_RegisterEffect("misc/breath");
+	if (effect) trap->FX_PlayBoltedEffectID(effect, mouth, cent->ghoul2, bolt, cent->currentState.number, 0, 0, qtrue);
+}
+
 void CG_Player( centity_t *cent ) {
 	clientInfo_t	*ci;
 	refEntity_t		legs;
@@ -8468,9 +8482,10 @@ void CG_Player( centity_t *cent ) {
 	if (cent->currentState.weapon == WP_EMPLACED_GUN &&
 		cent->currentState.otherEntityNum2)
 	{
+		entityState_t *gun = &cg_entities[cent->currentState.otherEntityNum2].currentState;
 		float empYaw;
 
-		if (BG_EmplacedView(cent->lerpAngles, cg_entities[cent->currentState.otherEntityNum2].currentState.angles, &empYaw, cg_entities[cent->currentState.otherEntityNum2].currentState.origin2[0]))
+		if (BG_EmplacedView(cent->lerpAngles, gun->angles, &empYaw, JAR_MP_EmplacedConstraint(gun)))
 		{
 			cent->lerpAngles[YAW] = empYaw;
 		}
@@ -8602,20 +8617,9 @@ void CG_Player( centity_t *cent ) {
 	else
 	{
 		if (!cent->npcClient)
-		{
-			CG_CreateNPCClient(&cent->npcClient); //allocate memory for it
-
-			if (!cent->npcClient)
-			{
-				assert(0);
-				return;
-			}
-
-			memset(cent->npcClient, 0, sizeof(clientInfo_t));
-			cent->npcClient->ghoul2Model = NULL;
-		}
-
-		assert(cent->npcClient);
+			CG_CreateNPCClient(&cent->npcClient);
+		if (!cent->npcClient)
+			return;
 
 		if (cent->npcClient->ghoul2Model != cent->ghoul2 && cent->ghoul2)
 		{
@@ -8935,7 +8939,7 @@ void CG_Player( centity_t *cent ) {
 	}
 
 	if (cent->ghoul2 &&
-		(cent->currentState.eType != ET_NPC || (cent->currentState.NPC_class != CLASS_VEHICLE&&cent->currentState.NPC_class != CLASS_REMOTE&&cent->currentState.NPC_class != CLASS_SEEKER)) && //don't add weapon models to NPCs that have no bolt for them!
+		(cent->currentState.eType != ET_NPC || (cent->currentState.NPC_class != CLASS_VEHICLE&&cent->currentState.NPC_class != CLASS_REMOTE&&cent->currentState.NPC_class != CLASS_SEEKER&&cent->currentState.NPC_class != CLASS_GALAKMECH)) && //don't add weapon models to NPCs that have no bolt for them!
 		cent->ghoul2weapon != CG_G2WeaponInstance(cent, cent->currentState.weapon) &&
 		!(cent->currentState.eFlags & EF_DEAD) && !cent->torsoBolt &&
 		cg.snap && (cent->currentState.number != cg.snap->ps.clientNum || (cg.snap->ps.pm_flags & PMF_FOLLOW)))
@@ -9216,6 +9220,7 @@ void CG_Player( centity_t *cent ) {
 
 	CG_G2PlayerAngles( cent, legs.axis, rootAngles );
 	CG_G2PlayerHeadAnims( cent );
+	CG_JAR_ApplyFace(cent);
 
 	if ( (cent->currentState.eFlags2&EF2_HELD_BY_MONSTER)
 		&& cent->currentState.hasLookTarget )//NOTE: lookTarget is an entity number, so this presumes that client 0 is NOT a Rancor...
@@ -9762,6 +9767,8 @@ void CG_Player( centity_t *cent ) {
 		}
 	}
 
+	if (!iwantout && !doAlpha) CG_RiftBreath(cent);
+
 	if (cgs.gametype == GT_HOLOCRON && cent->currentState.time2 && (cg.renderingThirdPerson || cg.snap->ps.clientNum != cent->currentState.number))
 	{
 		int i = 0;
@@ -9907,6 +9914,8 @@ void CG_Player( centity_t *cent ) {
 			i++;
 		}
 	}
+
+	CG_JAR_GalakEffects(cent);
 
 	if ((cent->currentState.powerups & (1 << PW_YSALAMIRI)) ||
 		(cgs.gametype == GT_CTY && ((cent->currentState.powerups & (1 << PW_REDFLAG)) || (cent->currentState.powerups & (1 << PW_BLUEFLAG)))) )
@@ -10413,8 +10422,7 @@ stillDoSaber:
 
 	if (cent->currentState.weapon == WP_SABER)
 	{
-		BG_SI_SetLengthGradual(&ci->saber[0], cg.time);
-		BG_SI_SetLengthGradual(&ci->saber[1], cg.time);
+		CG_JAR_SetSaberLengths(cent,ci);
 	}
 
 	if (drawPlayerSaber)
@@ -11144,6 +11152,8 @@ A player just came into view or teleported, so reset all animation info
 */
 void CG_ResetPlayerEntity( centity_t *cent )
 {
+	cent->jarSaberClockValid=qfalse;
+	cent->jarColdBreathTime = 0;
 	clientInfo_t *ci;
 	int i = 0;
 	int j = 0;
@@ -11164,18 +11174,9 @@ void CG_ResetPlayerEntity( centity_t *cent )
 		}
 
 		if (!cent->npcClient)
-		{
-			CG_CreateNPCClient(&cent->npcClient); //allocate memory for it
-
-			if (!cent->npcClient)
-			{
-				assert(0);
-				return;
-			}
-
-			memset(cent->npcClient, 0, sizeof(clientInfo_t));
-			cent->npcClient->ghoul2Model = NULL;
-		}
+			CG_CreateNPCClient(&cent->npcClient);
+		if (!cent->npcClient)
+			return;
 
 		ci = cent->npcClient;
 

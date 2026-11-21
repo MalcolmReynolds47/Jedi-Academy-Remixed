@@ -194,13 +194,17 @@ qboolean	PM_SlideMove( float gravMod ) {
 			damageSelf = qtrue;
 		}
 
-		if ( PM_ClientImpact( &trace, damageSelf ) )
+		const qboolean passedThrough=PM_ClientImpact(&trace,damageSelf);
+		if (pm->moverRemoved)
+			return qtrue;
+		if (passedThrough)
 		{
 			continue;
 		}
 
-		if (pm->gent->client &&
+		if (pm->gent && pm->gent->client &&
 			pm->gent->client->NPC_class == CLASS_VEHICLE &&
+			pm->gent->m_pVehicle && pm->gent->m_pVehicle->m_pVehicleInfo &&
 			trace.plane.normal[2]<pm->gent->m_pVehicle->m_pVehicleInfo->maxSlope
 			)
 		{
@@ -353,11 +357,12 @@ void PM_StepSlideMove( float gravMod )
 		gravMod = 0.0f;
 	}
 
-	if ( PM_SlideMove( gravMod ) == 0 ) {
+	if ( PM_SlideMove( gravMod ) == 0 || pm->moverRemoved ) {
 		return;		// we got exactly where we wanted to go first try
 	}//else Bumped into something, see if we can step over it
 
-	if ( pm->gent && pm->gent->client && pm->gent->client->NPC_class == CLASS_VEHICLE && pm->gent->m_pVehicle->m_pVehicleInfo->hoverHeight > 0 )
+	if ( pm->gent && pm->gent->client && pm->gent->client->NPC_class == CLASS_VEHICLE &&
+		pm->gent->m_pVehicle && pm->gent->m_pVehicle->m_pVehicleInfo && pm->gent->m_pVehicle->m_pVehicleInfo->hoverHeight > 0 )
 	{//Hovering vehicles don't do steps
 		//FIXME: maybe make hovering vehicles go up steps, but not down them?
 		return;
@@ -431,6 +436,8 @@ void PM_StepSlideMove( float gravMod )
 	VectorCopy( trace.endpos, pm->ps->origin );
 	VectorCopy( start_v, pm->ps->velocity );
 	/*cantStepUpFwd = */PM_SlideMove( gravMod );
+	if (pm->moverRemoved)
+		return;
 //===Another slidemove forward================================================================================
 
 	if ( pm->debugLevel )

@@ -21,12 +21,16 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "g_local.h"
+#include "qcommon/jar_force_boon.h"
+#include "qcommon/jar_force_enlightenment.h"
+#include "g_carried_weapon_art.h"
 #include "anims.h"
 #include "b_local.h"
 #include "bg_local.h"
 #include "g_functions.h"
 #include "wp_saber.h"
 #include "g_vehicles.h"
+#include "g_workshop.h"
 #include "../qcommon/tri_coll_test.h"
 #include "../cgame/cg_local.h"
 
@@ -385,7 +389,8 @@ void G_CreateG2AttachedWeaponModel( gentity_t *ent, const char *psWeaponModel, i
 	}
 	char weaponModel[64];
 
-	strcpy (weaponModel, psWeaponModel);
+	const char* attachModel = weaponNum == 0 ? jar::carriedWeapon::HandModel(*ent, psWeaponModel) : psWeaponModel;
+	strcpy(weaponModel, attachModel);
 	if (char *spot = strstr(weaponModel, ".md3") ) {
 		*spot = 0;
 		spot = strstr(weaponModel, "_w");//i'm using the in view weapon array instead of scanning the item list, so put the _w back on
@@ -400,7 +405,9 @@ void G_CreateG2AttachedWeaponModel( gentity_t *ent, const char *psWeaponModel, i
 	int wModelIndex = G_ModelIndex( weaponModel );
 	if ( wModelIndex )
 	{
+		if(gi.JAR_Log) gi.JAR_Log(1,"npc","weapon_model_begin","entity=%d weapon=%d model=%s ghoul2=%p",ent->s.number,weaponNum,weaponModel,&ent->ghoul2);
 		ent->weaponModel[weaponNum] = gi.G2API_InitGhoul2Model(ent->ghoul2, weaponModel, wModelIndex, NULL_HANDLE, NULL_HANDLE, 0, 0 );
+		if(gi.JAR_Log) gi.JAR_Log(1,"npc","weapon_model_end","entity=%d model_index=%d",ent->s.number,ent->weaponModel[weaponNum]);
 		if ( ent->weaponModel[weaponNum] != -1 )
 		{
 			// attach it to the hand
@@ -413,6 +420,8 @@ void G_CreateG2AttachedWeaponModel( gentity_t *ent, const char *psWeaponModel, i
 	}
 
 }
+
+#include "g_workshop_hand_model.inc"
 
 void WP_SaberAddG2SaberModels( gentity_t *ent, int specificSaberNum )
 {
@@ -460,7 +469,7 @@ void WP_SaberAddG2SaberModels( gentity_t *ent, int specificSaberNum )
 		}
 		G_CreateG2AttachedWeaponModel( ent, ent->client->ps.saber[saberNum].model, handBolt, saberNum );
 
-		if ( ent->client->ps.saber[saberNum].skin != NULL )
+		if ( ent->weaponModel[saberNum] > 0 && ent->client->ps.saber[saberNum].skin != NULL )
 		{//if this saber has a customSkin, use it
 			// lets see if it's out there
 			int saberSkin = gi.RE_RegisterSkin( ent->client->ps.saber[saberNum].skin );
@@ -611,6 +620,10 @@ void WP_SetSaberEntModelSkin( gentity_t *ent, gentity_t *saberent )
 		saberent->playerModel = gi.G2API_InitGhoul2Model( saberent->ghoul2, ent->client->ps.saber[0].model, saberModel, NULL_HANDLE, NULL_HANDLE, 0, 0);
 		saberent->s.modelindex = saberModel;
 		newModel = qtrue;
+	}
+	if ( saberent->playerModel < 0 || !saberent->ghoul2.size() )
+	{
+		return;
 	}
 	//set skin, too
 	if ( ent->client->ps.saber[0].skin == NULL )
@@ -835,7 +848,7 @@ void WP_SaberBounceSound( gentity_t *ent, gentity_t *hitEnt, gentity_t *playOnEn
 	}
 }
 
-int WP_SaberInitBladeData( gentity_t *ent )
+static int WP_SaberInitBladeDataImpl( gentity_t *ent, bool optional )
 {
 	if ( !ent->client )
 	{
@@ -966,7 +979,8 @@ int WP_SaberInitBladeData( gentity_t *ent )
 
 		if ( ent->client->ps.saberEntityNum <= 0 || ent->client->ps.saberEntityNum >= ENTITYNUM_WORLD )
 		{//FIXME: if you do have a saber already, be sure to re-set the model if it's changed (say, via a script).
-			gentity_t *saberent = G_Spawn();
+			gentity_t *saberent = optional ? G_TrySpawn() : G_Spawn();
+			if ( !saberent ) return 0;
 			ent->client->ps.saberEntityNum = saberent->s.number;
 			saberent->classname = "lightsaber";
 
@@ -992,6 +1006,12 @@ Ghoul2 Insert Start
 */
 			saberent->playerModel = -1;
 			WP_SetSaberEntModelSkin( ent, saberent );
+			if ( saberent->playerModel < 0 || !saberent->ghoul2.size() )
+			{
+				ent->client->ps.saberEntityNum = ENTITYNUM_NONE;
+				G_FreeEntity(saberent);
+				return 0;
+			}
 
 			// set up a bolt on the end so we can get where the sabre muzzle is - we can assume this is always bolt 0
 			gi.G2API_AddBolt( &saberent->ghoul2[0], "*flash" );
@@ -1037,6 +1057,24 @@ Ghoul2 Insert End
 	}
 
 	return 1;
+}
+
+int WP_SaberInitBladeData( gentity_t *ent )
+{
+	return WP_SaberInitBladeDataImpl(ent, false);
+}
+
+bool WP_SaberInitSandboxBladeData( gentity_t *ent )
+{
+	if (!ent || !ent->client) return false;
+	const int number=ent->client->ps.saberEntityNum;
+	if (number>0&&number<ENTITYNUM_WORLD){
+		const auto& helper=g_entities[number];
+		if (!helper.inuse||helper.owner!=ent||!helper.classname||Q_stricmp(helper.classname,"lightsaber")) return false;
+	}
+	if (!WP_SaberInitBladeDataImpl(ent, true)) return false;
+	const auto& helper=g_entities[ent->client->ps.saberEntityNum];
+	return helper.inuse&&helper.owner==ent&&helper.playerModel>=0&&helper.ghoul2.size()>0;
 }
 
 void WP_SaberUpdateOldBladeData( gentity_t *ent )
@@ -4137,7 +4175,7 @@ qboolean G_TryingPullAttack( gentity_t *self, usercmd_t *cmd, qboolean amPulling
 		{
 			if ( self && self->client )
 			{
-				if ( self->client->ps.forcePowerLevel[FP_PULL] >= FORCE_LEVEL_3 )
+				if ( jar::enlightenment::Rank(self->client->ps,FP_PULL) >= FORCE_LEVEL_3 )
 				{//force pull 3
 					if ( amPulling
 						|| (self->client->ps.forcePowersActive&(1<<FP_PULL))
@@ -4159,7 +4197,7 @@ qboolean G_TryingPullAttack( gentity_t *self, usercmd_t *cmd, qboolean amPulling
 		{//pressing attack
 			if ( self && self->client )
 			{
-				if ( self->client->ps.forcePowerLevel[FP_PULL] >= FORCE_LEVEL_3 )
+				if ( jar::enlightenment::Rank(self->client->ps,FP_PULL) >= FORCE_LEVEL_3 )
 				{//force pull 3
 					if ( amPulling
 						|| (self->client->ps.forcePowersActive&(1<<FP_PULL))
@@ -4594,7 +4632,7 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 		}
 		else if ( ent->client->ps.forcePowersActive & (1 << FP_RAGE) )
 		{
-			entPowerLevel += ent->client->ps.forcePowerLevel[FP_RAGE];
+			entPowerLevel += jar::enlightenment::Rank(ent->client->ps,FP_RAGE);
 		}
 	}
 
@@ -4895,7 +4933,7 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 	{
 		if ( (ent->client->ps.forcePowersActive&(1<<FP_RAGE)) )
 		{//add some damage if raged
-			baseDamage += ent->client->ps.forcePowerLevel[FP_RAGE] * 5.0f;
+			baseDamage += jar::enlightenment::Rank(ent->client->ps,FP_RAGE) * 5.0f;
 		}
 		else if ( ent->client->ps.forceRageRecoveryTime )
 		{//halve it if recovering
@@ -5258,10 +5296,10 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 					&& ( g_debugSaberLock->integer || forceLock
 						|| entPowerLevel == hitOwnerPowerLevel
 						|| (entPowerLevel > FORCE_LEVEL_2 && hitOwnerPowerLevel > FORCE_LEVEL_2 )
-						|| (entPowerLevel < FORCE_LEVEL_3 && hitOwnerPowerLevel < FORCE_LEVEL_3 && hitOwner->client->ps.forcePowerLevel[FP_SABER_OFFENSE] > FORCE_LEVEL_2 && Q_irand( 0, 3 ))
-						|| (entPowerLevel < FORCE_LEVEL_2 && hitOwnerPowerLevel < FORCE_LEVEL_3 && hitOwner->client->ps.forcePowerLevel[FP_SABER_OFFENSE] > FORCE_LEVEL_1 && Q_irand( 0, 2 ))
-						|| (hitOwnerPowerLevel < FORCE_LEVEL_3 && entPowerLevel < FORCE_LEVEL_3 && ent->client->ps.forcePowerLevel[FP_SABER_OFFENSE] > FORCE_LEVEL_2 && !Q_irand( 0, 1 ))
-						|| (hitOwnerPowerLevel < FORCE_LEVEL_2 && entPowerLevel < FORCE_LEVEL_3 && ent->client->ps.forcePowerLevel[FP_SABER_OFFENSE] > FORCE_LEVEL_1 && !Q_irand( 0, 1 )))
+						|| (entPowerLevel < FORCE_LEVEL_3 && hitOwnerPowerLevel < FORCE_LEVEL_3 && jar::enlightenment::Rank(hitOwner->client->ps,FP_SABER_OFFENSE) > FORCE_LEVEL_2 && Q_irand( 0, 3 ))
+						|| (entPowerLevel < FORCE_LEVEL_2 && hitOwnerPowerLevel < FORCE_LEVEL_3 && jar::enlightenment::Rank(hitOwner->client->ps,FP_SABER_OFFENSE) > FORCE_LEVEL_1 && Q_irand( 0, 2 ))
+						|| (hitOwnerPowerLevel < FORCE_LEVEL_3 && entPowerLevel < FORCE_LEVEL_3 && jar::enlightenment::Rank(ent->client->ps,FP_SABER_OFFENSE) > FORCE_LEVEL_2 && !Q_irand( 0, 1 ))
+						|| (hitOwnerPowerLevel < FORCE_LEVEL_2 && entPowerLevel < FORCE_LEVEL_3 && jar::enlightenment::Rank(ent->client->ps,FP_SABER_OFFENSE) > FORCE_LEVEL_1 && !Q_irand( 0, 1 )))
 					&& WP_SabersCheckLock( ent, hitOwner ) )
 				{
 					collisionResolved = qtrue;
@@ -5270,10 +5308,10 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 					&& entDefending
 					&& !Q_irand( 0, g_saberLockRandomNess->integer*3 )
 					&& (g_debugSaberLock->integer || forceLock ||
-						((ent->client->ps.saberMove != LS_READY || (hitOwnerPowerLevel-ent->client->ps.forcePowerLevel[FP_SABER_DEFENSE]) < Q_irand( -6, 0 ) )
-							&& ((hitOwnerPowerLevel < FORCE_LEVEL_3 && ent->client->ps.forcePowerLevel[FP_SABER_DEFENSE] > FORCE_LEVEL_2 )||
-								(hitOwnerPowerLevel < FORCE_LEVEL_2 && ent->client->ps.forcePowerLevel[FP_SABER_DEFENSE] > FORCE_LEVEL_1 )||
-								(hitOwnerPowerLevel < FORCE_LEVEL_3 && ent->client->ps.forcePowerLevel[FP_SABER_DEFENSE] > FORCE_LEVEL_0 && !Q_irand( 0, (hitOwnerPowerLevel-ent->client->ps.forcePowerLevel[FP_SABER_DEFENSE]+1)*2 ))) ))
+						((ent->client->ps.saberMove != LS_READY || (hitOwnerPowerLevel-jar::enlightenment::Rank(ent->client->ps,FP_SABER_DEFENSE)) < Q_irand( -6, 0 ) )
+							&& ((hitOwnerPowerLevel < FORCE_LEVEL_3 && jar::enlightenment::Rank(ent->client->ps,FP_SABER_DEFENSE) > FORCE_LEVEL_2 )||
+								(hitOwnerPowerLevel < FORCE_LEVEL_2 && jar::enlightenment::Rank(ent->client->ps,FP_SABER_DEFENSE) > FORCE_LEVEL_1 )||
+								(hitOwnerPowerLevel < FORCE_LEVEL_3 && jar::enlightenment::Rank(ent->client->ps,FP_SABER_DEFENSE) > FORCE_LEVEL_0 && !Q_irand( 0, (hitOwnerPowerLevel-jar::enlightenment::Rank(ent->client->ps,FP_SABER_DEFENSE)+1)*2 ))) ))
 					&& WP_SabersCheckLock( hitOwner, ent ) )
 				{
 					collisionResolved = qtrue;
@@ -5284,10 +5322,10 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 					if ( !Q_irand( 0, g_saberLockRandomNess->integer*3 )
 						&& activeDefense
 						&& (g_debugSaberLock->integer || forceLock ||
-							((hitOwner->client->ps.saberMove != LS_READY || (entPowerLevel-hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE]) < Q_irand( -6, 0 ) )
-								&& ( ( entPowerLevel < FORCE_LEVEL_3 && hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE] > FORCE_LEVEL_2 )
-									|| ( entPowerLevel < FORCE_LEVEL_2 && hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE] > FORCE_LEVEL_1 )
-									|| ( entPowerLevel < FORCE_LEVEL_3 && hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE] > FORCE_LEVEL_0 && !Q_irand( 0, (entPowerLevel-hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE]+1)*2 )) )  ))
+							((hitOwner->client->ps.saberMove != LS_READY || (entPowerLevel-jar::enlightenment::Rank(hitOwner->client->ps,FP_SABER_DEFENSE)) < Q_irand( -6, 0 ) )
+								&& ( ( entPowerLevel < FORCE_LEVEL_3 && jar::enlightenment::Rank(hitOwner->client->ps,FP_SABER_DEFENSE) > FORCE_LEVEL_2 )
+									|| ( entPowerLevel < FORCE_LEVEL_2 && jar::enlightenment::Rank(hitOwner->client->ps,FP_SABER_DEFENSE) > FORCE_LEVEL_1 )
+									|| ( entPowerLevel < FORCE_LEVEL_3 && jar::enlightenment::Rank(hitOwner->client->ps,FP_SABER_DEFENSE) > FORCE_LEVEL_0 && !Q_irand( 0, (entPowerLevel-jar::enlightenment::Rank(hitOwner->client->ps,FP_SABER_DEFENSE)+1)*2 )) )  ))
 						&& WP_SabersCheckLock( ent, hitOwner ) )
 					{
 						collisionResolved = qtrue;
@@ -5306,7 +5344,7 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 							//&& ent->client->ps.forcePowerLevel[FP_SABER_OFFENSE] < FORCE_LEVEL_3//if you have high saber offense, you cannot have your attack knocked away, regardless of what style you're using?
 							//&& hitOwner->client->ps.saberAnimLevel != FORCE_LEVEL_5
 							&& activeDefense
-							&& (hitOwnerPowerLevel > FORCE_LEVEL_2||(hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE]>FORCE_LEVEL_2&&Q_irand(0,hitOwner->client->ps.forcePowerLevel[FP_SABER_OFFENSE]))) )
+							&& (hitOwnerPowerLevel > FORCE_LEVEL_2||(jar::enlightenment::Rank(hitOwner->client->ps,FP_SABER_DEFENSE)>FORCE_LEVEL_2&&Q_irand(0,jar::enlightenment::Rank(hitOwner->client->ps,FP_SABER_OFFENSE)))) )
 						{//knockaways can make fast-attacker go into a broken parry anim if the ent is using fast or med (but not Tavion)
 							//make me parry
 							WP_SaberParry( hitOwner, ent, saberNum, bladeNum );
@@ -5318,7 +5356,7 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 							if ( saberNum == 0 )
 							{//FIXME: can only lose right-hand saber for now
 								if ( !(ent->client->ps.saber[saberNum].saberFlags&SFL_NOT_DISARMABLE)
-									&& ent->client->ps.forcePowerLevel[FP_SABER_DEFENSE] < FORCE_LEVEL_2
+									&& jar::enlightenment::Rank(ent->client->ps,FP_SABER_DEFENSE) < FORCE_LEVEL_2
 									//&& (ent->s.number||g_saberRealisticCombat->integer)
 									&& Q_irand( 0, hitOwner->client->ps.SaberDisarmBonus( 0 ) ) > 0
 									&& (hitOwner->s.number || g_saberAutoBlocking->integer || !Q_irand( 0, 2 )) )//if player defending and autoblocking is on, this is less likely to happen, so don't do the random check
@@ -5344,9 +5382,9 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 						else if ( !activeDefense//they're not defending
 							|| (entPowerLevel > FORCE_LEVEL_2 //I hit hard
 								&& hitOwnerPowerLevel < entPowerLevel)//they are defending, but their defense strength is lower than my attack...
-							|| (!deflected && Q_irand( 0, Q_max(0, PM_PowerLevelForSaberAnim( &ent->client->ps, saberNum ) - hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE])/*PM_PowerLevelForSaberAnim( &hitOwner->client->ps )*/ ) > 0 ) )
+							|| (!deflected && Q_irand( 0, Q_max(0, PM_PowerLevelForSaberAnim( &ent->client->ps, saberNum ) - jar::enlightenment::Rank(hitOwner->client->ps,FP_SABER_DEFENSE))/*PM_PowerLevelForSaberAnim( &hitOwner->client->ps )*/ ) > 0 ) )
 						{//broke their parry altogether
-							if ( entPowerLevel > FORCE_LEVEL_2 || Q_irand( 0, Q_max(0, ent->client->ps.forcePowerLevel[FP_SABER_OFFENSE] - hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE]) ) )
+							if ( entPowerLevel > FORCE_LEVEL_2 || Q_irand( 0, Q_max(0, jar::enlightenment::Rank(ent->client->ps,FP_SABER_OFFENSE) - jar::enlightenment::Rank(hitOwner->client->ps,FP_SABER_DEFENSE)) ) )
 							{//chance of continuing with the attack (not bouncing back)
 								ent->client->ps.saberEventFlags &= ~SEF_BLOCKED;
 								ent->client->ps.saberBounceMove = LS_NONE;
@@ -5357,7 +5395,7 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 							hitOwner->client->ps.saberBounceMove = LS_NONE;
 							//FIXME: for now, you always disarm the right-hand saber
 							if ( !(hitOwner->client->ps.saber[0].saberFlags&SFL_NOT_DISARMABLE)
-								&& hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE] < FORCE_LEVEL_2
+								&& jar::enlightenment::Rank(hitOwner->client->ps,FP_SABER_DEFENSE) < FORCE_LEVEL_2
 								//&& (ent->s.number||g_saberRealisticCombat->integer)
 								&& Q_irand( 0, 2-ent->client->ps.SaberDisarmBonus( bladeNum ) ) <= 0 )
 							{//knocked the saber right out of his hand!
@@ -5407,7 +5445,7 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 							if ( PM_SaberInBounce( ent->client->ps.saberMove ) //FIXME: saberMove not set until pmove!
 								&& activeDefense
 								&& hitOwner->client->ps.saberAnimLevel != SS_FAST //&& hitOwner->client->ps.saberAnimLevel != FORCE_LEVEL_5
-								&& hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE] > FORCE_LEVEL_2 )
+								&& jar::enlightenment::Rank(hitOwner->client->ps,FP_SABER_DEFENSE) > FORCE_LEVEL_2 )
 							{//attacker bounced off, and defender has ability to do knockaways, so do one unless we're using fast attacks
 								//turn the parry into a knockaway
 								hitOwner->client->ps.saberBounceMove = PM_KnockawayForParry( hitOwner->client->ps.saberBlocked );
@@ -5437,9 +5475,9 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 						hitOwner->client->ps.saberEventFlags |= SEF_BLOCKED;
 					}
 					//FIXME: base parry breaks on animation (saber attack level), not FP_SABER_OFFENSE
-					if ( hitOwnerPowerLevel > FORCE_LEVEL_2 || (!deflected && Q_irand( 0, PM_PowerLevelForSaberAnim( &hitOwner->client->ps ) - ent->client->ps.forcePowerLevel[FP_SABER_DEFENSE] ) > 0 ) )
+					if ( hitOwnerPowerLevel > FORCE_LEVEL_2 || (!deflected && Q_irand( 0, PM_PowerLevelForSaberAnim( &hitOwner->client->ps ) - jar::enlightenment::Rank(ent->client->ps,FP_SABER_DEFENSE) ) > 0 ) )
 					{//broke my parry altogether
-						if ( hitOwnerPowerLevel > FORCE_LEVEL_2 || Q_irand( 0, hitOwner->client->ps.forcePowerLevel[FP_SABER_OFFENSE] - ent->client->ps.forcePowerLevel[FP_SABER_DEFENSE] ) )
+						if ( hitOwnerPowerLevel > FORCE_LEVEL_2 || Q_irand( 0, jar::enlightenment::Rank(hitOwner->client->ps,FP_SABER_OFFENSE) - jar::enlightenment::Rank(ent->client->ps,FP_SABER_DEFENSE) ) )
 						{//chance of continuing with the attack (not bouncing back)
 							hitOwner->client->ps.saberEventFlags &= ~SEF_BLOCKED;
 							hitOwner->client->ps.saberBounceMove = LS_NONE;
@@ -6276,13 +6314,13 @@ qboolean WP_SaberValidateEnemy( gentity_t *self, gentity_t *enemy )
 	*/
 	if ( enemy->s.number >= MAX_CLIENTS )
 	{//NPCs can cheat and use the homing saber throw 3 on the player
-		if ( enemy->client->ps.forcePowersKnown )
+		if ( jar::enlightenment::Known(enemy->client->ps) )
 		{//not other jedi?
 			return qfalse;
 		}
 	}
 
-	if ( DistanceSquared( self->client->renderInfo.handRPoint, enemy->currentOrigin ) > saberThrowDistSquared[self->client->ps.forcePowerLevel[FP_SABERTHROW]] )
+	if ( DistanceSquared( self->client->renderInfo.handRPoint, enemy->currentOrigin ) > saberThrowDistSquared[jar::enlightenment::Rank(self->client->ps,FP_SABERTHROW)] )
 	{//too far
 		return qfalse;
 	}
@@ -6469,7 +6507,7 @@ void WP_RunSaber( gentity_t *self, gentity_t *saber )
 			fwdangles[0] -= 5;
 		}
 
-		if ( self->client->ps.forcePowerLevel[FP_SABERTHROW] > FORCE_LEVEL_1
+		if ( jar::enlightenment::Rank(self->client->ps,FP_SABERTHROW) > FORCE_LEVEL_1
 			|| self->client->ps.saberEntityState == SES_RETURNING
 			|| VectorCompare( saber->s.pos.trDelta, vec3_origin ) )
 		{//control if it's returning or just starting
@@ -6489,7 +6527,7 @@ void WP_RunSaber( gentity_t *self, gentity_t *saber )
 			}
 			VectorMA( saberHome, self->client->ps.saberEntityDist, forward, saberDest );
 
-			if ( self->client->ps.forcePowerLevel[FP_SABERTHROW] > FORCE_LEVEL_2
+			if ( jar::enlightenment::Rank(self->client->ps,FP_SABERTHROW) > FORCE_LEVEL_2
 				&& self->client->ps.saberEntityState == SES_LEAVING )
 			{//max level
 				if ( self->enemy &&
@@ -6517,7 +6555,7 @@ void WP_RunSaber( gentity_t *self, gentity_t *saber )
 			//Make the saber head there
 			VectorSubtract( saberDest, saber->currentOrigin, saber->s.pos.trDelta );
 			dist = VectorNormalize( saber->s.pos.trDelta );
-			if ( self->client->ps.forcePowerLevel[FP_SABERTHROW] > FORCE_LEVEL_2 && self->client->ps.saberEntityState == SES_LEAVING && !enemy )
+			if ( jar::enlightenment::Rank(self->client->ps,FP_SABERTHROW) > FORCE_LEVEL_2 && self->client->ps.saberEntityState == SES_LEAVING && !enemy )
 			{
 				if ( dist < 200 )
 				{
@@ -6586,7 +6624,7 @@ qboolean WP_SaberLaunch( gentity_t *self, gentity_t *saber, qboolean thrown, qbo
 	{
 		if ( thrown )
 		{//this is a regular throw, so see if it's legal
-			if ( self->client->ps.forcePowerLevel[FP_SABERTHROW] > FORCE_LEVEL_2 )
+			if ( jar::enlightenment::Rank(self->client->ps,FP_SABERTHROW) > FORCE_LEVEL_2 )
 			{
 				if ( !WP_ForcePowerUsable( self, FP_SABERTHROW, 20 ) )
 				{
@@ -6620,7 +6658,7 @@ qboolean WP_SaberLaunch( gentity_t *self, gentity_t *saber, qboolean thrown, qbo
 
 		if ( thrown )
 		{//this is a regular throw, so take force power
-			if ( self->client->ps.forcePowerLevel[FP_SABERTHROW] > FORCE_LEVEL_2 )
+			if ( jar::enlightenment::Rank(self->client->ps,FP_SABERTHROW) > FORCE_LEVEL_2 )
 			{//at max skill, the cost increases as keep it out
 				WP_ForcePowerStart( self, FP_SABERTHROW, 10 );
 			}
@@ -6666,7 +6704,7 @@ qboolean WP_SaberLaunch( gentity_t *self, gentity_t *saber, qboolean thrown, qbo
 	}
 	VectorClear( saber->s.apos.trDelta );
 
-	switch ( self->client->ps.forcePowerLevel[FP_SABERTHROW] )
+	switch ( jar::enlightenment::Rank(self->client->ps,FP_SABERTHROW) )
 	{//FIXME: make a table?
 	default:
 	case FORCE_LEVEL_1:
@@ -6683,7 +6721,7 @@ qboolean WP_SaberLaunch( gentity_t *self, gentity_t *saber, qboolean thrown, qbo
 	//Take it out of my hand
 	self->client->ps.saberInFlight = qtrue;
 	self->client->ps.saberEntityState = SES_LEAVING;
-	self->client->ps.saberEntityDist = saberThrowDist[self->client->ps.forcePowerLevel[FP_SABERTHROW]];
+	self->client->ps.saberEntityDist = saberThrowDist[jar::enlightenment::Rank(self->client->ps,FP_SABERTHROW)];
 	self->client->ps.saberThrowTime = level.time;
 	//if ( self->client->ps.forcePowerLevel[FP_SABERTHROW] > FORCE_LEVEL_2 )
 	{
@@ -7177,7 +7215,7 @@ void WP_SaberThrow( gentity_t *self, usercmd_t *ucmd )
 	float saberDist = VectorLength( saberDiff );
 	if ( self->client->ps.saberEntityState == SES_LEAVING )
 	{//saber still flying forward
-		if ( self->client->ps.forcePowerLevel[FP_SABERTHROW] > FORCE_LEVEL_2 )
+		if ( jar::enlightenment::Rank(self->client->ps,FP_SABERTHROW) > FORCE_LEVEL_2 )
 		{//still holding it out
 			if ( !(ucmd->buttons&BUTTON_ALT_ATTACK) && self->client->ps.forcePowerDebounce[FP_SABERTHROW] < level.time )
 			{//done throwing, return to me
@@ -7209,7 +7247,7 @@ void WP_SaberThrow( gentity_t *self, usercmd_t *ucmd )
 				}
 			}
 			else if ( level.time - self->client->ps.saberThrowTime > 3000
-				|| (self->client->ps.forcePowerLevel[FP_SABERTHROW]==FORCE_LEVEL_1&&saberDist>=self->client->ps.saberEntityDist) )
+				|| (jar::enlightenment::Rank(self->client->ps,FP_SABERTHROW)==FORCE_LEVEL_1&&saberDist>=self->client->ps.saberEntityDist) )
 			{//been out too long, or saber throw 1 went too far, return to me
 				if ( self->client->ps.saber[0].Active() )
 				{//still on
@@ -7514,7 +7552,7 @@ void WP_SaberStartMissileBlockCheck( gentity_t *self, usercmd_t *ucmd  )
 			}
 		}
 
-		if ( self->client->ps.forcePowerLevel[FP_SABER_DEFENSE] < FORCE_LEVEL_1 )
+		if ( jar::enlightenment::Rank(self->client->ps,FP_SABER_DEFENSE) < FORCE_LEVEL_1 )
 		{//you have not the SKILLZ
 			return;
 		}
@@ -8331,15 +8369,15 @@ void WP_ForceThrowHazardTrooper( gentity_t *self, gentity_t *trooper, qboolean p
 	//all levels: see effect on them, they notice us
 	trooper->forcePushTime = level.time + 600; // let the push effect last for 600 ms
 
-	if ( (pull&&self->client->ps.forcePowerLevel[FP_PULL]>FORCE_LEVEL_1)
-		|| (!pull&&self->client->ps.forcePowerLevel[FP_PUSH]>FORCE_LEVEL_1) )
+	if ( (pull&&jar::enlightenment::Rank(self->client->ps,FP_PULL)>FORCE_LEVEL_1)
+		|| (!pull&&jar::enlightenment::Rank(self->client->ps,FP_PUSH)>FORCE_LEVEL_1) )
 	{//level 2: they stop for a couple seconds and make a sound
 		trooper->painDebounceTime = level.time + Q_irand( 1500, 2500 );
 		G_AddVoiceEvent( trooper, Q_irand(EV_PUSHED1, EV_PUSHED3), Q_irand( 1000, 3000 ) );
 		GEntity_PainFunc( trooper, self, self, trooper->currentOrigin, 0, MOD_MELEE );
 
-		if ( (pull&&self->client->ps.forcePowerLevel[FP_PULL]>FORCE_LEVEL_2)
-			|| (!pull&&self->client->ps.forcePowerLevel[FP_PUSH]>FORCE_LEVEL_2) )
+		if ( (pull&&jar::enlightenment::Rank(self->client->ps,FP_PULL)>FORCE_LEVEL_2)
+			|| (!pull&&jar::enlightenment::Rank(self->client->ps,FP_PUSH)>FORCE_LEVEL_2) )
 		{//level 3: they actually play a pushed anim and stumble a bit
 			vec3_t hazAngles = {0,trooper->currentAngles[YAW],0};
 			int anim = -1;
@@ -8430,7 +8468,7 @@ void WP_ResistForcePush( gentity_t *self, gentity_t *pusher, qboolean noPenalty 
 			|| !Q_stricmp("Yoda",self->NPC_type)
 			|| self->client->NPC_class == CLASS_LUKE*/
 		  )
-		&& (VectorLengthSquared( self->client->ps.velocity ) > 10000 || self->client->ps.forcePowerLevel[FP_PUSH] >= FORCE_LEVEL_3 || self->client->ps.forcePowerLevel[FP_PULL] >= FORCE_LEVEL_3 ) )
+		&& (VectorLengthSquared( self->client->ps.velocity ) > 10000 || jar::enlightenment::Rank(self->client->ps,FP_PUSH) >= FORCE_LEVEL_3 || jar::enlightenment::Rank(self->client->ps,FP_PULL) >= FORCE_LEVEL_3 ) )
 	{
 		runningResist = qtrue;
 	}
@@ -8572,7 +8610,7 @@ void WP_ForceKnockdown( gentity_t *self, gentity_t *pusher, qboolean pull, qbool
 			}
 			if ( !self->s.number
 				&& !strongKnockdown
-				&& ( (!pull&&(self->client->ps.forcePowerLevel[FP_PUSH]>FORCE_LEVEL_1||!g_spskill->integer)) || (pull&&(self->client->ps.forcePowerLevel[FP_PULL]>FORCE_LEVEL_1||!g_spskill->integer)) )	)
+				&& ( (!pull&&(jar::enlightenment::Rank(self->client->ps,FP_PUSH)>FORCE_LEVEL_1||!g_spskill->integer)) || (pull&&(jar::enlightenment::Rank(self->client->ps,FP_PULL)>FORCE_LEVEL_1||!g_spskill->integer)) )	)
 			{//player only knocked down if pushed *hard*
 				if ( self->s.weapon == WP_SABER )
 				{//temp HACK: these are the only 2 pain anims that look good when holding a saber
@@ -8751,7 +8789,7 @@ qboolean WP_ForceThrowable( gentity_t *ent, gentity_t *forwardEnt, gentity_t *se
 			}
 			else if ( ent->client->NPC_class == CLASS_MARK1 )
 			{//can't push Mark1 unless push 3
-				if ( pull || self->client->ps.forcePowerLevel[FP_PUSH] < FORCE_LEVEL_3 )
+				if ( pull || jar::enlightenment::Rank(self->client->ps,FP_PUSH) < FORCE_LEVEL_3 )
 				{
 					return qfalse;
 				}
@@ -8925,8 +8963,8 @@ static qboolean ShouldPlayerResistForceThrow( gentity_t *player, gentity_t *atta
 	}
 
 	forcePowers_t forcePower = (pull ? FP_PULL : FP_PUSH);
-	int attackingForceLevel = attacker->client->ps.forcePowerLevel[forcePower];
-	int defendingForceLevel = player->client->ps.forcePowerLevel[forcePower];
+	int attackingForceLevel = jar::enlightenment::Rank(attacker->client->ps,forcePower);
+	int defendingForceLevel = jar::enlightenment::Rank(player->client->ps,forcePower);
 
 	if ( player->client->ps.powerups[PW_FORCE_PUSH] > level.time ||
 		Q_irand( 0, Q_max(0, defendingForceLevel - attackingForceLevel)*2 + 1 ) > 0 )
@@ -8987,7 +9025,7 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 	}
 	if ( self->client->ps.saberLockTime > level.time )
 	{
-		if ( pull || self->client->ps.forcePowerLevel[FP_PUSH] < FORCE_LEVEL_3 )
+		if ( pull || jar::enlightenment::Rank(self->client->ps,FP_PUSH) < FORCE_LEVEL_3 )
 		{//this can be a way to break out
 			return;
 		}
@@ -9007,11 +9045,11 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 	}
 	if ( pull )
 	{
-		radius = forcePushPullRadius[self->client->ps.forcePowerLevel[FP_PULL]];
+		radius = forcePushPullRadius[jar::enlightenment::Rank(self->client->ps,FP_PULL)];
 	}
 	else
 	{
-		radius = forcePushPullRadius[self->client->ps.forcePowerLevel[FP_PUSH]];
+		radius = forcePushPullRadius[jar::enlightenment::Rank(self->client->ps,FP_PUSH)];
 	}
 
 	if ( !radius )
@@ -9088,11 +9126,11 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 
 	if ( pull )
 	{
-		cone = forcePullCone[self->client->ps.forcePowerLevel[FP_PULL]];
+		cone = forcePullCone[jar::enlightenment::Rank(self->client->ps,FP_PULL)];
 	}
 	else
 	{
-		cone = forcePushCone[self->client->ps.forcePowerLevel[FP_PUSH]];
+		cone = forcePushCone[jar::enlightenment::Rank(self->client->ps,FP_PUSH)];
 	}
 
 	//	if ( cone >= 1.0f )
@@ -9294,15 +9332,15 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 				int powerLevel, powerUse;
 				if (pull)
 				{
-					powerLevel = self->client->ps.forcePowerLevel[FP_PULL];
+					powerLevel = jar::enlightenment::Rank(self->client->ps,FP_PULL);
 					powerUse = FP_PULL;
 				}
 				else
 				{
-					powerLevel = self->client->ps.forcePowerLevel[FP_PUSH];
+					powerLevel = jar::enlightenment::Rank(self->client->ps,FP_PUSH);
 					powerUse = FP_PUSH;
 				}
-				int modPowerLevel = WP_AbsorbConversion( push_list[x], push_list[x]->client->ps.forcePowerLevel[FP_ABSORB], self, powerUse, powerLevel, forcePowerNeeded[self->client->ps.forcePowerLevel[powerUse]] );
+				int modPowerLevel = WP_AbsorbConversion( push_list[x], jar::enlightenment::Rank(push_list[x]->client->ps,FP_ABSORB), self, powerUse, powerLevel, forcePowerNeeded[jar::enlightenment::Rank(self->client->ps,powerUse)] );
 				if (push_list[x]->client->NPC_class==CLASS_ASSASSIN_DROID ||
 					push_list[x]->client->NPC_class==CLASS_HAZARD_TROOPER)
 				{
@@ -9315,7 +9353,7 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 					&& InFront( self->currentOrigin, push_list[x]->client->renderInfo.eyePoint, push_list[x]->client->ps.viewangles, 0.3f ) )
 				{//absorbed and I'm in front of them
 					//counter it
-					if ( push_list[x]->client->ps.forcePowerLevel[FP_ABSORB] > FORCE_LEVEL_2 )
+					if ( jar::enlightenment::Rank(push_list[x]->client->ps,FP_ABSORB) > FORCE_LEVEL_2 )
 					{//no reaction at all
 					}
 					else
@@ -9370,8 +9408,8 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 						{//they're not in a lock with me
 							continue;
 						}
-						else if ( pull || self->client->ps.forcePowerLevel[FP_PUSH] < FORCE_LEVEL_3 ||
-							push_list[x]->client->ps.forcePowerLevel[FP_PUSH] > FORCE_LEVEL_2 )
+						else if ( pull || jar::enlightenment::Rank(self->client->ps,FP_PUSH) < FORCE_LEVEL_3 ||
+							jar::enlightenment::Rank(push_list[x]->client->ps,FP_PUSH) > FORCE_LEVEL_2 )
 						{//they're in a lock with me, but my push is too weak
 							continue;
 						}
@@ -9396,9 +9434,9 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 					if ( noResist ||
 							( !pull
 							&& modPowerLevel == -1
-							&& self->client->ps.forcePowerLevel[FP_PUSH] > FORCE_LEVEL_2
+							&& jar::enlightenment::Rank(self->client->ps,FP_PUSH) > FORCE_LEVEL_2
 							&& !resistChance
-							&& push_list[x]->client->ps.forcePowerLevel[FP_PUSH] < FORCE_LEVEL_3 )
+							&& jar::enlightenment::Rank(push_list[x]->client->ps,FP_PUSH) < FORCE_LEVEL_3 )
 						)
 					{//a level 3 push can even knock down a jedi
 						if ( PM_InKnockDown( &push_list[x]->client->ps ) )
@@ -9434,7 +9472,7 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 					if ( pull )
 					{
 						VectorSubtract( self->currentOrigin, push_list[x]->currentOrigin, pushDir );
-						if ( self->client->ps.forcePowerLevel[FP_PULL] >= FORCE_LEVEL_3
+						if ( jar::enlightenment::Rank(self->client->ps,FP_PULL) >= FORCE_LEVEL_3
 							&& self->client->NPC_class == CLASS_KYLE
 							&& (self->spawnflags&1)
 							&& TIMER_Done( self, "kyleTakesSaber" )
@@ -9469,7 +9507,7 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 							&& (push_list[x]->NPC->scriptFlags&SCF_DONT_FLEE) )
 						{//*SIGH*... if an NPC can't flee, they can't run after and pick up their weapon, do don't drop it
 						}
-						else if ( self->client->ps.forcePowerLevel[FP_PULL] > FORCE_LEVEL_1
+						else if ( jar::enlightenment::Rank(self->client->ps,FP_PULL) > FORCE_LEVEL_1
 							&& push_list[x]->client->NPC_class != CLASS_ROCKETTROOPER//rockettroopers never drop their weapon
 							&& push_list[x]->client->NPC_class != CLASS_VEHICLE
 							&& push_list[x]->client->NPC_class != CLASS_BOBAFETT
@@ -9493,7 +9531,7 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 						{
 							knockback = 200;
 						}
-						if ( self->client->ps.forcePowerLevel[FP_PULL] < FORCE_LEVEL_3 )
+						if ( jar::enlightenment::Rank(self->client->ps,FP_PULL) < FORCE_LEVEL_3 )
 						{//maybe just knock them down
 							knockback /= 3;
 						}
@@ -9507,11 +9545,11 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 							knockback = 100;
 						}
 						//scale for push level
-						if ( self->client->ps.forcePowerLevel[FP_PUSH] < FORCE_LEVEL_2 )
+						if ( jar::enlightenment::Rank(self->client->ps,FP_PUSH) < FORCE_LEVEL_2 )
 						{//maybe just knock them down
 							knockback /= 3;
 						}
-						else if ( self->client->ps.forcePowerLevel[FP_PUSH] > FORCE_LEVEL_2 )
+						else if ( jar::enlightenment::Rank(self->client->ps,FP_PUSH) > FORCE_LEVEL_2 )
 						{//super-hard push
 							//Hmm, maybe in this case can even nudge/knockdown a jedi?  Especially if close?
 							//knockback *= 5;
@@ -9549,8 +9587,8 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 					if ( push_list[x]->health > 0 )
 					{//target is still alive
 						if ( (push_list[x]->s.number||(cg.renderingThirdPerson&&!cg.zoomMode)) //NPC or 3rd person player
-							&& ((!pull&&self->client->ps.forcePowerLevel[FP_PUSH] < FORCE_LEVEL_2 && push_list[x]->client->ps.forcePowerLevel[FP_PUSH] < FORCE_LEVEL_1) //level 1 push
-								|| (pull && self->client->ps.forcePowerLevel[FP_PULL] < FORCE_LEVEL_2 && push_list[x]->client->ps.forcePowerLevel[FP_PULL] < FORCE_LEVEL_1)) )//level 1 pull
+							&& ((!pull&&jar::enlightenment::Rank(self->client->ps,FP_PUSH) < FORCE_LEVEL_2 && jar::enlightenment::Rank(push_list[x]->client->ps,FP_PUSH) < FORCE_LEVEL_1) //level 1 push
+								|| (pull && jar::enlightenment::Rank(self->client->ps,FP_PULL) < FORCE_LEVEL_2 && jar::enlightenment::Rank(push_list[x]->client->ps,FP_PULL) < FORCE_LEVEL_1)) )//level 1 pull
 						{//NPC or third person player (without force push/pull skill), and force push/pull level is at 1
 							WP_ForceKnockdown( push_list[x], self, pull, (qboolean)(!pull&&knockback>150), qfalse );
 						}
@@ -9790,7 +9828,7 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 						}
 						else if ( self->enemy //I have an enemy
 							//&& push_list[x]->s.eType != ET_ITEM //not an item
-							&& self->client->ps.forcePowerLevel[FP_PUSH] > FORCE_LEVEL_2 //have push 3 or greater
+							&& jar::enlightenment::Rank(self->client->ps,FP_PUSH) > FORCE_LEVEL_2 //have push 3 or greater
 							&& InFront(push_list[x]->currentOrigin, self->currentOrigin, self->currentAngles, 0.25f)//object is generally in front of me
 							&& InFront(self->enemy->currentOrigin, self->currentOrigin, self->currentAngles, 0.75f)//enemy is pretty much right in front of me
 							&& !InFront(push_list[x]->currentOrigin, self->enemy->currentOrigin, self->enemy->currentAngles, -0.25f)//object is generally behind enemy
@@ -9837,7 +9875,7 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 					{
 						if ( self->enemy //I have an enemy
 							&& push_list[x]->s.eType != ET_ITEM //not an item
-							&& self->client->ps.forcePowerLevel[FP_PUSH] > FORCE_LEVEL_2 //have push 3 or greater
+							&& jar::enlightenment::Rank(self->client->ps,FP_PUSH) > FORCE_LEVEL_2 //have push 3 or greater
 							&& InFront(push_list[x]->currentOrigin, self->currentOrigin, self->currentAngles, 0.25f)//object is generally in front of me
 							&& InFront(self->enemy->currentOrigin, self->currentOrigin, self->currentAngles, 0.75f)//enemy is pretty much right in front of me
 							&& InFront(push_list[x]->currentOrigin, self->enemy->currentOrigin, self->enemy->currentAngles, 0.25f)//object is generally in front of enemy
@@ -9866,7 +9904,8 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 							knockback = 100;
 						}
 					}
-					//FIXME: if pull a FL_FORCE_PULLABLE_ONLY, clear the flag, assuming it's no longer in solid?  or check?
+					if (pull && push_list[x]->s.eType == ET_ITEM)
+						G_JAR_WorkshopRackPickupLoose(*push_list[x]);
 					VectorCopy( push_list[x]->currentOrigin, push_list[x]->s.pos.trBase );
 					push_list[x]->s.pos.trTime = level.time;								// move a bit on the very first frame
 					if ( push_list[x]->s.pos.trType != TR_INTERPOLATE )
@@ -9936,7 +9975,7 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 		}
 		if ( pull )
 		{
-			if ( self->client->ps.forcePowerLevel[FP_PULL] > FORCE_LEVEL_2 )
+			if ( jar::enlightenment::Rank(self->client->ps,FP_PULL) > FORCE_LEVEL_2 )
 			{//at level 3, can pull multiple, so it costs more
 				actualCost = forcePowerNeeded[FP_PULL]*ent_count;
 				if ( actualCost > 50 )
@@ -9956,7 +9995,7 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 		}
 		else
 		{
-			if ( self->client->ps.forcePowerLevel[FP_PUSH] > FORCE_LEVEL_2 )
+			if ( jar::enlightenment::Rank(self->client->ps,FP_PUSH) > FORCE_LEVEL_2 )
 			{//at level 3, can push multiple, so costs more
 				actualCost = forcePowerNeeded[FP_PUSH]*ent_count;
 				if ( actualCost > 50 )
@@ -9968,7 +10007,7 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 					actualCost = cost;
 				}
 			}
-			else if ( self->client->ps.forcePowerLevel[FP_PUSH] > FORCE_LEVEL_1 )
+			else if ( jar::enlightenment::Rank(self->client->ps,FP_PUSH) > FORCE_LEVEL_1 )
 			{//at level 2, can push multiple, so costs more
 				actualCost = floor(forcePowerNeeded[FP_PUSH]*ent_count/1.5f);
 				if ( actualCost > 50 )
@@ -10190,7 +10229,7 @@ int FP_MaxForceHeal( gentity_t *self )
 
 int FP_ForceHealInterval( gentity_t *self )
 {
-	return (self->client->ps.forcePowerLevel[FP_HEAL]>FORCE_LEVEL_2)?50:FORCE_HEAL_INTERVAL;
+	return (jar::enlightenment::Rank(self->client->ps,FP_HEAL)>FORCE_LEVEL_2)?50:FORCE_HEAL_INTERVAL;
 }
 
 void ForceHeal( gentity_t *self )
@@ -10215,7 +10254,7 @@ void ForceHeal( gentity_t *self )
 		return;
 	}
 	/*
-	if ( self->client->ps.forcePowerLevel[FP_HEAL] > FORCE_LEVEL_2 )
+	if ( jar::enlightenment::Rank(self->client->ps,FP_HEAL) > FORCE_LEVEL_2 )
 	{//instant heal
 		//no more than available force power
 		int max = self->client->ps.forcePower;
@@ -10237,7 +10276,7 @@ void ForceHeal( gentity_t *self )
 		//start health going up
 		//NPC_SetAnim( self, SETANIM_TORSO, ?, SETANIM_FLAG_OVERRIDE );
 		WP_ForcePowerStart( self, FP_HEAL, 0 );
-		if ( self->client->ps.forcePowerLevel[FP_HEAL] < FORCE_LEVEL_2 )
+		if ( jar::enlightenment::Rank(self->client->ps,FP_HEAL) < FORCE_LEVEL_2 )
 		{//must meditate
 			//FIXME: holster weapon (select WP_NONE?)
 			//FIXME: BOTH_FORCEHEAL_START
@@ -10272,7 +10311,7 @@ qboolean WP_CheckBreakControl( gentity_t *self )
 	}
 	if ( !self->s.number )
 	{//player
-		if ( self->client && self->client->ps.forcePowerLevel[FP_TELEPATHY] > FORCE_LEVEL_3 )
+		if ( self->client && jar::enlightenment::Rank(self->client->ps,FP_TELEPATHY) > FORCE_LEVEL_3 )
 		{//control-level
 			if ( self->client->ps.viewEntity > 0 && self->client->ps.viewEntity < ENTITYNUM_WORLD )
 			{//we are in a viewentity
@@ -10293,7 +10332,7 @@ qboolean WP_CheckBreakControl( gentity_t *self )
 			gentity_t *controller = &g_entities[0];
 			if ( controller->client && controller->client->ps.viewEntity == self->s.number )
 			{//we are being controlled by player
-				if ( controller->client->ps.forcePowerLevel[FP_TELEPATHY] > FORCE_LEVEL_3 )
+				if ( jar::enlightenment::Rank(controller->client->ps,FP_TELEPATHY) > FORCE_LEVEL_3 )
 				{//control-level mind trick
 					//clear the control and return
 					G_ClearViewEntity( controller );
@@ -10405,7 +10444,7 @@ void ForceTelepathy( gentity_t *self )
 					G_AddVoiceEvent( traceEnt, Q_irand( EV_CONFUSE1, EV_CONFUSE3 ), Q_irand( 3000, 5000 ) );
 				}
 			}
-			else if ( self->client->ps.forcePowerLevel[FP_TELEPATHY] > FORCE_LEVEL_3 )
+			else if ( jar::enlightenment::Rank(self->client->ps,FP_TELEPATHY) > FORCE_LEVEL_3 )
 			{//control them, even jedi
 				G_SetViewEntity( self, traceEnt );
 				traceEnt->NPC->controlledTime = level.time + 30000;
@@ -10413,7 +10452,7 @@ void ForceTelepathy( gentity_t *self )
 			else if ( traceEnt->s.weapon != WP_SABER
 				&& traceEnt->client->NPC_class != CLASS_REBORN )
 			{//haha!  Jedi aren't easily confused!
-				if ( self->client->ps.forcePowerLevel[FP_TELEPATHY] > FORCE_LEVEL_2
+				if ( jar::enlightenment::Rank(self->client->ps,FP_TELEPATHY) > FORCE_LEVEL_2
 					&& traceEnt->s.weapon != WP_NONE		//don't charm people who aren't capable of fighting... like ugnaughts and droids, just confuse them
 					&& traceEnt->client->NPC_class != CLASS_TUSKEN//don't charm them, just confuse them
 					&& traceEnt->client->NPC_class != CLASS_NOGHRI//don't charm them, just confuse them
@@ -10441,19 +10480,19 @@ void ForceTelepathy( gentity_t *self )
 					traceEnt->client->enemyTeam = traceEnt->client->playerTeam;
 					traceEnt->client->playerTeam = saveTeam;
 					//FIXME: need a *charmed* timer on this...?  Or do TEAM_PLAYERS assume that "confusion" means they should switch to team_enemy when done?
-					traceEnt->NPC->charmedTime = level.time + mindTrickTime[self->client->ps.forcePowerLevel[FP_TELEPATHY]];
+					traceEnt->NPC->charmedTime = level.time + mindTrickTime[jar::enlightenment::Rank(self->client->ps,FP_TELEPATHY)];
 					if ( traceEnt->ghoul2.size() && traceEnt->headBolt != -1 )
 					{//FIXME: what if already playing effect?
-						G_PlayEffect( G_EffectIndex( "force/confusion" ), traceEnt->playerModel, traceEnt->headBolt, traceEnt->s.number, traceEnt->currentOrigin, mindTrickTime[self->client->ps.forcePowerLevel[FP_TELEPATHY]], qtrue );
+						G_PlayEffect( G_EffectIndex( "force/confusion" ), traceEnt->playerModel, traceEnt->headBolt, traceEnt->s.number, traceEnt->currentOrigin, mindTrickTime[jar::enlightenment::Rank(self->client->ps,FP_TELEPATHY)], qtrue );
 					}
 				}
 				else
 				{//just confuse them
 					//somehow confuse them?  Set don't fire to true for a while?  Drop their aggression?  Maybe just take their enemy away and don't let them pick one up for a while unless shot?
-					traceEnt->NPC->confusionTime = level.time + mindTrickTime[self->client->ps.forcePowerLevel[FP_TELEPATHY]];//confused for about 10 seconds
+					traceEnt->NPC->confusionTime = level.time + mindTrickTime[jar::enlightenment::Rank(self->client->ps,FP_TELEPATHY)];//confused for about 10 seconds
 					if ( traceEnt->ghoul2.size() && traceEnt->headBolt != -1 )
 					{//FIXME: what if already playing effect?
-						G_PlayEffect( G_EffectIndex( "force/confusion" ), traceEnt->playerModel, traceEnt->headBolt, traceEnt->s.number, traceEnt->currentOrigin, mindTrickTime[self->client->ps.forcePowerLevel[FP_TELEPATHY]], qtrue );
+						G_PlayEffect( G_EffectIndex( "force/confusion" ), traceEnt->playerModel, traceEnt->headBolt, traceEnt->s.number, traceEnt->currentOrigin, mindTrickTime[jar::enlightenment::Rank(self->client->ps,FP_TELEPATHY)], qtrue );
 					}
 					NPC_PlayConfusionSound( traceEnt );
 					if ( traceEnt->enemy )
@@ -10489,7 +10528,7 @@ void ForceTelepathy( gentity_t *self )
 	}
 	else
 	{
-		if ( self->client->ps.forcePowerLevel[FP_TELEPATHY] > FORCE_LEVEL_1 && tr.fraction * 2048 > 64 )
+		if ( jar::enlightenment::Rank(self->client->ps,FP_TELEPATHY) > FORCE_LEVEL_1 && tr.fraction * 2048 > 64 )
 		{//don't create a diversion less than 64 from you of if at power level 1
 			//use distraction anim instead
 			G_PlayEffect( G_EffectIndex( "force/force_touch" ), tr.endpos, tr.plane.normal );
@@ -10534,7 +10573,7 @@ void ForceGrip( gentity_t *self )
 
 	if ( self->client->ps.forceGripEntityNum <= ENTITYNUM_WORLD )
 	{//already gripping
-		if ( self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_1 )
+		if ( jar::enlightenment::Rank(self->client->ps,FP_GRIP) > FORCE_LEVEL_1 )
 		{
 			self->client->ps.forcePowerDuration[FP_GRIP] = level.time + 100;
 			self->client->ps.weaponTime = 1000;
@@ -10720,7 +10759,7 @@ void ForceGrip( gentity_t *self )
 		case CLASS_SHADOWTROOPER:
 		case CLASS_ALORA:
 		case CLASS_JEDI:
-			if ( traceEnt->NPC && traceEnt->NPC->rank > RANK_CIVILIAN && self->client->ps.forcePowerLevel[FP_GRIP] < FORCE_LEVEL_2 )
+			if ( traceEnt->NPC && traceEnt->NPC->rank > RANK_CIVILIAN && jar::enlightenment::Rank(self->client->ps,FP_GRIP) < FORCE_LEVEL_2 )
 			{
 				Jedi_PlayDeflectSound( traceEnt );
 				ForceThrow( traceEnt, qfalse );
@@ -10739,7 +10778,7 @@ void ForceGrip( gentity_t *self )
 			return;
 		}
 //=CHECKABSORB===
-		if ( -1 != WP_AbsorbConversion( traceEnt, traceEnt->client->ps.forcePowerLevel[FP_ABSORB], self, FP_GRIP, self->client->ps.forcePowerLevel[FP_GRIP], forcePowerNeeded[self->client->ps.forcePowerLevel[FP_GRIP]]) )
+		if ( -1 != WP_AbsorbConversion( traceEnt, jar::enlightenment::Rank(traceEnt->client->ps,FP_ABSORB), self, FP_GRIP, jar::enlightenment::Rank(self->client->ps,FP_GRIP), forcePowerNeeded[jar::enlightenment::Rank(self->client->ps,FP_GRIP)]) )
 		{
 			//WP_ForcePowerStop( self, FP_GRIP );
 			return;
@@ -10781,7 +10820,7 @@ void ForceGrip( gentity_t *self )
 			//G_DriveVehicle( traceEnt, NULL, NULL );
 		}
 		G_AddVoiceEvent( traceEnt, Q_irand(EV_PUSHED1, EV_PUSHED3), 2000 );
-		if ( self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_2 || traceEnt->s.weapon == WP_SABER )
+		if ( jar::enlightenment::Rank(self->client->ps,FP_GRIP) > FORCE_LEVEL_2 || traceEnt->s.weapon == WP_SABER )
 		{//if we pick up & carry, drop their weap
 			if ( traceEnt->s.weapon
 				&& traceEnt->client->NPC_class != CLASS_ROCKETTROOPER
@@ -10824,7 +10863,7 @@ void ForceGrip( gentity_t *self )
 		VectorCopy( traceEnt->currentOrigin, self->client->ps.forceGripOrg );
 	}
 	self->client->ps.forceGripOrg[2] += 48;//FIXME: define?
-	if ( self->client->ps.forcePowerLevel[FP_GRIP] < FORCE_LEVEL_2 )
+	if ( jar::enlightenment::Rank(self->client->ps,FP_GRIP) < FORCE_LEVEL_2 )
 	{//just a duration
 		self->client->ps.forcePowerDebounce[FP_GRIP] = level.time + 250;
 		self->client->ps.forcePowerDuration[FP_GRIP] = level.time + 5000;
@@ -10836,7 +10875,7 @@ void ForceGrip( gentity_t *self )
 	}
 	else
 	{
-		if ( self->client->ps.forcePowerLevel[FP_GRIP] == FORCE_LEVEL_2 )
+		if ( jar::enlightenment::Rank(self->client->ps,FP_GRIP) == FORCE_LEVEL_2 )
 		{//lifting sound?  or always?
 		}
 		//if ( traceEnt->s.number )
@@ -10882,7 +10921,7 @@ void ForceLightningAnim( gentity_t *self )
 	int startAnim = BOTH_FORCELIGHTNING_START;
 	int holdAnim = BOTH_FORCELIGHTNING_HOLD;
 
-	if ( self->client->ps.forcePowerLevel[FP_LIGHTNING] >= FORCE_LEVEL_3
+	if ( jar::enlightenment::Rank(self->client->ps,FP_LIGHTNING) >= FORCE_LEVEL_3
 		&& ForceLightningCheck2Handed( self ) )
 	{//empty handed lightning 3
 		startAnim = BOTH_FORCE_2HANDEDLIGHTNING_START;
@@ -10944,7 +10983,7 @@ void ForceLightning( gentity_t *self )
 	}
 	//Shoot lightning from hand
 	//make sure this plays and that you cannot press fire for about 1 second after this
-	if ( self->client->ps.forcePowerLevel[FP_LIGHTNING] < FORCE_LEVEL_2 )
+	if ( jar::enlightenment::Rank(self->client->ps,FP_LIGHTNING) < FORCE_LEVEL_2 )
 	{
 		NPC_SetAnim( self, SETANIM_TORSO, BOTH_FORCELIGHTNING, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
 	}
@@ -10966,7 +11005,7 @@ void ForceLightning( gentity_t *self )
 	self->client->ps.saberBlocked = BLOCKED_NONE;
 
 	G_SoundOnEnt( self, CHAN_BODY, "sound/weapons/force/lightning.wav" );
-	if ( self->client->ps.forcePowerLevel[FP_LIGHTNING] < FORCE_LEVEL_2 )
+	if ( jar::enlightenment::Rank(self->client->ps,FP_LIGHTNING) < FORCE_LEVEL_2 )
 	{//short burst
 		//G_SoundOnEnt( self, CHAN_BODY, "sound/weapons/force/lightning.wav" );
 	}
@@ -10993,7 +11032,7 @@ void ForceLightningDamage( gentity_t *self, gentity_t *traceEnt, vec3_t dir, flo
 		{//an enemy or object
 			int	dmg;
 			//FIXME: check for client using FP_ABSORB
-			if ( self->client->ps.forcePowerLevel[FP_LIGHTNING] > FORCE_LEVEL_2 )
+			if ( jar::enlightenment::Rank(self->client->ps,FP_LIGHTNING) > FORCE_LEVEL_2 )
 			{//more damage if closer and more in front
 				dmg = 1;
 				if ( self->client->NPC_class == CLASS_REBORN
@@ -11065,12 +11104,12 @@ void ForceLightningDamage( gentity_t *self, gentity_t *traceEnt, vec3_t dir, flo
 					&& !PM_InSpecialJump( traceEnt->client->ps.torsoAnim )
 					&& (!traceEnt->s.number||(traceEnt->NPC&&traceEnt->NPC->rank>=RANK_LT_COMM)) )//the player or a tough jedi/reborn
 				{
-					if ( Q_irand( 0, traceEnt->client->ps.forcePowerLevel[FP_SABER_DEFENSE]*3 ) > 0 )//more of a chance of defending if saber defense is high
+					if ( Q_irand( 0, jar::enlightenment::Rank(traceEnt->client->ps,FP_SABER_DEFENSE)*3 ) > 0 )//more of a chance of defending if saber defense is high
 					{
 						dmg = 0;
 					}
 					if ( (traceEnt->client->ps.forcePowersActive&(1<<FP_ABSORB))
-						&& traceEnt->client->ps.forcePowerLevel[FP_ABSORB] > FORCE_LEVEL_2 )
+						&& jar::enlightenment::Rank(traceEnt->client->ps,FP_ABSORB) > FORCE_LEVEL_2 )
 					{//no parry, just absorb
 					}
 					else
@@ -11103,7 +11142,7 @@ void ForceLightningDamage( gentity_t *self, gentity_t *traceEnt, vec3_t dir, flo
 
 			if (traceEnt->client)
 			{
-				modPowerLevel = WP_AbsorbConversion(traceEnt, traceEnt->client->ps.forcePowerLevel[FP_ABSORB], self, FP_LIGHTNING, self->client->ps.forcePowerLevel[FP_LIGHTNING], 1);
+				modPowerLevel = WP_AbsorbConversion(traceEnt, jar::enlightenment::Rank(traceEnt->client->ps,FP_ABSORB), self, FP_LIGHTNING, jar::enlightenment::Rank(self->client->ps,FP_LIGHTNING), 1);
 			}
 
 			if (modPowerLevel != -1)
@@ -11172,7 +11211,7 @@ void ForceShootLightning( gentity_t *self )
 	VectorNormalize( forward );
 
 	//FIXME: if lightning hits water, do water-only-flagged radius damage from that point
-	if ( self->client->ps.forcePowerLevel[FP_LIGHTNING] > FORCE_LEVEL_2 )
+	if ( jar::enlightenment::Rank(self->client->ps,FP_LIGHTNING) > FORCE_LEVEL_2 )
 	{//arc
 		vec3_t	center, mins, maxs, dir, ent_org, size, v;
 		float	radius = 512, dot, dist;
@@ -11280,7 +11319,7 @@ void ForceShootLightning( gentity_t *self )
 			if ( traceEnt
 				&& traceEnt->s.number >= MAX_CLIENTS
 				&& traceEnt->client
-				&& traceEnt->client->ps.forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_0 )//&& traceEnt->NPC
+				&& jar::enlightenment::Rank(traceEnt->client->ps,FP_LEVITATION) > FORCE_LEVEL_0 )//&& traceEnt->NPC
 			{//FIXME: need a more reliable way to know we hit a jedi?
 				if ( !Jedi_DodgeEvasion( traceEnt, self, &tr, HL_NONE ) )
 				{//act like we didn't even hit him
@@ -11366,7 +11405,7 @@ qboolean ForceDrain2( gentity_t *self )
 	{//already draining
 		//keep my saber off!
 		WP_DeactivateSaber( self, qtrue );
-		if ( self->client->ps.forcePowerLevel[FP_DRAIN] > FORCE_LEVEL_1 )
+		if ( jar::enlightenment::Rank(self->client->ps,FP_DRAIN) > FORCE_LEVEL_1 )
 		{
 			self->client->ps.forcePowerDuration[FP_DRAIN] = level.time + 100;
 			self->client->ps.weaponTime = 1000;
@@ -11483,7 +11522,7 @@ qboolean ForceDrain2( gentity_t *self )
 		case CLASS_JEDI:
 			if ( traceEnt->NPC
 				&& traceEnt->NPC->rank > RANK_CIVILIAN
-				&& self->client->ps.forcePowerLevel[FP_DRAIN] < FORCE_LEVEL_2
+				&& jar::enlightenment::Rank(self->client->ps,FP_DRAIN) < FORCE_LEVEL_2
 				&& traceEnt->client->ps.weaponTime <= 0 )
 			{
 				ForceDrainGrabStart( self );
@@ -11505,7 +11544,7 @@ qboolean ForceDrain2( gentity_t *self )
 		}
 //=CHECKABSORB===
 		/*
-		if ( -1 != WP_AbsorbConversion( traceEnt, traceEnt->client->ps.forcePowerLevel[FP_ABSORB], self, FP_DRAIN, self->client->ps.forcePowerLevel[FP_DRAIN], forcePowerNeeded[self->client->ps.forcePowerLevel[FP_DRAIN]]) )
+		if ( -1 != WP_AbsorbConversion( traceEnt, jar::enlightenment::Rank(traceEnt->client->ps,FP_ABSORB), self, FP_DRAIN, jar::enlightenment::Rank(self->client->ps,FP_DRAIN), forcePowerNeeded[jar::enlightenment::Rank(self->client->ps,FP_DRAIN)]) )
 		{
 			//WP_ForcePowerStop( self, FP_DRAIN );
 			return;
@@ -11535,7 +11574,7 @@ qboolean ForceDrain2( gentity_t *self )
 	}
 
 	/*
-	if ( self->client->ps.forcePowerLevel[FP_DRAIN] < FORCE_LEVEL_2 )
+	if ( jar::enlightenment::Rank(self->client->ps,FP_DRAIN) < FORCE_LEVEL_2 )
 	{//just a duration
 		self->client->ps.forcePowerDebounce[FP_DRAIN] = level.time + 250;
 		self->client->ps.forcePowerDuration[FP_DRAIN] = level.time + 5000;
@@ -11668,7 +11707,7 @@ void ForceDrainDamage( gentity_t *self, gentity_t *traceEnt, vec3_t dir, vec3_t 
 			&& self->client->ps.forceDrainTime < level.time )
 		{//an enemy or object
 			int modPowerLevel = -1;
-			int	dmg = self->client->ps.forcePowerLevel[FP_DRAIN] + 1;
+			int	dmg = jar::enlightenment::Rank(self->client->ps,FP_DRAIN) + 1;
 			int dflags = (DAMAGE_NO_ARMOR|DAMAGE_NO_KNOCKBACK|DAMAGE_NO_HIT_LOC);//|DAMAGE_NO_KILL);
 			if ( traceEnt->s.number == self->client->ps.forceDrainEntityNum )
 			{//grabbing hold of them does more damage/drains more, and can actually kill them
@@ -11680,7 +11719,7 @@ void ForceDrainDamage( gentity_t *self, gentity_t *traceEnt, vec3_t dir, vec3_t 
 			if (traceEnt->client)
 			{
 				//check for client using FP_ABSORB
-				modPowerLevel = WP_AbsorbConversion(traceEnt, traceEnt->client->ps.forcePowerLevel[FP_ABSORB], self, FP_DRAIN, self->client->ps.forcePowerLevel[FP_DRAIN], 0);
+				modPowerLevel = WP_AbsorbConversion(traceEnt, jar::enlightenment::Rank(traceEnt->client->ps,FP_ABSORB), self, FP_DRAIN, jar::enlightenment::Rank(self->client->ps,FP_DRAIN), 0);
 				//Since this is drain, don't absorb any power, but nullify the affect it has
 			}
 
@@ -11734,7 +11773,7 @@ void ForceDrainDamage( gentity_t *self, gentity_t *traceEnt, vec3_t dir, vec3_t 
 				*/
 
 				int maxHealth = self->client->ps.stats[STAT_MAX_HEALTH];
-				if ( self->client->ps.forcePowerLevel[FP_DRAIN] > FORCE_LEVEL_2 )
+				if ( jar::enlightenment::Rank(self->client->ps,FP_DRAIN) > FORCE_LEVEL_2 )
 				{//overcharge health
 					maxHealth = floor( (float)self->client->ps.stats[STAT_MAX_HEALTH] * 1.25f );
 				}
@@ -11789,8 +11828,8 @@ qboolean WP_CheckForceDraineeStopMe( gentity_t *self, gentity_t *drainee )
 {
 	if ( drainee->NPC
 		&& drainee->client
-		&& (drainee->client->ps.forcePowersKnown&(1<<FP_PUSH))
-		&& level.time-(self->client->ps.forcePowerDebounce[FP_DRAIN]>self->client->ps.forcePowerLevel[FP_DRAIN]*500)//at level 1, I always get at least 500ms of drain, at level 3 I get 1500ms
+		&& (jar::enlightenment::Known(drainee->client->ps)&(1<<FP_PUSH))
+		&& level.time-(self->client->ps.forcePowerDebounce[FP_DRAIN]>jar::enlightenment::Rank(self->client->ps,FP_DRAIN)*500)//at level 1, I always get at least 500ms of drain, at level 3 I get 1500ms
 		&& !Q_irand( 0, 100-(drainee->NPC->stats.evasion*10)-(g_spskill->integer*12) ) )
 	{//a jedi who broke free
 		ForceThrow( drainee, qfalse );
@@ -11820,7 +11859,7 @@ void ForceShootDrain( gentity_t *self )
 		AngleVectors( self->client->ps.viewangles, forward, NULL, NULL );
 		VectorNormalize( forward );
 
-		if ( self->client->ps.forcePowerLevel[FP_DRAIN] > FORCE_LEVEL_2 )
+		if ( jar::enlightenment::Rank(self->client->ps,FP_DRAIN) > FORCE_LEVEL_2 )
 		{//arc
 			vec3_t	center, mins, maxs, dir, ent_org, size, v;
 			float	radius = MAX_DRAIN_DISTANCE, dot, dist;
@@ -11909,7 +11948,7 @@ void ForceShootDrain( gentity_t *self )
 				if ( traceEnt
 					&& traceEnt->s.number >= MAX_CLIENTS
 					&& traceEnt->client
-					&& traceEnt->client->ps.forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_0 )//&& traceEnt->NPC
+					&& jar::enlightenment::Rank(traceEnt->client->ps,FP_LEVITATION) > FORCE_LEVEL_0 )//&& traceEnt->NPC
 				{
 					if ( !Q_irand( 0, 4 ) && !Jedi_DodgeEvasion( traceEnt, self, &tr, HL_NONE ) )
 					{//act like we didn't even hit him
@@ -11951,7 +11990,7 @@ void ForceShootDrain( gentity_t *self )
 				if ( traceEnt
 					&& traceEnt->s.number >= MAX_CLIENTS
 					&& traceEnt->client
-					&& traceEnt->client->ps.forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_0 )//&& traceEnt->NPC
+					&& jar::enlightenment::Rank(traceEnt->client->ps,FP_LEVITATION) > FORCE_LEVEL_0 )//&& traceEnt->NPC
 				{
 					if ( !Q_irand( 0, 2 ) && !Jedi_DodgeEvasion( traceEnt, self, &tr, HL_NONE ) )
 					{//act like we didn't even hit him
@@ -12021,7 +12060,7 @@ void ForceDrainEnt( gentity_t *self, gentity_t *drainEnt )
 
 		if ( drainEnt->s.number )
 		{
-			if ( self->client->ps.forcePowerLevel[FP_DRAIN] > FORCE_LEVEL_2 )
+			if ( jar::enlightenment::Rank(self->client->ps,FP_DRAIN) > FORCE_LEVEL_2 )
 			{//do damage faster at level 3
 				self->client->ps.forcePowerDebounce[FP_DRAIN] = level.time + Q_irand( 100, 500 );
 			}
@@ -12096,11 +12135,11 @@ void ForceProtect( gentity_t *self )
 
 	if ( self->client->ps.saberLockTime < level.time )
 	{
-		if ( self->client->ps.forcePowerLevel[FP_PROTECT] < FORCE_LEVEL_3 )
+		if ( jar::enlightenment::Rank(self->client->ps,FP_PROTECT) < FORCE_LEVEL_3 )
 		{//animate
 			int parts = SETANIM_BOTH;
 			int anim = BOTH_FORCE_PROTECT;
-			if ( self->client->ps.forcePowerLevel[FP_PROTECT] > FORCE_LEVEL_1 )
+			if ( jar::enlightenment::Rank(self->client->ps,FP_PROTECT) > FORCE_LEVEL_1 )
 			{//level 2 only does it on torso (can keep running)
 				parts = SETANIM_TORSO;
 				anim = BOTH_FORCE_PROTECT_FAST;
@@ -12120,7 +12159,7 @@ void ForceProtect( gentity_t *self )
 			}
 			NPC_SetAnim( self, parts, anim, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
 			//don't move or attack during this anim
-			if ( self->client->ps.forcePowerLevel[FP_PROTECT] < FORCE_LEVEL_2 )
+			if ( jar::enlightenment::Rank(self->client->ps,FP_PROTECT) < FORCE_LEVEL_2 )
 			{
 				self->client->ps.pm_flags |= PMF_TIME_KNOCKBACK;
 				self->client->ps.pm_time = self->client->ps.weaponTime = self->client->ps.torsoAnimTimer;
@@ -12172,10 +12211,10 @@ void ForceAbsorb( gentity_t *self )
 
 	if ( self->client->ps.saberLockTime < level.time )
 	{
-		if ( self->client->ps.forcePowerLevel[FP_ABSORB] < FORCE_LEVEL_3 )
+		if ( jar::enlightenment::Rank(self->client->ps,FP_ABSORB) < FORCE_LEVEL_3 )
 		{//must animate
 			int parts = SETANIM_BOTH;
-			if ( self->client->ps.forcePowerLevel[FP_ABSORB] > FORCE_LEVEL_1 )
+			if ( jar::enlightenment::Rank(self->client->ps,FP_ABSORB) > FORCE_LEVEL_1 )
 			{//level 2 only does it on torso (can keep running)
 				parts = SETANIM_TORSO;
 			}
@@ -12275,9 +12314,9 @@ void ForceRage( gentity_t *self )
 
 	if ( self->client->ps.saberLockTime < level.time )
 	{
-		if ( self->client->ps.forcePowerLevel[FP_RAGE] < FORCE_LEVEL_3 )
+		if ( jar::enlightenment::Rank(self->client->ps,FP_RAGE) < FORCE_LEVEL_3 )
 		{//must animate
-			if ( self->client->ps.forcePowerLevel[FP_RAGE] < FORCE_LEVEL_2 )
+			if ( jar::enlightenment::Rank(self->client->ps,FP_RAGE) < FORCE_LEVEL_2 )
 			{//have to stand still for whole length of anim
 				//FIXME: if in air, only do on torso?
 				NPC_SetAnim( self, SETANIM_BOTH, BOTH_FORCE_RAGE, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
@@ -12329,9 +12368,9 @@ void ForceJumpCharge( gentity_t *self, usercmd_t *ucmd )
 	self->client->ps.forceJumpCharge += forceJumpChargeInterval;
 
 	//clamp to max strength for current level
-	if ( self->client->ps.forceJumpCharge > forceJumpStrength[self->client->ps.forcePowerLevel[FP_LEVITATION]] )
+	if ( self->client->ps.forceJumpCharge > forceJumpStrength[jar::enlightenment::Rank(self->client->ps,FP_LEVITATION)] )
 	{
-		self->client->ps.forceJumpCharge = forceJumpStrength[self->client->ps.forcePowerLevel[FP_LEVITATION]];
+		self->client->ps.forceJumpCharge = forceJumpStrength[jar::enlightenment::Rank(self->client->ps,FP_LEVITATION)];
 	}
 
 	//clamp to max available force power
@@ -12460,7 +12499,7 @@ void ForceJump( gentity_t *self, usercmd_t *ucmd )
 		G_SoundOnEnt( self, CHAN_BODY, "sound/weapons/force/jump.wav" );
 	}
 
-	float forceJumpChargeInterval = forceJumpStrength[self->client->ps.forcePowerLevel[FP_LEVITATION]]/(FORCE_JUMP_CHARGE_TIME/FRAMETIME);
+	float forceJumpChargeInterval = forceJumpStrength[jar::enlightenment::Rank(self->client->ps,FP_LEVITATION)]/(FORCE_JUMP_CHARGE_TIME/FRAMETIME);
 
 	int anim;
 	vec3_t	jumpVel;
@@ -12593,7 +12632,7 @@ int WP_AbsorbConversion(gentity_t *attacked, int atdAbsLevel, gentity_t *attacke
 	}
 
 	//let the attacker absorb an amount of force used in this attack based on his level of absorb
-	addTot = (atForceSpent/3)*attacked->client->ps.forcePowerLevel[FP_ABSORB];
+	addTot = (atForceSpent/3)*jar::enlightenment::Rank(attacked->client->ps,FP_ABSORB);
 
 	if (addTot < 1 && atForceSpent >= 1)
 	{
@@ -12650,7 +12689,7 @@ void WP_ForcePowerDrain( gentity_t *self, forcePowers_t forcePower, int override
 	{
 		return;
 	}
-	self->client->ps.forcePower -= drain;
+	self->client->ps.forcePower -= jar::forceBoon::Drain(self->client->ps.powerups[PW_FORCE_BOON],level.time,drain);
 	if ( self->client->ps.forcePower < 0 )
 	{
 		self->client->ps.forcePower = 0;
@@ -12678,10 +12717,10 @@ void WP_ForcePowerStart( gentity_t *self, forcePowers_t forcePower, int override
 		break;
 	case FP_SPEED:
 		//duration is always 5 seconds, player time
-		duration = ceil(FORCE_SPEED_DURATION*forceSpeedValue[self->client->ps.forcePowerLevel[FP_SPEED]]);//FIXME: because the timescale scales down (not instant), this doesn't end up being exactly right...
+		duration = ceil(FORCE_SPEED_DURATION*forceSpeedValue[jar::enlightenment::Rank(self->client->ps,FP_SPEED)]);//FIXME: because the timescale scales down (not instant), this doesn't end up being exactly right...
 		self->client->ps.forcePowersActive |= ( 1 << forcePower );
 		self->s.loopSound = G_SoundIndex( "sound/weapons/force/speedloop.wav" );
-		if ( self->client->ps.forcePowerLevel[FP_SPEED] > FORCE_LEVEL_2 )
+		if ( jar::enlightenment::Rank(self->client->ps,FP_SPEED) > FORCE_LEVEL_2 )
 		{//HACK: just using this as a timestamp for when the power started, setting debounce to current time shouldn't adversely affect anything else
 			self->client->ps.forcePowerDebounce[FP_SPEED] = level.time;
 		}
@@ -12707,7 +12746,7 @@ void WP_ForcePowerStart( gentity_t *self, forcePowers_t forcePower, int override
 	//new Jedi Academy force powers
 	case FP_RAGE:
 		//duration is always 5 seconds, player time
-		duration = ceil(FORCE_RAGE_DURATION*forceSpeedValue[self->client->ps.forcePowerLevel[FP_RAGE]-1]);//FIXME: because the timescale scales down (not instant), this doesn't end up being exactly right...
+		duration = ceil(FORCE_RAGE_DURATION*forceSpeedValue[jar::enlightenment::Rank(self->client->ps,FP_RAGE)-1]);//FIXME: because the timescale scales down (not instant), this doesn't end up being exactly right...
 		self->client->ps.forcePowersActive |= ( 1 << forcePower );
 		G_SoundOnEnt( self, CHAN_ITEM, "sound/weapons/force/rage.mp3" );
 		self->s.loopSound = G_SoundIndex( "sound/weapons/force/rageloop.wav" );
@@ -12717,7 +12756,7 @@ void WP_ForcePowerStart( gentity_t *self, forcePowers_t forcePower, int override
 		}
 		break;
 	case FP_DRAIN:
-		if ( self->client->ps.forcePowerLevel[forcePower] > FORCE_LEVEL_1
+		if ( jar::enlightenment::Rank(self->client->ps,forcePower) > FORCE_LEVEL_1
 			&& self->client->ps.forceDrainEntityNum >= ENTITYNUM_WORLD )
 		{
 			duration = overrideAmt;
@@ -12732,7 +12771,7 @@ void WP_ForcePowerStart( gentity_t *self, forcePowers_t forcePower, int override
 		self->client->ps.forcePowersActive |= ( 1 << forcePower );
 		break;
 	case FP_PROTECT:
-		switch ( self->client->ps.forcePowerLevel[FP_PROTECT] )
+		switch ( jar::enlightenment::Rank(self->client->ps,FP_PROTECT) )
 		{
 		case FORCE_LEVEL_3:
 			duration = 20000;
@@ -12757,11 +12796,11 @@ void WP_ForcePowerStart( gentity_t *self, forcePowers_t forcePower, int override
 		self->s.loopSound = G_SoundIndex( "sound/weapons/force/absorbloop.wav" );
 		break;
 	case FP_SEE:
-		if ( self->client->ps.forcePowerLevel[FP_SEE] == FORCE_LEVEL_1 )
+		if ( jar::enlightenment::Rank(self->client->ps,FP_SEE) == FORCE_LEVEL_1 )
 		{
 			duration = 5000;
 		}
-		else if ( self->client->ps.forcePowerLevel[FP_SEE] == FORCE_LEVEL_2 )
+		else if ( jar::enlightenment::Rank(self->client->ps,FP_SEE) == FORCE_LEVEL_2 )
 		{
 			duration = 10000;
 		}
@@ -12817,7 +12856,9 @@ extern void CG_PlayerLockedWeaponSpeech( int jumping );
 extern qboolean Rosh_TwinNearBy( gentity_t *self );
 qboolean WP_ForcePowerUsable( gentity_t *self, forcePowers_t forcePower, int overrideAmt )
 {
-	if ( !(self->client->ps.forcePowersKnown & ( 1 << forcePower )) )
+	extern bool G_SiegeForceLimited(const gentity_t&);
+	if(self&&G_SiegeForceLimited(*self))return qfalse;
+	if ( !(jar::enlightenment::Known(self->client->ps) & ( 1 << forcePower )) )
 	{//don't know this power
 		return qfalse;
 	}
@@ -12832,7 +12873,7 @@ qboolean WP_ForcePowerUsable( gentity_t *self, forcePowers_t forcePower, int ove
 		}
 	}
 
-	if ( self->client->ps.forcePowerLevel[forcePower] <= 0 )
+	if ( jar::enlightenment::Rank(self->client->ps,forcePower) <= 0 )
 	{//can't use this power
 		return qfalse;
 	}
@@ -12866,7 +12907,7 @@ qboolean WP_ForcePowerUsable( gentity_t *self, forcePowers_t forcePower, int ove
 		return qfalse;
 	}
 	/*
-	if ( !self->client->ps.forcePowerLevel[(int)(forcePower)] )
+	if ( !jar::enlightenment::Rank(self->client->ps,(int)(forcePower)) )
 	{
 		return qfalse;
 	}
@@ -12978,7 +13019,7 @@ void WP_ForcePowerStop( gentity_t *self, forcePowers_t forcePower )
 	case FP_HEAL:
 		//if ( self->client->ps.forcePowerLevel[FP_HEAL] < FORCE_LEVEL_3 )
 		{//wasn't an instant heal and heal is now done
-			if ( self->client->ps.forcePowerLevel[FP_HEAL] < FORCE_LEVEL_2 )
+			if ( jar::enlightenment::Rank(self->client->ps,FP_HEAL) < FORCE_LEVEL_2 )
 			{//if in meditation pose, must come out of it
 				//FIXME: BOTH_FORCEHEAL_STOP
 				if ( self->client->ps.legsAnim == BOTH_FORCEHEAL_START )
@@ -13007,7 +13048,7 @@ void WP_ForcePowerStop( gentity_t *self, forcePowers_t forcePower )
 		{//player using force speed
 			if ( g_timescale->value != 1.0 )
 			{
-				if ( !(self->client->ps.forcePowersActive&(1<<FP_RAGE))||self->client->ps.forcePowerLevel[FP_RAGE] < FORCE_LEVEL_2 )
+				if ( !(self->client->ps.forcePowersActive&(1<<FP_RAGE))||jar::enlightenment::Rank(self->client->ps,FP_RAGE) < FORCE_LEVEL_2 )
 				{//not slowed down because of force rage
 					gi.cvar_set("timescale", "1");
 				}
@@ -13037,7 +13078,7 @@ void WP_ForcePowerStop( gentity_t *self, forcePowers_t forcePower )
 				if ( gripEnt->client )
 				{
 					gripEnt->client->ps.eFlags &= ~EF_FORCE_GRIPPED;
-					if ( self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_1 )
+					if ( jar::enlightenment::Rank(self->client->ps,FP_GRIP) > FORCE_LEVEL_1 )
 					{//sanity-cap the velocity
 						float gripVel = VectorNormalize( gripEnt->client->ps.velocity );
 						if ( gripVel > 500.0f )
@@ -13067,11 +13108,11 @@ void WP_ForcePowerStop( gentity_t *self, forcePowers_t forcePower )
 						}
 						else if ( gripEnt->s.weapon == WP_SABER )
 						{//jedi recover faster
-							holdTime = self->client->ps.forcePowerLevel[FP_GRIP]*200;
+							holdTime = jar::enlightenment::Rank(self->client->ps,FP_GRIP)*200;
 						}
 						else
 						{
-							holdTime = self->client->ps.forcePowerLevel[FP_GRIP]*500;
+							holdTime = jar::enlightenment::Rank(self->client->ps,FP_GRIP)*500;
 						}
 						//stop the anims soon, keep them locked in place for a bit
 						if ( gripEnt->client->ps.torsoAnim == BOTH_CHOKE1 || gripEnt->client->ps.torsoAnim == BOTH_CHOKE3 )
@@ -13162,7 +13203,7 @@ void WP_ForcePowerStop( gentity_t *self, forcePowers_t forcePower )
 		{
 			NPC_SetAnim( self, SETANIM_TORSO, BOTH_FORCE_2HANDEDLIGHTNING_RELEASE, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
 		}
-		if ( self->client->ps.forcePowerLevel[FP_LIGHTNING] < FORCE_LEVEL_2 )
+		if ( jar::enlightenment::Rank(self->client->ps,FP_LIGHTNING) < FORCE_LEVEL_2 )
 		{//don't do it again for 3 seconds, minimum... FIXME: this should be automatic once regeneration is slower (normal)
 			self->client->ps.forcePowerDebounce[FP_LIGHTNING] = level.time + 3000;//FIXME: define?
 		}
@@ -13205,7 +13246,7 @@ void WP_ForcePowerStop( gentity_t *self, forcePowers_t forcePower )
 		{
 			TIMER_Set( self, "draining", -level.time );
 		}
-		if ( self->client->ps.forcePowerLevel[FP_DRAIN] < FORCE_LEVEL_2 )
+		if ( jar::enlightenment::Rank(self->client->ps,FP_DRAIN) < FORCE_LEVEL_2 )
 		{//don't do it again for 3 seconds, minimum... FIXME: this should be automatic once regeneration is slower (normal)
 			self->client->ps.forcePowerDebounce[FP_DRAIN] = level.time + 3000;//FIXME: define?
 		}
@@ -13281,7 +13322,7 @@ void WP_ForcePowerStop( gentity_t *self, forcePowers_t forcePower )
 		{
 			NPC_SetAnim( self, SETANIM_TORSO, BOTH_FORCE_ABSORB_END, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
 		}
-		if ( self->client->ps.forcePowerLevel[FP_ABSORB] < FORCE_LEVEL_2 )
+		if ( jar::enlightenment::Rank(self->client->ps,FP_ABSORB) < FORCE_LEVEL_2 )
 		{//was stuck, free us in case we interrupted it or something
 			self->client->ps.weaponTime = 0;
 			self->client->ps.pm_flags &= ~PMF_TIME_KNOCKBACK;
@@ -13382,12 +13423,12 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 			}
 			WP_ForcePowerStop( self, forcePower );
 		}
-		else if ( self->client->ps.forcePowerLevel[FP_HEAL] < FORCE_LEVEL_3 && ( (cmd->buttons&BUTTON_ATTACK) || (cmd->buttons&BUTTON_ALT_ATTACK) || self->painDebounceTime > level.time || (self->client->ps.weaponTime&&self->client->ps.weapon!=WP_NONE) ) )
+		else if ( jar::enlightenment::Rank(self->client->ps,FP_HEAL) < FORCE_LEVEL_3 && ( (cmd->buttons&BUTTON_ATTACK) || (cmd->buttons&BUTTON_ALT_ATTACK) || self->painDebounceTime > level.time || (self->client->ps.weaponTime&&self->client->ps.weapon!=WP_NONE) ) )
 		{//attacked or was hit while healing...
 			//stop healing
 			WP_ForcePowerStop( self, forcePower );
 		}
-		else if ( self->client->ps.forcePowerLevel[FP_HEAL] < FORCE_LEVEL_2 && ( cmd->rightmove || cmd->forwardmove || cmd->upmove > 0 ) )
+		else if ( jar::enlightenment::Rank(self->client->ps,FP_HEAL) < FORCE_LEVEL_2 && ( cmd->rightmove || cmd->forwardmove || cmd->upmove > 0 ) )
 		{//moved while healing... FIXME: also, in WP_ForcePowerStart, stop healing if any other force power is used
 			//stop healing
 			WP_ForcePowerStop( self, forcePower );
@@ -13462,11 +13503,11 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 		}
 		break;
 	case FP_SPEED:
-		speed = forceSpeedValue[self->client->ps.forcePowerLevel[FP_SPEED]];
+		speed = forceSpeedValue[jar::enlightenment::Rank(self->client->ps,FP_SPEED)];
 		if ( !self->s.number )
 		{//player using force speed
 			if ( !(self->client->ps.forcePowersActive&(1<<FP_RAGE))
-				|| self->client->ps.forcePowerLevel[FP_SPEED] >= self->client->ps.forcePowerLevel[FP_RAGE] )
+				|| jar::enlightenment::Rank(self->client->ps,FP_SPEED) >= jar::enlightenment::Rank(self->client->ps,FP_RAGE) )
 			{//either not using rage or rage is at a lower level than speed
 				gi.cvar_set("timescale", va("%4.2f", speed));
 				if ( g_timescale->value > speed )
@@ -13489,7 +13530,7 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 		break;
 	case FP_GRIP:
 		if ( !WP_ForcePowerAvailable( self, FP_GRIP, 0 )
-			|| (self->client->ps.forcePowerLevel[FP_GRIP]>FORCE_LEVEL_1&&!self->s.number&&!(cmd->buttons&BUTTON_FORCEGRIP)) )
+			|| (jar::enlightenment::Rank(self->client->ps,FP_GRIP)>FORCE_LEVEL_1&&!self->s.number&&!(cmd->buttons&BUTTON_FORCEGRIP)) )
 		{
 			WP_ForcePowerStop( self, FP_GRIP );
 			return;
@@ -13516,7 +13557,7 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 //rww - RAGDOLL_BEGIN
 #endif
 //rww - RAGDOLL_END
-			if ( self->client->ps.forcePowerLevel[FP_GRIP] == FORCE_LEVEL_1
+			if ( jar::enlightenment::Rank(self->client->ps,FP_GRIP) == FORCE_LEVEL_1
 				&& gripEnt->client
 				&& gripEnt->client->ps.groundEntityNum == ENTITYNUM_NONE
 				&& gripEnt->client->moveType != MT_FLYSWIM )
@@ -13547,7 +13588,7 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 			}
 			else if ( gripEnt->NPC
 				&& gripEnt->client
-				&& gripEnt->client->ps.forcePowersKnown
+				&& jar::enlightenment::Known(gripEnt->client->ps)
 				&& (gripEnt->client->NPC_class==CLASS_REBORN||gripEnt->client->ps.weapon==WP_SABER)
 				&& !Jedi_CultistDestroyer(gripEnt)
 				&& !Q_irand( 0, 100-(gripEnt->NPC->stats.evasion*8)-(g_spskill->integer*20) ) )
@@ -13565,10 +13606,10 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 			}
 			else
 			{
-				int gripLevel = self->client->ps.forcePowerLevel[FP_GRIP];
+				int gripLevel = jar::enlightenment::Rank(self->client->ps,FP_GRIP);
 				if ( gripEnt->client )
 				{
-					gripLevel = WP_AbsorbConversion( gripEnt, gripEnt->client->ps.forcePowerLevel[FP_ABSORB], self, FP_GRIP, self->client->ps.forcePowerLevel[FP_GRIP], forcePowerNeeded[gripLevel] );
+					gripLevel = WP_AbsorbConversion( gripEnt, jar::enlightenment::Rank(gripEnt->client->ps,FP_ABSORB), self, FP_GRIP, jar::enlightenment::Rank(self->client->ps,FP_GRIP), forcePowerNeeded[gripLevel] );
 				}
 				if ( !gripLevel )
 				{
@@ -13576,7 +13617,7 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 					return;
 				}
 
-				if ( self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_1 )
+				if ( jar::enlightenment::Rank(self->client->ps,FP_GRIP) > FORCE_LEVEL_1 )
 				{//holding it
 					NPC_SetAnim( self, SETANIM_TORSO, BOTH_FORCEGRIP_HOLD, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
 					if ( self->client->ps.torsoAnimTimer < 100 ){//we were already playing this anim, we didn't want to restart it, but we want to hold it for at least 100ms, sooo....
@@ -13599,7 +13640,7 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 
 				//how far are they
 				dist = Distance( self->client->renderInfo.handLPoint, gripEntOrg );
-				if ( self->client->ps.forcePowerLevel[FP_GRIP] == FORCE_LEVEL_2 &&
+				if ( jar::enlightenment::Rank(self->client->ps,FP_GRIP) == FORCE_LEVEL_2 &&
 					(!InFront( gripEntOrg, self->client->renderInfo.handLPoint, self->client->ps.viewangles, 0.3f ) ||
 						DistanceSquared( gripEntOrg, self->client->renderInfo.handLPoint ) > FORCE_GRIP_DIST_SQUARED))
 				{//must face them
@@ -13608,7 +13649,7 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 				}
 
 				//check for lift or carry
-				if ( self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_2
+				if ( jar::enlightenment::Rank(self->client->ps,FP_GRIP) > FORCE_LEVEL_2
 					&& (!gripEnt->client || (!gripEnt->message&&!(gripEnt->flags&FL_NO_KNOCKBACK))) )
 				{//carry
 					//cap dist
@@ -13622,7 +13663,7 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 					}
 					VectorMA( self->client->renderInfo.handLPoint, dist, dir, gripOrg );
 				}
-				else if ( self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_1 )
+				else if ( jar::enlightenment::Rank(self->client->ps,FP_GRIP) > FORCE_LEVEL_1 )
 				{//just lift
 					VectorCopy( self->client->ps.forceGripOrg, gripOrg );
 				}
@@ -13630,7 +13671,7 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 				{
 					VectorCopy( gripEnt->currentOrigin, gripOrg );
 				}
-				if ( self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_1 )
+				if ( jar::enlightenment::Rank(self->client->ps,FP_GRIP) > FORCE_LEVEL_1 )
 				{//if holding him, make sure there's a clear LOS between my hand and him
 					trace_t gripTrace;
 					gi.trace( &gripTrace, self->client->renderInfo.handLPoint, NULL, NULL, gripEntOrg, ENTITYNUM_NONE, MASK_FORCE_PUSH, (EG2_Collision)0, 0 );
@@ -13645,10 +13686,10 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 				//now move them
 				if ( gripEnt->client )
 				{
-					if ( self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_1 )
+					if ( jar::enlightenment::Rank(self->client->ps,FP_GRIP) > FORCE_LEVEL_1 )
 					{//level 1 just holds them
  						VectorSubtract( gripOrg, gripEntOrg, gripEnt->client->ps.velocity );
-						if ( self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_2
+						if ( jar::enlightenment::Rank(self->client->ps,FP_GRIP) > FORCE_LEVEL_2
 							&& (!gripEnt->client || (!gripEnt->message&&!(gripEnt->flags&FL_NO_KNOCKBACK)) ) )
 						{//level 2 just lifts them
 							float gripDist = VectorNormalize( gripEnt->client->ps.velocity )/3.0f;
@@ -13678,7 +13719,7 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 						{//not falling to their death
 							gripEnt->NPC->nextBStateThink = level.time + 2000;
 						}
-						if ( self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_1 )
+						if ( jar::enlightenment::Rank(self->client->ps,FP_GRIP) > FORCE_LEVEL_1 )
 						{//level 1 just holds them
 							vectoangles( dir, angles );
 							gripEnt->NPC->desiredYaw = AngleNormalize180(angles[YAW]+180);
@@ -13708,11 +13749,11 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 				}
 				else
 				{//move
-					if ( self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_1 )
+					if ( jar::enlightenment::Rank(self->client->ps,FP_GRIP) > FORCE_LEVEL_1 )
 					{//level 1 just holds them
 						VectorCopy( gripEnt->currentOrigin, gripEnt->s.pos.trBase );
 						VectorSubtract( gripOrg, gripEntOrg, gripEnt->s.pos.trDelta );
-						if ( self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_2
+						if ( jar::enlightenment::Rank(self->client->ps,FP_GRIP) > FORCE_LEVEL_2
 							&& (!gripEnt->client || (!gripEnt->message&&!(gripEnt->flags&FL_NO_KNOCKBACK))) )
 						{//level 2 just lifts them
 							VectorScale( gripEnt->s.pos.trDelta, 10, gripEnt->s.pos.trDelta );
@@ -13738,7 +13779,7 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 							&& gripEnt->m_pVehicle->m_pVehicleInfo->type == VH_ANIMAL) )
 					{//we don't damage the empty vehicle
 						gripEnt->painDebounceTime = 0;
-						int gripDmg = forceGripDamage[self->client->ps.forcePowerLevel[FP_GRIP]];
+						int gripDmg = forceGripDamage[jar::enlightenment::Rank(self->client->ps,FP_GRIP)];
 						if ( gripLevel != -1 )
 						{
 							if ( gripLevel == 1 )
@@ -13754,7 +13795,7 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 					}
 					if ( gripEnt->s.number )
 					{
-						if ( self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_2 )
+						if ( jar::enlightenment::Rank(self->client->ps,FP_GRIP) > FORCE_LEVEL_2 )
 						{//do damage faster at level 3
 							self->client->ps.forcePowerDebounce[FP_GRIP] = level.time + Q_irand( 150, 750 );
 						}
@@ -13767,7 +13808,7 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 					{//player takes damage faster
 						self->client->ps.forcePowerDebounce[FP_GRIP] = level.time + Q_irand( 100, 600 );
 					}
-					if ( forceGripDamage[self->client->ps.forcePowerLevel[FP_GRIP]] > 0 )
+					if ( forceGripDamage[jar::enlightenment::Rank(self->client->ps,FP_GRIP)] > 0 )
 					{//no damage at level 1
 						WP_ForcePowerDrain( self, FP_GRIP, 3 );
 					}
@@ -13832,7 +13873,7 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 					{
 						anim = BOTH_CHOKE1; //two-handed choke
 					}
-					if ( self->client->ps.forcePowerLevel[FP_GRIP] < FORCE_LEVEL_2 )
+					if ( jar::enlightenment::Rank(self->client->ps,FP_GRIP) < FORCE_LEVEL_2 )
 					{//still on ground, only set anim on torso
 						NPC_SetAnim( gripEnt, SETANIM_TORSO, anim, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
 					}
@@ -13846,7 +13887,7 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 		}
 		break;
 	case FP_LIGHTNING:
-		if ( self->client->ps.forcePowerLevel[FP_LIGHTNING] > FORCE_LEVEL_1 )
+		if ( jar::enlightenment::Rank(self->client->ps,FP_LIGHTNING) > FORCE_LEVEL_1 )
 		{//higher than level 1
 			if ( cmd->buttons & BUTTON_FORCE_LIGHTNING )
 			{//holding it keeps it going
@@ -13885,15 +13926,15 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 
 			self->health -= 2;
 
-			if (self->client->ps.forcePowerLevel[FP_RAGE] == FORCE_LEVEL_1)
+			if (jar::enlightenment::Rank(self->client->ps,FP_RAGE) == FORCE_LEVEL_1)
 			{
 				addTime = 100;
 			}
-			else if (self->client->ps.forcePowerLevel[FP_RAGE] == FORCE_LEVEL_2)
+			else if (jar::enlightenment::Rank(self->client->ps,FP_RAGE) == FORCE_LEVEL_2)
 			{
 				addTime = 250;
 			}
-			else if (self->client->ps.forcePowerLevel[FP_RAGE] == FORCE_LEVEL_3)
+			else if (jar::enlightenment::Rank(self->client->ps,FP_RAGE) == FORCE_LEVEL_3)
 			{
 				addTime = 500;
 			}
@@ -13909,11 +13950,11 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 		{
 			self->client->ps.stats[STAT_HEALTH] = self->health;
 
-			speed = forceSpeedValue[self->client->ps.forcePowerLevel[FP_RAGE]-1];
+			speed = forceSpeedValue[jar::enlightenment::Rank(self->client->ps,FP_RAGE)-1];
 			if ( !self->s.number )
 			{//player using force rage
 				if ( !(self->client->ps.forcePowersActive&(1<<FP_SPEED))
-					|| self->client->ps.forcePowerLevel[FP_RAGE] > self->client->ps.forcePowerLevel[FP_SPEED]+1 )
+					|| jar::enlightenment::Rank(self->client->ps,FP_RAGE) > jar::enlightenment::Rank(self->client->ps,FP_SPEED)+1 )
 				{//either not using speed or speed is at a lower level than rage
 					gi.cvar_set("timescale", va("%4.2f", speed));
 					if ( g_timescale->value > speed )
@@ -13941,7 +13982,7 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 		else if ( self->client->ps.forceDrainEntityNum >= 0 && self->client->ps.forceDrainEntityNum < ENTITYNUM_WORLD )
 		{//holding someone
 			if ( !WP_ForcePowerAvailable( self, FP_DRAIN, 0 )
-				|| (self->client->ps.forcePowerLevel[FP_DRAIN]>FORCE_LEVEL_1
+				|| (jar::enlightenment::Rank(self->client->ps,FP_DRAIN)>FORCE_LEVEL_1
 					&& !self->s.number
 					&& !(cmd->buttons&BUTTON_FORCE_DRAIN)
 					&& self->client->ps.forcePowerDuration[FP_DRAIN]<level.time) )
@@ -13985,10 +14026,10 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 				}
 				else if ( drainEnt->NPC
 					&& drainEnt->client
-					&& drainEnt->client->ps.forcePowersKnown
+					&& jar::enlightenment::Known(drainEnt->client->ps)
 					&& (drainEnt->client->NPC_class==CLASS_REBORN||drainEnt->client->ps.weapon==WP_SABER)
 					&& !Jedi_CultistDestroyer(drainEnt)
-					&& level.time-(self->client->ps.forcePowerDebounce[FP_DRAIN]>self->client->ps.forcePowerLevel[FP_DRAIN]*500)//at level 1, I always get at least 500ms of drain, at level 3 I get 1500ms
+					&& level.time-(self->client->ps.forcePowerDebounce[FP_DRAIN]>jar::enlightenment::Rank(self->client->ps,FP_DRAIN)*500)//at level 1, I always get at least 500ms of drain, at level 3 I get 1500ms
 					&& !Q_irand( 0, 100-(drainEnt->NPC->stats.evasion*8)-(g_spskill->integer*15) ) )
 				{//a jedi who broke free FIXME: maybe have some minimum grip length- a reaction time?
 					WP_ForceForceThrow( drainEnt );
@@ -14001,7 +14042,7 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 				else
 				{
 					/*
-					int drainLevel = WP_AbsorbConversion( drainEnt, drainEnt->client->ps.forcePowerLevel[FP_ABSORB], self, FP_DRAIN, self->client->ps.forcePowerLevel[FP_DRAIN], forcePowerNeeded[self->client->ps.forcePowerLevel[FP_DRAIN]] );
+					int drainLevel = WP_AbsorbConversion( drainEnt, jar::enlightenment::Rank(drainEnt->client->ps,FP_ABSORB), self, FP_DRAIN, jar::enlightenment::Rank(self->client->ps,FP_DRAIN), forcePowerNeeded[jar::enlightenment::Rank(self->client->ps,FP_DRAIN)] );
 					if ( !drainLevel )
 					{
 						WP_ForcePowerStop( self, forcePower );
@@ -14088,7 +14129,7 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 
 					if ( self->client->ps.forcePowerDebounce[FP_DRAIN] < level.time )
 					{
-						int drainLevel = WP_AbsorbConversion( drainEnt, drainEnt->client->ps.forcePowerLevel[FP_ABSORB], self, FP_DRAIN, self->client->ps.forcePowerLevel[FP_DRAIN], forcePowerNeeded[self->client->ps.forcePowerLevel[FP_DRAIN]] );
+						int drainLevel = WP_AbsorbConversion( drainEnt, jar::enlightenment::Rank(drainEnt->client->ps,FP_ABSORB), self, FP_DRAIN, jar::enlightenment::Rank(self->client->ps,FP_DRAIN), forcePowerNeeded[jar::enlightenment::Rank(self->client->ps,FP_DRAIN)] );
 						if ( (drainLevel && drainLevel == -1)
 							|| Q_irand( drainLevel, 3 ) < 3 )
 						{//the drain is being absorbed
@@ -14115,7 +14156,7 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 				}
 			}
 		}
-		else if ( self->client->ps.forcePowerLevel[forcePower] > FORCE_LEVEL_1 )
+		else if ( jar::enlightenment::Rank(self->client->ps,forcePower) > FORCE_LEVEL_1 )
 		{//regular distance-drain
 			if ( cmd->buttons & BUTTON_FORCE_DRAIN )
 			{//holding it keeps it going
@@ -14243,6 +14284,21 @@ void WP_CheckForcedPowers( gentity_t *self, usercmd_t *ucmd )
 	}
 }
 
+void WP_EndForceEnlightenment(gentity_t* entity)
+{
+	if (!entity || !entity->client)
+		return;
+	auto& ps=entity->client->ps;
+	const int stop=jar::enlightenment::AffectedActivePowers(ps);
+	for (int i=0;i<NUM_FORCE_POWERS;++i) {
+		if (stop&(1<<i)) {
+			WP_ForcePowerStop(entity,static_cast<forcePowers_t>(i));
+			ps.forcePowerDuration[i]=0;
+		}
+	}
+	ps.powerups[PW_FORCE_ENLIGHTENMENT]=0;
+}
+
 void WP_ForcePowersUpdate( gentity_t *self, usercmd_t *ucmd )
 {
 	qboolean	usingForce = qfalse;
@@ -14329,7 +14385,7 @@ void WP_ForcePowersUpdate( gentity_t *self, usercmd_t *ucmd )
 	{
 		if ( !ForceDrain2( self ) )
 		{//can't drain-grip someone right in front
-			if ( self->client->ps.forcePowerLevel[FP_DRAIN] > FORCE_LEVEL_1 )
+			if ( jar::enlightenment::Rank(self->client->ps,FP_DRAIN) > FORCE_LEVEL_1 )
 			{//try ranged
 				ForceDrain( self, qtrue );
 			}
@@ -14373,7 +14429,8 @@ void WP_ForcePowersUpdate( gentity_t *self, usercmd_t *ucmd )
 	{//when not using the force, regenerate at 10 points per second
 		if ( self->client->ps.forcePowerRegenDebounceTime < level.time )
 		{
-			WP_ForcePowerRegenerate( self, self->client->ps.forcePowerRegenAmount );
+			WP_ForcePowerRegenerate( self, jar::forceBoon::Recharge(
+				self->client->ps.powerups[PW_FORCE_BOON],level.time,self->client->ps.forcePowerRegenAmount) );
 			self->client->ps.forcePowerRegenDebounceTime = level.time + self->client->ps.forcePowerRegenRate;
 			if ( self->client->ps.forceRageRecoveryTime >= level.time )
 			{//regen half as fast

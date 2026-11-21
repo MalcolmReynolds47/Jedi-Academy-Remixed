@@ -1,3 +1,4 @@
+#include "../../shared/qcommon/jar_saber_flash.h"
 /*
 ===========================================================================
 Copyright (C) 2000 - 2013, Raven Software, Inc.
@@ -445,7 +446,7 @@ int CFxScheduler::ParseEffect( const char *file, CGPGroup *base )
 			}
 		}
 
-		if ( type != None )
+		if ( type != None && !(type==ScreenFlash && JAR_SaberContactEffect(file)) )
 		{
 			prim = new CPrimitiveTemplate;
 
@@ -814,7 +815,7 @@ void CFxScheduler::PlayEffect( int id, vec3_t origin, matrix3_t axis, const int 
 	int						modelNum = 0, boltNum = -1;
 	int						entityNum = -1;
 
-	if ( boltInfo > 0 )
+	if (boltInfo != -1 && ((uint32_t)boltInfo >> ENTITY_SHIFT) < ENTITYNUM_WORLD)
 	{
 		// extract the wraith ID from the bolt info
 		modelNum	= ( boltInfo >> MODEL_SHIFT )	& MODEL_AND;
@@ -1725,9 +1726,7 @@ void CFxScheduler::CreateEffect( CPrimitiveTemplate *fx, SScheduledEffect *sched
 	int boltInfo;
 
 	// annoying bit....we have to pack the values back into an int before calling playEffect since there isn't the ideal overload we can already use.
-	boltInfo    =  (( scheduledFx->mModelNum & MODEL_AND  ) << MODEL_SHIFT  );
-	boltInfo    |= (( scheduledFx->mBoltNum  & BOLT_AND   ) << BOLT_SHIFT   );
-	boltInfo    |= (( scheduledFx->mEntNum   & ENTITY_AND ) << ENTITY_SHIFT );
+	if (!JAR_MP_PackEntityBolt(&boltInfo, scheduledFx->mEntNum, scheduledFx->mModelNum, scheduledFx->mBoltNum)) return;
 
 	PlayEffect( fx->mPlayFxHandles.GetHandle(), scheduledFx->mOrigin, scheduledFx->mAxis, boltInfo );
 }

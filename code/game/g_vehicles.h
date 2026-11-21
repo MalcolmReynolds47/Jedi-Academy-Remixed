@@ -373,7 +373,7 @@ typedef struct
 
 #define	VFOFS(x) offsetof(vehicleInfo_t, x)
 
-#define MAX_VEHICLES	16	//sigh... no more than 64 individual vehicles
+#define MAX_VEHICLES	64	// Registry of distinct definitions, not live vehicle instances.
 extern vehicleInfo_t g_vehicleInfo[MAX_VEHICLES];
 extern int	numVehicles;
 
@@ -691,6 +691,8 @@ struct Vehicle_t
 	// don't need these in mp
 	int			m_safeJumpMountTime;
 	float		m_safeJumpMountRightDot;
+	// Horizontal Sandbox launch velocity, stored separately from native throttle.
+	vec3_t		jarPushDrift{};
 
 
 	void sg_export(

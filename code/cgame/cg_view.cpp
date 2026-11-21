@@ -26,11 +26,15 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 // this line must stay at top so the whole PCH thing works...
 #include "cg_headers.h"
+#include "../game/g_workshop.h"
+#include "../game/g_scene_camera.h"
 
 #include "cg_media.h"
+#include "qcommon/jar_camera.h"
 #include "FxScheduler.h"
 #include "../game/wp_saber.h"
 #include "../game/g_vehicles.h"
+#include "qcommon/jar_force_enlightenment.h"
 
 #define MASK_CAMERACLIP (MASK_SOLID)
 #define CAMERA_SIZE	4
@@ -466,8 +470,8 @@ static void CG_CalcIdealThirdPersonViewLocation(void)
 	if ( cg.renderingThirdPerson && (cg.snap->ps.forcePowersActive&(1<<FP_SPEED)) && player->client->ps.forcePowerDuration[FP_SPEED] )
 	{
 		float timeLeft = player->client->ps.forcePowerDuration[FP_SPEED] - cg.time;
-		float length = FORCE_SPEED_DURATION*forceSpeedValue[player->client->ps.forcePowerLevel[FP_SPEED]];
-		float amt = forceSpeedRangeMod[player->client->ps.forcePowerLevel[FP_SPEED]];
+		float length = FORCE_SPEED_DURATION*forceSpeedValue[jar::enlightenment::Rank(player->client->ps,FP_SPEED)];
+		float amt = forceSpeedRangeMod[jar::enlightenment::Rank(player->client->ps,FP_SPEED)];
 		if ( timeLeft < 500 )
 		{//start going back
 			VectorMA(cameraIdealLoc, (timeLeft)/500*amt, camerafwd, cameraIdealLoc);
@@ -531,8 +535,18 @@ static void CG_ResetThirdPersonViewDamp(void)
 }
 
 // This is called every frame.
+extern vmCvar_t jar_cameraPreset;
+static int CG_JARCameraPreset() {
+    const bool protectedView = !cg.snap || in_camera || cg.overrides.active || cg.zoomMode ||
+        (cg.snap->ps.viewEntity > 0 && cg.snap->ps.viewEntity < ENTITYNUM_WORLD) ||
+        G_IsRidingVehicle(&g_entities[0]) ||
+        (cg.snap->ps.eFlags & (EF_IN_ATST | EF_LOCKED_TO_WEAPON | EF_HELD_BY_RANCOR | EF_HELD_BY_SAND_CREATURE | EF_HELD_BY_WAMPA));
+    return jar::CameraPreset(jar_cameraPreset.integer,protectedView);
+}
+
 static void CG_UpdateThirdPersonTargetDamp(void)
 {
+	const float targetDamp=jar::CameraDamping(CG_JARCameraPreset(),cg_thirdPersonTargetDamp.value);
 	trace_t trace;
 	vec3_t	targetdiff;
 	float	dampfactor, dtime, ratio;
@@ -545,18 +559,18 @@ static void CG_UpdateThirdPersonTargetDamp(void)
 	{//if moving on a plat, camera is *tight*
 		VectorCopy(cameraIdealTarget, cameraCurTarget);
 	}
-	else if (cg_thirdPersonTargetDamp.value>=1.0)//||cg.thisFrameTeleport)
+	else if (targetDamp>=1.0)//||cg.thisFrameTeleport)
 	{	// No damping.
 		VectorCopy(cameraIdealTarget, cameraCurTarget);
 	}
-	else if (cg_thirdPersonTargetDamp.value>=0.0)
+	else if (targetDamp>=0.0)
 	{
 		// Calculate the difference from the current position to the new one.
 		VectorSubtract(cameraIdealTarget, cameraCurTarget, targetdiff);
 
 		// Now we calculate how much of the difference we cover in the time allotted.
 		// The equation is (Damp)^(time)
-		dampfactor = 1.0-cg_thirdPersonTargetDamp.value;	// We must exponent the amount LEFT rather than the amount bled off
+		dampfactor = 1.0-targetDamp;	// We must exponent the amount LEFT rather than the amount bled off
 		dtime = (float)(cg.time-cameraLastFrame) * (1.0/cg_timescale.value) * (1.0/(float)CAMERA_DAMP_INTERVAL);	// Our dampfactor is geared towards a time interval equal to "1".
 
 		// Note that since there are a finite number of "practical" delta millisecond values possible,
@@ -599,6 +613,7 @@ static void CG_UpdateThirdPersonTargetDamp(void)
 static int camWaterAdjust = 0;
 static void CG_UpdateThirdPersonCameraDamp(void)
 {
+	const float cameraDamp=jar::CameraDamping(CG_JARCameraPreset(),cg_thirdPersonCameraDamp.value);
 	trace_t trace;
 	vec3_t	locdiff;
 	float dampfactor, dtime, ratio;
@@ -629,7 +644,7 @@ static void CG_UpdateThirdPersonCameraDamp(void)
 			dampfactor += cg.overrides.thirdPersonCameraDamp;
 		}
 	}
-	else if ( cg_thirdPersonCameraDamp.value != 0.0f )
+	else if ( cameraDamp != 0.0f )
 	{
 		float pitch;
 
@@ -638,9 +653,9 @@ static void CG_UpdateThirdPersonCameraDamp(void)
 
 		// The higher the pitch, the larger the factor, so as you look up, it damps a lot less.
 		pitch /= 115.0f;
-		dampfactor = (1.0-cg_thirdPersonCameraDamp.value)*(pitch*pitch);
+		dampfactor = (1.0-cameraDamp)*(pitch*pitch);
 
-		dampfactor += cg_thirdPersonCameraDamp.value;
+		dampfactor += cameraDamp;
 
 		// Now we also multiply in the stiff factor, so that faster yaw changes are stiffer.
 		if (cameraStiffFactor > 0.0f)
@@ -1060,6 +1075,7 @@ extern qboolean PM_InGetUp( playerState_t *ps );
 extern qboolean PM_InKnockDown( playerState_t *ps );
 extern int PM_AnimLength( int index, animNumber_t anim );
 static void CG_OffsetFirstPersonView( qboolean firstPersonSaber ) {
+	const float motion=jar::CameraMotion(CG_JARCameraPreset());
 	float			*origin;
 	float			*angles;
 	float			bob;
@@ -1151,21 +1167,21 @@ static void CG_OffsetFirstPersonView( qboolean firstPersonSaber ) {
 	VectorCopy( cg.predicted_player_state.velocity, predictedVelocity );
 
 	delta = DotProduct ( predictedVelocity, cg.refdef.viewaxis[0]);
-	angles[PITCH] += delta * cg_runpitch.value;
+	angles[PITCH] += delta * cg_runpitch.value * motion;
 
 	delta = DotProduct ( predictedVelocity, cg.refdef.viewaxis[1]);
-	angles[ROLL] -= delta * cg_runroll.value;
+	angles[ROLL] -= delta * cg_runroll.value * motion;
 
 	// add angles based on bob
 
 	// make sure the bob is visible even at low speeds
 	speed = cg.xyspeed > 200 ? cg.xyspeed : 200;
 
-	delta = cg.bobfracsin * cg_bobpitch.value * speed;
+	delta = cg.bobfracsin * cg_bobpitch.value * motion * speed;
 	if (cg.predicted_player_state.pm_flags & PMF_DUCKED)
 		delta *= 3;		// crouching
 	angles[PITCH] += delta;
-	delta = cg.bobfracsin * cg_bobroll.value * speed;
+	delta = cg.bobfracsin * cg_bobroll.value * motion * speed;
 	if (cg.predicted_player_state.pm_flags & PMF_DUCKED)
 		delta *= 3;		// crouching accentuates roll
 	if (cg.bobcycle & 1)
@@ -1203,7 +1219,7 @@ static void CG_OffsetFirstPersonView( qboolean firstPersonSaber ) {
 	}
 
 	// add bob height
-	bob = cg.bobfracsin * cg.xyspeed * cg_bobup.value;
+	bob = cg.bobfracsin * cg.xyspeed * cg_bobup.value * motion;
 	if (bob > 6) {
 		bob = 6;
 	}
@@ -1322,8 +1338,8 @@ float CG_ForceSpeedFOV( void )
 {
 	float fov;
 	float timeLeft = player->client->ps.forcePowerDuration[FP_SPEED] - cg.time;
-	float length = FORCE_SPEED_DURATION*forceSpeedValue[player->client->ps.forcePowerLevel[FP_SPEED]];
-	float amt = forceSpeedFOVMod[player->client->ps.forcePowerLevel[FP_SPEED]];
+	float length = FORCE_SPEED_DURATION*forceSpeedValue[jar::enlightenment::Rank(player->client->ps,FP_SPEED)];
+	float amt = forceSpeedFOVMod[jar::enlightenment::Rank(player->client->ps,FP_SPEED)];
 	if ( timeLeft < 500 )
 	{//start going back
 		fov = cg_fov.value + (timeLeft)/500*amt;
@@ -1509,65 +1525,6 @@ static void CG_DamageBlendBlob( void )
 	cgi_R_AddRefEntityToScene( &ent );
 }
 
-/*
-====================
-CG_SaberClashFlare
-====================
-*/
-extern int g_saberFlashTime;
-extern vec3_t g_saberFlashPos;
-extern qboolean CG_WorldCoordToScreenCoord(vec3_t worldCoord, int *x, int *y);
-void CG_SaberClashFlare( void )
-{
-	int				t, maxTime = 150;
-
-	t = cg.time - g_saberFlashTime;
-
-	if ( t <= 0 || t >= maxTime )
-	{
-		return;
-	}
-
-	vec3_t dif;
-
-	// Don't do clashes for things that are behind us
-	VectorSubtract( g_saberFlashPos, cg.refdef.vieworg, dif );
-
-	if ( DotProduct( dif, cg.refdef.viewaxis[0] ) < 0.2 )
-	{
-		return;
-	}
-
-	trace_t tr;
-
-	CG_Trace( &tr, cg.refdef.vieworg, NULL, NULL, g_saberFlashPos, -1, CONTENTS_SOLID );
-
-	if ( tr.fraction < 1.0f )
-	{
-		return;
-	}
-
-	vec3_t color;
-	int x,y;
-	float v, len = VectorNormalize( dif );
-
-	// clamp to a known range
-	if ( len > 800 )
-	{
-		len = 800;
-	}
-
-	v = ( 1.0f - ((float)t / maxTime )) * ((1.0f - ( len / 800.0f )) * 2.0f + 0.35f);
-
-	CG_WorldCoordToScreenCoord( g_saberFlashPos, &x, &y );
-
-	VectorSet( color, 0.8f, 0.8f, 0.8f );
-	cgi_R_SetColor( color );
-
-	CG_DrawPic( x - ( v * 300 ), y - ( v * 300 ),
-				v * 600, v * 600,
-				cgi_R_RegisterShader( "gfx/effects/saberFlare" ));
-}
 
 /*
 ===============
@@ -1635,7 +1592,7 @@ static qboolean CG_CalcViewValues( void ) {
 			VectorCopy( cg_entities[cg.snap->ps.viewEntity].lerpOrigin, cg.refdef.vieworg );
 		}
 		VectorCopy( cg_entities[cg.snap->ps.viewEntity].lerpAngles, cg.refdefViewAngles );
-		if ( !Q_stricmp( "misc_camera", g_entities[cg.snap->ps.viewEntity].classname ) || g_entities[cg.snap->ps.viewEntity].s.weapon == WP_TURRET )
+		if ( G_SceneCameraPortable(g_entities[cg.snap->ps.viewEntity]) || !Q_stricmp( "misc_camera", g_entities[cg.snap->ps.viewEntity].classname ) || g_entities[cg.snap->ps.viewEntity].s.weapon == WP_TURRET )
 		{
 			viewEntIsCam = qtrue;
 		}
@@ -1694,7 +1651,8 @@ static qboolean CG_CalcViewValues( void ) {
 	else
 	{
 		// offset for local bobbing and kicks
-		CG_OffsetFirstPersonView( qfalse );
+		if (!(cg.snap->ps.viewEntity>0 && cg.snap->ps.viewEntity<ENTITYNUM_WORLD && G_SceneCameraPortable(g_entities[cg.snap->ps.viewEntity])))
+			CG_OffsetFirstPersonView( qfalse );
 		centity_t	*playerCent = &cg_entities[0];
 		if ( playerCent && playerCent->gent && playerCent->gent->client )
 		{
@@ -1788,8 +1746,13 @@ CG_DrawSkyBoxPortal
 */
 extern void cgi_CM_SnapPVS(vec3_t origin,byte *buffer);
 
+#include "../qcommon/jar_skyportal.h"
 static void CG_DrawSkyBoxPortal(void)
 {
+	cg.refdef.rdflags &= ~RDF_JAR_SECTION_SKY;
+	if (CG_DrawSectionSky())
+		return;
+
 	refdef_t backuprefdef;
 	const char *cstr;
 	char *token;
@@ -1802,6 +1765,7 @@ static void CG_DrawSkyBoxPortal(void)
 		return;
 	}
 
+	jar::skyPortal::View sky;const bool portableSky=jar::skyPortal::Decode(cstr,sky,ENTITYNUM_WORLD);
 	backuprefdef = cg.refdef;
 
 	// asdf --eez
@@ -1918,6 +1882,7 @@ static void CG_DrawSkyBoxPortal(void)
 	cg.refdef.fov_x = fov_x;
 	cg.refdef.fov_y = fov_y;
 */
+	if(portableSky){vec3_t offset[3];AnglesToAxis(sky.angles,offset);jar::skyPortal::Rotate(offset,cg.refdef.viewaxis,cg.refdef.viewaxis);}
 	//inherit fov and axis from whatever the player is doing (regular, camera overrides or zoomed, whatever)
 	if ( !cg.hyperspace )
 	{
@@ -1988,6 +1953,8 @@ extern void CG_BuildSolidList( void );
 extern void CG_ClearHealthBarEnts( void );
 extern vec3_t	serverViewOrg;
 static qboolean cg_rangedFogging = qfalse; //so we know if we should go back to normal fog
+extern void CG_JAR_WeatherSync();
+extern void CG_JAR_ReflectionSync();
 void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
 	qboolean	inwater = qfalse;
 
@@ -2127,10 +2094,10 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
 
 	cg.refdef.time = cg.time;
 
-	CG_DrawSkyBoxPortal();
-
 	// NOTE: this may completely override the camera
 	CG_RunEmplacedWeapon();
+
+	CG_DrawSkyBoxPortal();
 
 	// first person blend blobs, done after AnglesToAxis
 	if ( !cg.renderingThirdPerson ) {
@@ -2142,6 +2109,7 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
 		CG_AddPacketEntities(qfalse);			// adter calcViewValues, so predicted player state is correct
 		CG_AddMarks();
 		CG_DrawMiscEnts();
+		G_JAR_WorkshopDrawRopes();
 	}
 
 	//check for opaque water
@@ -2176,12 +2144,11 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
 			}
 		}
 	}
-	//FIXME: first person crouch-uncrouch STILL FUCKS UP THE AREAMASK!!!
-	//if ( !VectorCompare2( cg.refdef.vieworg, cg.snap->ps.serverViewOrg ) && !gi.inPVS( cg.refdef.vieworg, cg.snap->ps.serverViewOrg ) )
-	{//actual view org and server's view org don't match and aren't same PVS, rebuild the areamask
-		//Com_Printf( S_COLOR_RED"%s != %s\n", vtos(cg.refdef.vieworg), vtos(cg.snap->ps.serverViewOrg) );
-		cgi_CM_SnapPVS( cg.refdef.vieworg, cg.snap->areamask );
-	}
+	// Keep the server's portal-camera areas while accounting for the actual
+	// client eye. A zero bit means visible, so combine the inverted masks.
+	cgi_CM_SnapPVS( cg.refdef.vieworg, cg.refdef.areamask );
+	for ( size_t i = 0; i < sizeof( cg.refdef.areamask ); ++i )
+		cg.refdef.areamask[i] &= cg.snap->areamask[i];
 
 	// Don't draw the in-view weapon when in camera mode
 	if ( !in_camera
@@ -2199,8 +2166,12 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
 		}
 	}
 
+	CG_JAR_ReflectionSync();
+	CG_JAR_WeatherSync();
 	if ( !cg.hyperspace && fx_freeze.integer<2 )
 	{
+		// Include current muzzle/object beams in this frame, before FX_Add expires old particles.
+		G_JAR_WorkshopDrawBeam();
 		//Add all effects
 		theFxScheduler.AddScheduledEffects( false );
 	}
@@ -2214,8 +2185,6 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
 		CG_AddLocalEntities();
 	}
 
-	memcpy( cg.refdef.areamask, cg.snap->areamask, sizeof( cg.refdef.areamask ) );
-
 	// update audio positions
 	//This is done from the vieworg to get origin for non-attenuated sounds
 	cgi_S_UpdateAmbientSet( CG_ConfigString( CS_AMBIENT_SET ), cg.refdef.vieworg );
@@ -2224,7 +2193,7 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
 	vec3_t listener_origin;
 	VectorCopy( cg.refdef.vieworg, listener_origin );
 	if ( cg.snap->ps.forcePowersActive&(1<<FP_SEE)
-		&& cg.snap->ps.forcePowerLevel[FP_SEE] >= FORCE_LEVEL_2 )
+		&& jar::enlightenment::Rank(cg.snap->ps,FP_SEE) >= FORCE_LEVEL_2 )
 	{//FIXME: if I can see through walls, why not actually move the listener_position through the wall too?
 		if ( g_crosshairEntNum < ENTITYNUM_WORLD
 			&& g_crosshairSameEntTime >= 1000 )

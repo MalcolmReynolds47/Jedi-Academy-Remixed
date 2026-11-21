@@ -162,7 +162,9 @@ CL_ShutdownUI
 ====================
 */
 void UI_Shutdown( void );
+void UI_JAR_OverlayClose();
 void CL_ShutdownUI( void ) {
+    UI_JAR_OverlayClose();
 	UI_Shutdown();
 	Key_SetCatcher( Key_GetCatcher( ) & ~KEYCATCH_UI );
 	cls.uiStarted = qfalse;
@@ -264,7 +266,7 @@ void CL_InitUI( void ) {
 #endif
 	uii.R_ClearScene			= re.ClearScene;
 	uii.R_AddRefEntityToScene	= re.AddRefEntityToScene;
-	uii.R_AddPolyToScene		=  re.AddPolyToScene;
+	uii.R_AddPolyToScene		= re.AddPolyToScene;
 	uii.R_AddLightToScene		= re.AddLightToScene;
 	uii.R_RenderScene			= re.RenderScene;
 

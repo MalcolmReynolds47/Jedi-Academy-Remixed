@@ -31,6 +31,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
  *****************************************************************************/
 
 #include "qcommon/qcommon.h"
+#include "qcommon/jar_mp_model_hull.h"
 
 #ifndef DEDICATED
 #ifndef FINAL_BUILD
@@ -1311,7 +1312,8 @@ separate file or a ZIP file.
 */
 extern qboolean		com_fullyInitialized;
 
-long FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueFILE ) {
+#include "jar_appearance_read.inc"
+static long FS_FOpenFileReadOriginal( const char *filename, fileHandle_t *file, qboolean uniqueFILE ) {
 	searchpath_t	*search;
 	char			*netpath;
 	pack_t			*pak;
@@ -1880,63 +1882,7 @@ CONVENIENCE FUNCTIONS FOR ENTIRE FILES
 ======================================================================================
 */
 
-int	FS_FileIsInPAK(const char *filename, int *pChecksum ) {
-	searchpath_t	*search;
-	pack_t			*pak;
-	fileInPack_t	*pakFile;
-	long			hash = 0;
-
-	FS_AssertInitialised();
-
-	if ( !filename ) {
-		Com_Error( ERR_FATAL, "FS_FOpenFileRead: NULL 'filename' parameter passed\n" );
-	}
-
-	// qpaths are not supposed to have a leading slash
-	if ( filename[0] == '/' || filename[0] == '\\' ) {
-		filename++;
-	}
-
-	// make absolutely sure that it can't back up the path.
-	// The searchpaths do guarantee that something will always
-	// be prepended, so we don't need to worry about "c:" or "//limbo"
-	if ( strstr( filename, ".." ) || strstr( filename, "::" ) ) {
-		return -1;
-	}
-
-	//
-	// search through the path, one element at a time
-	//
-
-	for ( search = fs_searchpaths ; search ; search = search->next ) {
-		//
-		if (search->pack) {
-			hash = FS_HashFileName(filename, search->pack->hashSize);
-		}
-		// is the element a pak file?
-		if ( search->pack && search->pack->hashTable[hash] ) {
-			// disregard if it doesn't match one of the allowed pure pak files
-			if ( !FS_PakIsPure(search->pack) ) {
-				continue;
-			}
-
-			// look through all the pak file elements
-			pak = search->pack;
-			pakFile = pak->hashTable[hash];
-			do {
-				// case and separator insensitive comparisons
-				if ( !FS_FilenameCompare( pakFile->name, filename ) ) {
-					if (pChecksum) {
-						*pChecksum = pak->pure_checksum;
-					}
-					return 1;
-				}
-				pakFile = pakFile->next;
-			} while(pakFile != NULL);
-		}
-	}
-	return -1;
-}
+#include "fs_pure_proof.inc"
 
 /*
 ============
@@ -3047,6 +2993,7 @@ Sets fs_gamedir, adds the directory to the head of the path,
 then loads the zip headers
 ================
 */
+#include "sys/jar_asset_policy.h"
 static void FS_AddGameDirectory( const char *path, const char *dir ) {
 	searchpath_t	*sp;
 	int				i;
@@ -3093,6 +3040,10 @@ static void FS_AddGameDirectory( const char *path, const char *dir ) {
 	}
 
 	for ( i = 0 ; i < numfiles ; i++ ) {
+		if(jar::assets::SkipBasePak(fs_gamedirvar ? fs_gamedirvar->string : "",fs_forcegame ? fs_forcegame->string : "",dir,pakfiles[i])) {
+			Com_Printf("JA:R: ignoring unrelated base package %s (file preserved)\n",pakfiles[i]);
+			continue;
+		}
 		pakfile = FS_BuildOSPath( path, dir, pakfiles[i] );
 		filename = get_filename(pakfile);
 
@@ -3578,7 +3529,9 @@ void FS_Startup( const char *gameName ) {
 		homePath = fs_basepath->string;
 	}
 	fs_homepath = Cvar_Get ("fs_homepath", homePath, CVAR_INIT|CVAR_PROTECTED, "(Read/Write) Location for user generated files" );
-	fs_gamedirvar = Cvar_Get ("fs_game", "", CVAR_INIT|CVAR_SYSTEMINFO, "Mod directory" );
+	// Direct launches from the private runtime should load JA:R's modules too.
+	// Com_StartupVariable applies any explicit fs_game before this default.
+	fs_gamedirvar = Cvar_Get ("fs_game", "JediAcademyRemixedMP", CVAR_INIT|CVAR_SYSTEMINFO, "Mod directory" );
 
 	fs_dirbeforepak = Cvar_Get("fs_dirbeforepak", "0", CVAR_INIT|CVAR_PROTECTED, "Prioritize directories before paks if not pure" );
 
@@ -3783,57 +3736,6 @@ const char *FS_ReferencedPakChecksums( void ) {
 			}
 		}
 	}
-
-	return info;
-}
-
-/*
-=====================
-FS_ReferencedPakPureChecksums
-
-Returns a space separated string containing the pure checksums of all referenced pk3 files.
-Servers with sv_pure set will get this string back from clients for pure validation
-
-The string has a specific order, "cgame ui @ ref1 ref2 ref3 ..."
-=====================
-*/
-const char *FS_ReferencedPakPureChecksums( void ) {
-	static char	info[BIG_INFO_STRING];
-	searchpath_t	*search;
-	int nFlags, numPaks, checksum;
-
-	info[0] = 0;
-
-	checksum = fs_checksumFeed;
-	numPaks = 0;
-	for (nFlags = FS_CGAME_REF; nFlags; nFlags = nFlags >> 1) {
-		if (nFlags & FS_GENERAL_REF) {
-			// add a delimter between must haves and general refs
-			//Q_strcat(info, sizeof(info), "@ ");
-			info[strlen(info)+1] = '\0';
-			info[strlen(info)+2] = '\0';
-			info[strlen(info)] = '@';
-			info[strlen(info)] = ' ';
-		}
-		for ( search = fs_searchpaths ; search ; search = search->next ) {
-			// is the element a pak file and has it been referenced based on flag?
-			if ( search->pack && (search->pack->referenced & nFlags)) {
-				Q_strcat( info, sizeof( info ), va("%i ", search->pack->pure_checksum ) );
-				if (nFlags & (FS_CGAME_REF | FS_UI_REF)) {
-					break;
-				}
-				checksum ^= search->pack->pure_checksum;
-				numPaks++;
-			}
-		}
-		if (fs_fakeChkSum != 0) {
-			// only added if a non-pure file is referenced
-			Q_strcat( info, sizeof( info ), va("%i ", fs_fakeChkSum ) );
-		}
-	}
-	// last checksum is the encoded number of referenced pk3s
-	checksum ^= numPaks;
-	Q_strcat( info, sizeof( info ), va("%i ", checksum ) );
 
 	return info;
 }
@@ -4057,6 +3959,7 @@ FS_Restart
 ================
 */
 void FS_Restart( int checksumFeed, qboolean inPlace ) {
+	JAR_MP_ClearModelHulls();
 
 	// free anything we currently have loaded
 	FS_Shutdown(qfalse, inPlace);

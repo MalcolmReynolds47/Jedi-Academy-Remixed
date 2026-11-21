@@ -1134,6 +1134,16 @@ void CL_InitKeyCommands( void ) {
 	Cmd_SetCommandCompletionFunc( "unbind", Key_CompleteUnbind );
 	Cmd_AddCommand( "unbindall", Key_Unbindall_f );
 	Cmd_AddCommand( "bindlist", Key_Bindlist_f );
+    // Window-local development fixture: exercises the actual binding dispatcher.
+    Cmd_AddCommand("jar_input_key", [](){
+        if(!Cvar_VariableIntegerValue("developer") || cls.state!=CA_ACTIVE || (Cmd_Argc()!=3 && Cmd_Argc()!=4))return;
+        int key=Key_StringToKeynum(Cmd_Argv(1));if(key<0 || key>=MAX_KEYS)return;
+        const char* state=Cmd_Argv(2);if(Q_stricmp(state,"down") && Q_stricmp(state,"up"))return;
+        CL_KeyEvent(key,!Q_stricmp(state,"down")?qtrue:qfalse,Sys_Milliseconds());
+        if(Cmd_Argc()==4){const char*next=Cmd_Argv(3);bool valid=*next && strlen(next)<64;
+            for(const char*c=next;*c;++c)if(!isalnum(static_cast<unsigned char>(*c)) && *c!='_')valid=false;
+            if(valid)Cbuf_AddText(va("vstr %s\n",next));}
+    });
 }
 
 /*
@@ -1162,6 +1172,8 @@ CL_ParseBinding
 Execute the commands in the bind string
 ===================
 */
+#include "ui/ui_jar.h"
+#include "qcommon/jar_overlay_input.h"
 void CL_ParseBinding( int key, qboolean down, unsigned time )
 {
 	char buf[ MAX_STRING_CHARS ], *p = buf, *end;
@@ -1191,7 +1203,8 @@ void CL_ParseBinding( int key, qboolean down, unsigned time )
 			// button commands add keynum and time as parameters
 			// so that multiple sources can be discriminated and
 			// subframe corrected
-			if ( allCommands || ( allowUpCmds && !down ) ) {
+			if ( allCommands || ( allowUpCmds && !down ) ||
+                (UI_JAR_OverlayActive() && !UI_JAR_OverlayTyping() && Key_GetCatcher()==KEYCATCH_UI && jar::overlay::MovementCommand(p)) ) {
 				char cmd[1024];
 				Com_sprintf( cmd, sizeof( cmd ), "%c%s %d %d\n",
 					( down ) ? '+' : '-', p + 1, key, time );
@@ -1278,7 +1291,8 @@ void CL_KeyDownEvent( int key, unsigned time )
 	if ( Key_GetCatcher() & KEYCATCH_CONSOLE ) {
 		Console_Key( key );
 	} else if ( Key_GetCatcher() & KEYCATCH_UI ) {
-		_UI_KeyEvent( key, qtrue );
+        const char* binding=Key_GetBinding(keynames[key].upper);
+        if(!UI_JAR_OverlayActive() || UI_JAR_OverlayTyping() || !jar::overlay::MovementBinding(binding))_UI_KeyEvent( key, qtrue );
 	} else if ( cls.state == CA_DISCONNECTED ) {
 		Console_Key( key );
 	}
@@ -1385,7 +1399,11 @@ Key_SetCatcher
 */
 void Key_SetCatcher( int catcher ) {
 	// If the catcher state is changing, clear all key states
-	if ( catcher != keyCatchers )
+	const bool overlayTransition=UI_JAR_OverlayActive() &&
+        ((keyCatchers==0 && catcher==KEYCATCH_UI) || (keyCatchers==KEYCATCH_UI && catcher==0));
+    // The held-Q overlay shares movement with gameplay. Ordinary menus,
+    // console changes and focus-loss still release all input normally.
+    if ( catcher != keyCatchers && !overlayTransition )
 		Key_ClearStates();
 
 	keyCatchers = catcher;

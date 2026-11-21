@@ -31,6 +31,15 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "q_shared.h"
 #include "qcommon.h"
+#include "jar_appearance.h"
+#include "jar_diagnostics.h"
+#include "jar_audio_catalog.h"
+#include <set>
+#include <functional>
+#ifndef _WIN32
+#include <dirent.h>
+#include <sys/stat.h>
+#endif
 
 #ifndef FINAL_BUILD
 #include "../client/client.h"
@@ -1249,7 +1258,32 @@ separate file or a ZIP file.
 */
 extern qboolean		com_fullyInitialized;
 
-long FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueFILE ) {
+static long FS_FOpenFileReadOriginal(const char *filename, fileHandle_t *file, qboolean uniqueFILE);
+long FS_FOpenFileRead(const char *filename, fileHandle_t *file, qboolean uniqueFILE) {
+    if (filename && file && strlen(filename) < MAX_QPATH) {
+        char normalized[MAX_QPATH], candidate[MAX_OSPATH];
+        Q_strncpyz(normalized, filename, sizeof(normalized));
+        Q_strlwr(normalized);
+        for (char *p=normalized; *p; ++p) if (*p=='\\') *p='/';
+        const char *category = jar::AssetCategory(normalized);
+        if (category) {
+            const char *cvar = !strcmp(category,"font") ? "jar_fontPack" :
+                !strcmp(category,"ui") ? "jar_uiPack" : !strcmp(category,"saber") ? "jar_saberPack" :
+                !strcmp(category,"sound") ? "jar_soundPack" : "jar_fxPack";
+            const char *initial = !strcmp(category,"font") ? "sans" : !strcmp(category,"ui") ? "up2" : "stock";
+            const char *pack = Cvar_Get(cvar, initial, CVAR_ARCHIVE)->string;
+            if (jar::AssetOverlay(candidate,sizeof(candidate),normalized,category,pack)) {
+                const long size = FS_FOpenFileReadOriginal(candidate,file,uniqueFILE);
+                if (size >= 0) {
+                    JAR_Log(2,"appearance","asset_overlay","source=%s selected=%s bytes=%ld",filename,candidate,size);
+                    return size;
+                }
+            }
+        }
+    }
+    return FS_FOpenFileReadOriginal(filename,file,uniqueFILE);
+}
+static long FS_FOpenFileReadOriginal( const char *filename, fileHandle_t *file, qboolean uniqueFILE ) {
 	searchpath_t	*search;
 	char			*netpath;
 	pack_t			*pak;
@@ -2894,7 +2928,11 @@ void FS_Startup( const char *gameName ) {
 
 	fs_dirbeforepak = Cvar_Get("fs_dirbeforepak", "0", CVAR_INIT|CVAR_PROTECTED);
 
-	// add search path elements in reverse priority order
+	// JA:R assets are namespaced and mounted independently of fs_game. The
+    // normal game directories below restore the save/config write directory.
+    if (fs_basepath->string[0]) FS_AddGameDirectory(fs_basepath->string,"JediAcademyRemixed");
+    if (fs_homepath->string[0]) FS_AddGameDirectory(fs_homepath->string,"appearance");
+    // add search path elements in reverse priority order
 	if (fs_cdpath->string[0]) {
 		FS_AddGameDirectory( fs_cdpath->string, gameName );
 	}
@@ -3166,4 +3204,38 @@ qboolean FS_WriteToTemporaryFile( const void *data, size_t dataLength, char **te
 {
 	// SP doesn't need to do this.
 	return qfalse;
+}
+
+// Complete mounted audio enumeration; no fixed-size FS_ListFiles result array.
+void FS_JAR_ListAudioNames(std::vector<std::string>& names) {
+    FS_AssertInitialised();std::set<std::string> unique;
+    auto add=[&](std::string n) {for(auto& c:n){if(c=='\\')c='/';else if(c>='A'&&c<='Z')c+=('a'-'A');}
+        if(n.compare(0,10,"jar-audio/")==0)return; // Diagnostic output is not game content.
+        const auto dot=n.find_last_of('.');if(dot==std::string::npos)return;
+        const auto ext=n.substr(dot);if(ext==".roq"||ext==".wav"||ext==".mp3"||ext==".ogg"||ext==".opus"||ext==".flac"||ext==".aiff")unique.insert(n);};
+    for(auto search=fs_searchpaths;search;search=search->next) {
+        if(search->pack) {for(int i=0;i<search->pack->numfiles;++i)add(search->pack->buildBuffer[i].name);}
+        else if(search->dir) {
+            const std::string root=FS_BuildOSPath(search->dir->path,search->dir->gamedir,"");
+            std::function<void(const std::string&,unsigned)> walk;
+            walk=[&](const std::string& relative,unsigned depth) {
+                if(depth>64){Com_Printf("JA:R audio scan skipped excessive directory depth: %s\n",relative.c_str());return;}
+                const std::string absolute=root+relative;
+#ifdef _WIN32
+                WIN32_FIND_DATAA d;const auto h=FindFirstFileA((absolute+"/*").c_str(),&d);if(h==INVALID_HANDLE_VALUE)return;
+                do {const std::string leaf=d.cFileName;if(leaf=="."||leaf==".."||(d.dwFileAttributes&FILE_ATTRIBUTE_REPARSE_POINT))continue;
+                    const std::string child=relative+leaf;
+                    if(d.dwFileAttributes&FILE_ATTRIBUTE_DIRECTORY)walk(child+"/",depth+1);else add(child);
+                } while(FindNextFileA(h,&d));FindClose(h);
+#else
+                DIR *dir=opendir(absolute.c_str());if(!dir)return;
+                while(auto d=readdir(dir)){const std::string leaf=d->d_name;if(leaf=="."||leaf=="..")continue;
+                    const std::string child=relative+leaf;struct stat st;if(lstat((root+child).c_str(),&st))continue;
+                    if(S_ISDIR(st.st_mode))walk(child+"/",depth+1);else if(S_ISREG(st.st_mode))add(child);}
+                closedir(dir);
+#endif
+            };walk("",0);
+        }
+    }
+    names.assign(unique.begin(),unique.end());
 }

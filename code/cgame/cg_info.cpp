@@ -22,6 +22,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "cg_headers.h"
+#include "qcommon/jar_ui_theme.h"
 
 #include "cg_media.h"
 #include "../game/objectives.h"
@@ -409,8 +410,24 @@ static void CG_LoadScreen_PersonalInfo(void)
 }
 */
 
+static bool CG_RemixedLoadscreen() {
+    int x,y,w,h; vec4_t color; qhandle_t image;
+    return cgi_UI_GetMenuItemInfo("loadscreen","jarNativeTitle",&x,&y,&w,&h,color,&image)!=qfalse;
+}
+
 static void CG_LoadBar(void)
 {
+    if (CG_RemixedLoadscreen()) {
+    cgi_R_SetColor(jar::ui::edge);
+    CG_DrawPic(32,450,576,6,cgs.media.whiteShader);
+    cgi_R_SetColor(jar::ui::accent);
+    CG_DrawPic(32,450,jar::ui::LoadingWidth(cg.loadLCARSStage),6,cgs.media.whiteShader);
+    cgi_R_Font_DrawString(32,430,va("%d / 9  -  %s",jar::ui::LoadingStage(cg.loadLCARSStage),jar::ui::LoadingExplanation(cg.loadLCARSStage)),
+        jar::ui::muted,cgs.media.qhFontSmall,-1,0.75f);
+    cgi_R_SetColor(NULL);
+    return;
+    }
+
 	const int numticks = 9, tickwidth = 40, tickheight = 8;
 	const int tickpadx = 20, tickpady = 12;
 	const int capwidth = 8;
@@ -465,7 +482,7 @@ static int CG_DrawLoadWeaponsPrintRow( const char *itemName, int weaponsBits,int
 
 	cgi_R_SetColor( color );
 
-	iconSize = 60;
+	iconSize = CG_RemixedLoadscreen() ? 32 : 60;
 	pad = 12;
 
 	// calculate placement of weapon icons
@@ -552,6 +569,7 @@ static void CG_DrawLoadWeapons( int weaponBits )
 
 static int CG_DrawLoadForcePrintRow( const char *itemName, int forceBits,int rowIconCnt, int startIndex)
 {
+	const int iconSize=CG_RemixedLoadscreen() ? 26 : MAXLOAD_FORCEICONSIZE;
 	int		i,endIndex=0, printedIconCnt=0;
 	int		holdX,x,y;
 	int		yOffset = 0;
@@ -575,7 +593,7 @@ static int CG_DrawLoadForcePrintRow( const char *itemName, int forceBits,int row
 	cgi_R_SetColor( color );
 
 	// calculate placement of weapon icons
-	holdX = x + (width - ((MAXLOAD_FORCEICONSIZE*rowIconCnt) + (MAXLOAD_FORCEICONPAD * (rowIconCnt-1))))/2;
+	holdX = x + (width - ((iconSize*rowIconCnt) + (MAXLOAD_FORCEICONPAD * (rowIconCnt-1))))/2;
 
 	for (i=startIndex;i<MAX_SHOWPOWERS;i++)
 	{
@@ -588,7 +606,7 @@ static int CG_DrawLoadForcePrintRow( const char *itemName, int forceBits,int row
 		{
 			endIndex = i;
 
-			CG_DrawPic( holdX, y+yOffset, MAXLOAD_FORCEICONSIZE, MAXLOAD_FORCEICONSIZE, force_icons[showPowers[i]] );
+			CG_DrawPic( holdX, y+yOffset, iconSize, iconSize, force_icons[showPowers[i]] );
 
 			printedIconCnt++;
 			if (printedIconCnt==MAXLOADICONSPERROW)
@@ -596,7 +614,7 @@ static int CG_DrawLoadForcePrintRow( const char *itemName, int forceBits,int row
 				break;
 			}
 
-			holdX += (MAXLOAD_FORCEICONSIZE+MAXLOAD_FORCEICONPAD);
+			holdX += (iconSize+MAXLOAD_FORCEICONPAD);
 		}
 	}
 
@@ -731,6 +749,13 @@ static void CG_DrawLoadingScreen( qhandle_t	levelshot ,const char *mapName)
 		cgi_Cvar_Set( "ui_missionbriefing", va("@BRIEFINGS_%s",mapName) );
 	}
 
+    if (CG_RemixedLoadscreen()) {
+    cgi_R_SetColor(jar::ui::background);
+    CG_DrawPic(0,0,640,480,cgs.media.whiteShader);
+    cgi_R_SetColor(jar::ui::edge);
+    CG_DrawPic(32,46,576,1,cgs.media.whiteShader);
+    CG_DrawPic(32,424,576,1,cgs.media.whiteShader);
+    } else {
 	// Print background
 	if (cgi_UI_GetMenuItemInfo(
 		"loadScreen",
@@ -745,6 +770,7 @@ static void CG_DrawLoadingScreen( qhandle_t	levelshot ,const char *mapName)
 		cgi_R_SetColor( color );
 		CG_DrawPic( xPos, yPos, width, height, background );
 	}
+    }
 
 	// Print level pic
 	if (cgi_UI_GetMenuItemInfo(
@@ -851,13 +877,13 @@ void CG_DrawInformation( void ) {
 		// print the current item being loaded
 
 #ifdef _DEBUG
-		cgi_R_Font_DrawString( 40, 416, va("LOADING ... %s",cg.infoScreenText),colorTable[CT_LTGOLD1], cgs.media.qhFontSmall, -1, 1.0f );
+		cgi_R_Font_DrawString( CG_RemixedLoadscreen() ? 32 : 40, CG_RemixedLoadscreen() ? 462 : 416, va("LOADING ... %s",cg.infoScreenText),colorTable[CT_LTGOLD1], cgs.media.qhFontSmall, -1, 1.0f );
 #endif
 	}
 
 	// draw info string information
 
-	y = 20;
+	y = CG_RemixedLoadscreen() ? 54 : 20;
 	// map-specific message (long map name)
 	s = CG_ConfigString( CS_MESSAGE );
 
@@ -867,11 +893,11 @@ void CG_DrawInformation( void ) {
 		{
 			char text[1024]={0};
 			cgi_SP_GetStringTextString( s+1, text, sizeof(text) );
-			cgi_R_Font_DrawString( 15, y, va("\"%s\"",text),colorTable[CT_WHITE],cgs.media.qhFontMedium, -1, 1.0f );
+			cgi_R_Font_DrawString( CG_RemixedLoadscreen() ? 32 : 15, y, va("\"%s\"",text),colorTable[CT_WHITE],cgs.media.qhFontMedium, -1, 1.0f );
 		}
 		else
 		{
-			cgi_R_Font_DrawString( 15, y, va("\"%s\"",s),colorTable[CT_WHITE],cgs.media.qhFontMedium, -1, 1.0f );
+			cgi_R_Font_DrawString( CG_RemixedLoadscreen() ? 32 : 15, y, va("\"%s\"",s),colorTable[CT_WHITE],cgs.media.qhFontMedium, -1, 1.0f );
 		}
 		y += 20;
 	}

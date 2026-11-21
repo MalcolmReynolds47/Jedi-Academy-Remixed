@@ -890,6 +890,9 @@ static qboolean BG_ParseVehicleParm( vehicleInfo_t *vehicle, const char *parmNam
 	return qtrue;
 }
 
+#include "qcommon/jar_vehicle_variants.h"
+#include "qcommon/jar_vehicle_variant_apply.inc"
+
 int VEH_LoadVehicle( const char *vehicleName )
 {//load up specified vehicle and save in array: g_vehicleInfo
 	const char	*token;
@@ -908,6 +911,8 @@ int VEH_LoadVehicle( const char *vehicleName )
 	char		weapMuzzle10[128] = { 0 };
 	char		*value = NULL;
 	const char	*p = NULL;
+	const char *jarVariantSkin = NULL;
+	qboolean jarStockSwoop;
 	vehicleInfo_t	*vehicle = NULL;
 
 	// Load the vehicle parms if no vehicles have been loaded yet.
@@ -922,27 +927,16 @@ int VEH_LoadVehicle( const char *vehicleName )
 	COM_BeginParseSession("vehicles");
 
 	vehicle = &g_vehicleInfo[numVehicles];
-	// look for the right vehicle
-	while ( p )
-	{
-		token = COM_ParseExt( &p, qtrue );
-		if ( token[0] == 0 )
-		{
-			return VEHICLE_NONE;
-		}
-
-		if ( !Q_stricmp( token, vehicleName ) )
-		{
-			break;
-		}
-
-		SkipBracedSection( &p, 0 );
-	}
+	// Explicit definitions take precedence; missing retail color choices use
+	// the qualified stock swoop block and the exact requested stock skin.
+	p = JAR_ResolveVehicleBlock(VehicleParms,vehicleName,&jarVariantSkin);
 
 	if ( !p )
 	{
 		return VEHICLE_NONE;
 	}
+	jarStockSwoop = !jarVariantSkin && !Q_stricmp(vehicleName,"swoop") &&
+		JAR_StockSwoopHash(JAR_VehicleBlockHash(p));
 
 	token = COM_ParseExt( &p, qtrue );
 	if ( token[0] == 0 )
@@ -956,6 +950,7 @@ int VEH_LoadVehicle( const char *vehicleName )
 	}
 
 	BG_VehicleSetDefaults( vehicle );
+	JAR_ApplyVehicleVariant(vehicle,vehicleName,jarVariantSkin);
 	// parse the vehicle info block
 	while ( 1 )
 	{
@@ -1027,6 +1022,10 @@ int VEH_LoadVehicle( const char *vehicleName )
 		}
 		else
 		{
+			// MP derives a single skin from the shared vehicle definition. The
+			// retail base Swoop may specify the SP random palette instead.
+			if (jarStockSwoop && !Q_stricmp(parmName,"skin") && strchr(value,'|'))
+				value = "default";
 			if ( !BG_ParseVehicleParm( vehicle, parmName, value ) )
 			{
 #ifndef FINAL_BUILD
@@ -1452,24 +1451,5 @@ void BG_GetVehicleSkinName(char *skinname, int len)
 //so cgame can assign the function pointer for the vehicle attachment without having to
 //bother with all the other funcs that don't really exist cgame-side.
 extern int BG_GetTime(void);
-void AttachRidersGeneric( Vehicle_t *pVeh )
-{
-	// If we have a pilot, attach him to the driver tag.
-	if ( pVeh->m_pPilot )
-	{
-		mdxaBone_t boltMatrix;
-		vec3_t	yawOnlyAngles;
-		bgEntity_t *parent = pVeh->m_pParentEntity;
-		bgEntity_t *pilot = pVeh->m_pPilot;
-		int crotchBolt = trap->G2API_AddBolt(parent->ghoul2, 0, "*driver");
-
-		assert(parent->playerState);
-
-		VectorSet(yawOnlyAngles, 0, parent->playerState->viewangles[YAW], 0);
-
-		// Get the driver tag.
-		trap->G2API_GetBoltMatrix( parent->ghoul2, 0, crotchBolt, &boltMatrix, yawOnlyAngles, parent->playerState->origin, BG_GetTime(), NULL, parent->modelScale );
-		BG_GiveMeVectorFromMatrix( &boltMatrix, ORIGIN, pilot->playerState->origin );
-	}
-}
+#include "bg_vehicle_rider.inc"
 #endif

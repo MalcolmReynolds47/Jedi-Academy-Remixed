@@ -498,7 +498,7 @@ void RB_BeginDrawingView (void) {
 		}
 	}
 
-	if ( tr.refdef.rdflags & RDF_AUTOMAP || (!( backEnd.refdef.rdflags & RDF_NOWORLDMODEL ) && r_DynamicGlow->integer && !g_bRenderGlowingObjects ) )
+	if ( tr.refdef.rdflags & RDF_AUTOMAP || (!( backEnd.refdef.rdflags & (RDF_NOWORLDMODEL | RDF_JAR_SECTION_SKY) ) && r_DynamicGlow->integer && !g_bRenderGlowingObjects ) )
 	{
 		if (tr.world && tr.world->globalFog != -1)
 		{ //this is because of a bug in multiple scenes I think, it needs to clear for the second scene but it doesn't normally.
@@ -506,6 +506,12 @@ void RB_BeginDrawingView (void) {
 
 			clearBits |= GL_COLOR_BUFFER_BIT;
 			qglClearColor(fog->parms.color[0],  fog->parms.color[1], fog->parms.color[2], 1.0f );
+		}
+	}
+	if (!g_bRenderGlowingObjects) {
+		if (const auto *fog = R_RiftCameraFog(backEnd.viewParms.riftFogRoom)) {
+			clearBits |= GL_COLOR_BUFFER_BIT;
+			qglClearColor(fog->parms.color[0], fog->parms.color[1], fog->parms.color[2], 1.0f);
 		}
 	}
 
@@ -516,6 +522,10 @@ void RB_BeginDrawingView (void) {
 		clearBits &= ~GL_DEPTH_BUFFER_BIT;
 	}
 
+	if (backEnd.viewParms.portalMonitor) {
+		qglClearColor(0.12f, 0.12f, 0.12f, 1.0f);
+		clearBits = GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT;
+	}
 	if (clearBits)
 	{
 		qglClear( clearBits );
@@ -537,7 +547,7 @@ void RB_BeginDrawingView (void) {
 	backEnd.skyRenderedThisView = qfalse;
 
 	// clip to the plane of the portal
-	if ( backEnd.viewParms.isPortal ) {
+	if ( backEnd.viewParms.isPortal && !backEnd.viewParms.portalMonitor ) {
 		float	plane[4];
 		double	plane2[4];
 
@@ -678,7 +688,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	int				depthRange, oldDepthRange;
 	int				i;
 	drawSurf_t		*drawSurf;
-	unsigned int	oldSort;
+	uint64_t	oldSort;
 	float			originalTime;
 	trRefEntity_t	*curEnt;
 	postRender_t	*pRender;
@@ -702,7 +712,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	oldFogNum = -1;
 	oldDepthRange = qfalse;
 	oldDlighted = qfalse;
-	oldSort = (unsigned int) -1;
+	oldSort = UINT64_MAX;
 	depthRange = qfalse;
 
 	backEnd.pc.c_surfaces += numDrawSurfs;
@@ -833,7 +843,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 		*/
 
 		if (shader != oldShader || fogNum != oldFogNum || dlighted != oldDlighted
-			|| ( entityNum != oldEntityNum && !shader->entityMergable ) )
+			|| ( entityNum != oldEntityNum && (!shader->entityMergable || fogNum != 0) ) )
 		{
 			if (oldShader != NULL) {
 				RB_EndSurface();
@@ -1613,6 +1623,8 @@ RB_DrawSurfs
 
 =============
 */
+#include "../../code/rd-common/tr_monitor_classic.inc"
+
 const void	*RB_DrawSurfs( const void *data ) {
 	const drawSurfsCommand_t	*cmd;
 
@@ -1626,6 +1638,10 @@ const void	*RB_DrawSurfs( const void *data ) {
 	backEnd.refdef = cmd->refdef;
 	backEnd.viewParms = cmd->viewParms;
 
+	if (backEnd.viewParms.portalMonitor) {
+		RB_DrawPortalMonitor(*cmd);
+		return cmd + 1;
+	}
 	RB_RenderDrawSurfList( cmd->drawSurfs, cmd->numDrawSurfs );
 
 	// Dynamic Glow/Flares:

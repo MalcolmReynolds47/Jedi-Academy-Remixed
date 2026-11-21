@@ -30,6 +30,7 @@ qboolean CM_DeleteCachedMap(qboolean bGuaranteedOkToDelete);
 void		CM_LoadMap( const char *name, qboolean clientload, int *checksum, qboolean subBSP);
 void		CM_ClearMap( void );
 int			CM_TotalMapContents();
+int CM_JARCollisionPolygons(int model,int mask,void* context,qboolean (*emit)(void*,int,const float*,const float*));
 
 clipHandle_t CM_InlineModel( int index );		// 0 = world, 1 + are bmodels
 clipHandle_t CM_TempBoxModel( const vec3_t mins, const vec3_t maxs );//, const int contents );
@@ -50,6 +51,8 @@ int			CM_TransformedPointContents( const vec3_t p, clipHandle_t model, const vec
 void		CM_BoxTrace ( trace_t *results, const vec3_t start, const vec3_t end,
 						  const vec3_t mins, const vec3_t maxs,
 						  clipHandle_t model, int brushmask);
+void CM_HullTrace(trace_t*,const vec3_t start,const vec3_t end,clipHandle_t model,int mask,
+ const vec3_t origin,const vec3_t angles,const struct JarSweepHull&);
 void		CM_TransformedBoxTrace( trace_t *results, const vec3_t start, const vec3_t end,
 						  const vec3_t mins, const vec3_t maxs,
 						  clipHandle_t model, int brushmask,
@@ -82,5 +85,12 @@ int	CM_MarkFragments( int numPoints, const vec3_t *points, const vec3_t projecti
 
 // cm_patch.c
 void CM_DrawDebugSurface( void (*drawPoly)(int color, int numPoints, float *points) );
+
+qboolean CM_BSPModelInfo(const char*name,int*first,int*count);
+int CM_BSPModelAt(int,char*,int,int*,int*,unsigned*);
+qboolean CM_RegisterBSPModel(const char*,int*,int*,unsigned*);
+qboolean CM_SectionSky(int modelIndex, const vec3_t localPoint);
+qboolean CM_RiftSectionAir(int modelIndex, const vec3_t localPoint);
+qboolean CM_SectionPVS(int modelIndex,const vec3_t localView,const vec3_t localPoint);
 
 #endif //__CM_PUBLIC_H__

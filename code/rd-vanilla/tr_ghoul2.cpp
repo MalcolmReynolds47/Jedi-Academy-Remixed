@@ -643,6 +643,7 @@ int G2_GetParentBoneMatrixLow(CGhoul2Info &ghoul2,int boneNum,const vec3_t scale
 
 void RemoveBoneCache(CBoneCache *boneCache)
 {
+	if(ri.JAR_Log) ri.JAR_Log(2,"ghoul2","bone_cache_free","pointer=%p",boneCache);
 	delete boneCache;
 }
 
@@ -709,19 +710,6 @@ public:
 #endif
 	{}
 };
-
-#define MAX_RENDER_SURFACES (2048)
-static CRenderableSurface RSStorage[MAX_RENDER_SURFACES];
-static unsigned int NextRS=0;
-
-CRenderableSurface *AllocRS()
-{
-	CRenderableSurface *ret=&RSStorage[NextRS];
-	ret->Init();
-	NextRS++;
-	NextRS%=MAX_RENDER_SURFACES;
-	return ret;
-}
 
 /*
 
@@ -1848,6 +1836,7 @@ void G2_TransformGhoulBones(boneInfo_v &rootBoneList,mdxaBone_t &rootMatrix, CGh
 	if (!ghoul2.mBoneCache)
 	{
 		ghoul2.mBoneCache=new CBoneCache(ghoul2.currentModel,ghoul2.aHeader);
+		if(ri.JAR_Log) ri.JAR_Log(2,"ghoul2","bone_cache_new","info=%p pointer=%p",&ghoul2,ghoul2.mBoneCache);
 	}
 	ghoul2.mBoneCache->mod=ghoul2.currentModel;
 	ghoul2.mBoneCache->header=ghoul2.aHeader;
@@ -2304,6 +2293,7 @@ void RenderSurfaces(CRenderSurface &RS)
 			&& shader->sort == SS_OPAQUE )
 		{		// set the surface info to point at the where the transformed bone list is going to be for when the surface gets rendered out
 			CRenderableSurface *newSurf = AllocRS();
+			if (!newSurf) return;
 			if (surface->numVerts >= SHADER_MAX_VERTEXES/2)
 			{ //we need numVerts*2 xyz slots free in tess to do shadow, if this surf is going to exceed that then let's try the lowest lod -rww
 				mdxmSurface_t *lowsurface = (mdxmSurface_t *)G2_FindSurface(RS.currentModel, RS.surfaceNum, RS.currentModel->numLods-1);
@@ -2325,6 +2315,7 @@ void RenderSurfaces(CRenderSurface &RS)
 			&& shader->sort == SS_OPAQUE )
 		{		// set the surface info to point at the where the transformed bone list is going to be for when the surface gets rendered out
 			CRenderableSurface *newSurf = AllocRS();
+			if (!newSurf) return;
 			newSurf->surfaceData = surface;
 			newSurf->boneCache = RS.boneCache;
 			R_AddDrawSurf( (surfaceType_t *)newSurf, tr.projectionShadowShader, 0, qfalse );
@@ -2334,6 +2325,7 @@ void RenderSurfaces(CRenderSurface &RS)
 		if ( !RS.personalModel )
 		{		// set the surface info to point at the where the transformed bone list is going to be for when the surface gets rendered out
 			CRenderableSurface *newSurf = AllocRS();
+			if (!newSurf) return;
 			newSurf->surfaceData = surface;
 			newSurf->boneCache = RS.boneCache;
 			R_AddDrawSurf( (surfaceType_t *)newSurf, shader, RS.fogNum, qfalse );
@@ -2366,6 +2358,7 @@ void RenderSurfaces(CRenderSurface &RS)
 					else if (tex->tex[RS.lod])
 					{
 						CRenderableSurface *newSurf2 = AllocRS();
+						if (!newSurf2) break;
 						*newSurf2=*newSurf;
 						newSurf2->goreChain=0;
 						newSurf2->alternateTex=tex->tex[RS.lod];
@@ -2575,7 +2568,7 @@ void R_AddGhoulSurfaces( trRefEntity_t *ent ) {
 	}
 
 	assert (ent->e.ghoul2);	//entity is foo if it has a glm model handle but no ghoul2 pointer!
-	CGhoul2Info_v	&ghoul2 = *ent->e.ghoul2;
+	CGhoul2Info_v	&ghoul2 = *((CGhoul2Info_v *)ent->e.ghoul2);
 
 	if (!G2_SetupModelPointers(ghoul2))
 	{

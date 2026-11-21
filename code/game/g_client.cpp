@@ -25,6 +25,11 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../cgame/cg_local.h"
 #include "Q3_Interface.h"
 #include "g_local.h"
+#include "qcommon/jar_inventory.h"
+#include "qcommon/jar_player_transfer.h"
+#include <algorithm>
+#include "g_workshop.h"
+#include "g_randomizer.h"
 #include "g_functions.h"
 #include "anims.h"
 #include "wp_saber.h"
@@ -36,6 +41,7 @@ extern int WP_SaberInitBladeData( gentity_t *ent );
 extern void G_CreateG2AttachedWeaponModel( gentity_t *ent, const char *weaponModel, int boltNum, int weaponNum );
 extern qboolean	CheatsOk( gentity_t *ent );
 extern void Boba_Precache( void );
+extern Vehicle_t* G_IsRidingVehicle(gentity_t* ent);
 
 extern cvar_t	*g_char_model;
 extern cvar_t	*g_char_skin_head;
@@ -258,20 +264,12 @@ gentity_t *SelectRandomDeathmatchSpawnPoint( team_t team ) {
 	}
 
 	if ( !count ) {	// no spots that won't telefrag
-		spot = G_Find( NULL, FOFS(classname), "info_player_deathmatch");
-		if ( !spot )
-		{
-			return NULL;
+		// Named starts, including owned Sandbox destinations, are opt-in via a named exit.
+		spot = NULL;
+		while ((spot = G_Find(spot, FOFS(classname), "info_player_deathmatch")) != NULL) {
+			if (!spot->targetname) return spot;
 		}
-		if ( spot->targetname != NULL )
-		{
-			//this search routine should never find a spot that is targetted
-			return NULL;
-		}
-		else
-		{
-			return spot;
-		}
+		return NULL;
 	}
 
 	selection = rand() % count;
@@ -286,19 +284,24 @@ SelectSpawnPoint
 Chooses a player start, deathmatch start, etc
 ============
 */
+extern qboolean g_qbLoadTransition;
+
 gentity_t *SelectSpawnPoint ( vec3_t avoidPoint, team_t team, vec3_t origin, vec3_t angles ) {
-	gentity_t	*spot;
+	gentity_t	*spot = nullptr;
 	gentity_t	*nearestSpot;
 
 	if ( level.spawntarget[0] )
 	{//we have a spawnpoint specified, try to find it
-		if ( (nearestSpot = spot = G_Find( NULL, FOFS(targetname), level.spawntarget )) == NULL )
-		{//you HAVE to be able to find the desired spot
-			G_Error( "Couldn't find spawntarget %s\n", level.spawntarget );
-			return NULL;
+		spot = G_Find(NULL,FOFS(targetname),level.spawntarget);
+		if (!spot) {
+			if (!g_qbLoadTransition) {
+				G_Error("Couldn't find spawntarget %s\n",level.spawntarget);
+				return nullptr;
+			}
+			gi.Printf("Hub arrival %s is unavailable. Using a normal start.\n",level.spawntarget);
 		}
 	}
-	else
+	if (!spot)
 	{//not looking for a special startspot
 		nearestSpot = SelectNearestDeathmatchSpawnPoint( avoidPoint, team );
 
@@ -633,218 +636,88 @@ Player_CacheFromPrevLevel
   Argument		: void
 ============
 */
+static bool Player_ReadTransfer(jar::playerTransfer::State& saved,bool warn)
+{
+	char text[MAX_STRING_CHARS];
+	gi.Cvar_VariableStringBuffer(sCVARNAME_PLAYERSAVE,text,sizeof(text));
+	if(!text[0])return false;
+	if(jar::playerTransfer::Decode(text,saved))return true;
+	if(warn)gi.Printf("Invalid player carry data; using the map's starting loadout.\n");
+	return false;
+}
+
 void Player_CacheFromPrevLevel(void)
 {
-	char	s[MAX_STRING_CHARS];
-	int i;
+	jar::playerTransfer::State saved;
+	if(!Player_ReadTransfer(saved,false))return;
 
-	gi.Cvar_VariableStringBuffer( sCVARNAME_PLAYERSAVE, s, sizeof(s) );
-
-	if (s[0])	// actually this would be safe anyway because of the way sscanf() works, but this is clearer
-	{
-		int iDummy, bits, ibits;
-
-		sscanf( s, "%i %i %i %i",
-			&iDummy,//client->ps.stats[STAT_HEALTH],
-			&iDummy,//client->ps.stats[STAT_ARMOR],
-			&bits,	//client->ps.stats[STAT_WEAPONS]
-			&ibits	//client->ps.stats[STAT_ITEMS]
-			);
-
-		for ( i = 1 ; i < 16 ; i++ )
-		{
-			if ( bits & ( 1 << i ) )
-			{
-				RegisterItem( FindItemForWeapon( (weapon_t)i ) );
-			}
-		}
-
-extern gitem_t	*FindItemForInventory( int inv );
-
-		for ( i = 0 ; i < 16 ; i++ )
-		{
-			if ( ibits & ( 1 << i ) )
-			{
-				RegisterItem( FindItemForInventory( i ));
-			}
-		}
+	uint32_t weapons=uint32_t(saved.weapons), items=uint32_t(saved.items);
+	for(int i=1;i<bg_numItems&&(weapons||items);++i){
+		auto& item=bg_itemlist[i];
+		if(item.giTag<0||item.giTag>=32)continue;
+		auto* mask=item.giType==IT_WEAPON?&weapons:item.giType==IT_HOLDABLE?&items:nullptr;
+		const uint32_t bit=1u<<item.giTag;
+		if(!mask||!(*mask&bit))continue;
+		RegisterItem(&item);
+		*mask&=~bit;
 	}
 }
 
-/*
-============
-Player_RestoreFromPrevLevel
-  Description	: retrieve maptransition data recorded by server when exiting previous level (to carry over weapons/ammo/health/etc)
-  Return type	: void
-  Argument		: gentity_t *ent
-============
-*/
-static void Player_RestoreFromPrevLevel(gentity_t *ent, SavedGameJustLoaded_e eSavedGameJustLoaded)
+static bool Player_RestoreFromPrevLevel(gentity_t* ent)
 {
-	gclient_t	*client = ent->client;
-	int			i;
+	jar::playerTransfer::State saved;
+	if(!Player_ReadTransfer(saved,true))return false;
 
-	assert(client);
-	if (client)	// though I can't see it not being true...
-	{
-		char	s[MAX_STRING_CHARS];
-		char	saber0Name[MAX_QPATH];
-		char	saber1Name[MAX_QPATH];
-		const char	*var;
+	auto& ps=ent->client->ps;
+	ent->health=ps.stats[STAT_HEALTH]=saved.health;
+	ps.stats[STAT_ARMOR]=saved.armor;
+	ps.stats[STAT_WEAPONS]=saved.weapons;
+	ps.stats[STAT_ITEMS]=saved.items;
+	ps.weapon=saved.weapon;
+	ps.weaponstate=saved.weaponState;
+	ps.batteryCharge=saved.battery;
+	VectorCopy(saved.view,ps.viewangles);
 
-		gi.Cvar_VariableStringBuffer( sCVARNAME_PLAYERSAVE, s, sizeof(s) );
-
-		if (strlen(s))	// actually this would be safe anyway because of the way sscanf() works, but this is clearer
-		{//				|general info				  |-force powers |-saber 1										   |-saber 2										  |-general saber
-			int saber1BladeActive[8];
-			int saber2BladeActive[8];
-			unsigned int saber1BladeColor[8];
-			unsigned int saber2BladeColor[8];
-
-			sscanf( s, "%i %i %i %i %i %i %i %f %f %f %i %i %i %i %i %s %i %i %i %i %i %i %i %i %u %u %u %u %u %u %u %u %s %i %i %i %i %i %i %i %i %u %u %u %u %u %u %u %u %i %i %i %i",
-								&client->ps.stats[STAT_HEALTH],
-								&client->ps.stats[STAT_ARMOR],
-								&client->ps.stats[STAT_WEAPONS],
-								&client->ps.stats[STAT_ITEMS],
-								&client->ps.weapon,
-								&client->ps.weaponstate,
-								&client->ps.batteryCharge,
-								&client->ps.viewangles[0],
-								&client->ps.viewangles[1],
-								&client->ps.viewangles[2],
-								//force power data
-								&client->ps.forcePowersKnown,
-								&client->ps.forcePower,
-								&client->ps.forcePowerMax,
-								&client->ps.forcePowerRegenRate,
-								&client->ps.forcePowerRegenAmount,
-								//saber 1 data
-								saber0Name,
-								&saber1BladeActive[0],
-								&saber1BladeActive[1],
-								&saber1BladeActive[2],
-								&saber1BladeActive[3],
-								&saber1BladeActive[4],
-								&saber1BladeActive[5],
-								&saber1BladeActive[6],
-								&saber1BladeActive[7],
-								&saber1BladeColor[0],
-								&saber1BladeColor[1],
-								&saber1BladeColor[2],
-								&saber1BladeColor[3],
-								&saber1BladeColor[4],
-								&saber1BladeColor[5],
-								&saber1BladeColor[6],
-								&saber1BladeColor[7],
-								//saber 2 data
-								saber1Name,
-								&saber2BladeActive[0],
-								&saber2BladeActive[1],
-								&saber2BladeActive[2],
-								&saber2BladeActive[3],
-								&saber2BladeActive[4],
-								&saber2BladeActive[5],
-								&saber2BladeActive[6],
-								&saber2BladeActive[7],
-								&saber2BladeColor[0],
-								&saber2BladeColor[1],
-								&saber2BladeColor[2],
-								&saber2BladeColor[3],
-								&saber2BladeColor[4],
-								&saber2BladeColor[5],
-								&saber2BladeColor[6],
-								&saber2BladeColor[7],
-								//general saber data
-								&client->ps.saberStylesKnown,
-								&client->ps.saberAnimLevel,
-								&client->ps.saberLockEnemy,
-								&client->ps.saberLockTime
-					);
-			for (int j = 0; j < 8; j++)
-			{
-				client->ps.saber[0].blade[j].active = saber1BladeActive[j] ? qtrue : qfalse;
-				client->ps.saber[0].blade[j].color = (saber_colors_t)saber1BladeColor[j];
-				client->ps.saber[1].blade[j].active = saber2BladeActive[j] ? qtrue : qfalse;
-				client->ps.saber[1].blade[j].color = (saber_colors_t)saber2BladeColor[j];
-			}
-
-			ent->health = client->ps.stats[STAT_HEALTH];
-
-			if(ent->client->ps.saber[0].name && gi.bIsFromZone(ent->client->ps.saber[0].name, TAG_G_ALLOC)) {
-				gi.Free(ent->client->ps.saber[0].name);
-			}
-			ent->client->ps.saber[0].name=0;
-
-			if(ent->client->ps.saber[1].name && gi.bIsFromZone(ent->client->ps.saber[1].name, TAG_G_ALLOC) ) {
-				gi.Free(ent->client->ps.saber[1].name);
-			}
-			ent->client->ps.saber[1].name=0;
-			//NOTE: if sscanf can get a "(null)" out of strings that had NULL string pointers plugged into the original string
-			if ( saber0Name[0] && Q_stricmp( "(null)", saber0Name ) != 0 )
-			{
-				ent->client->ps.saber[0].name = G_NewString( saber0Name );
-			}
-			if ( saber1Name[0] && Q_stricmp( "(null)", saber1Name ) != 0 )
-			{//have a second saber
-				ent->client->ps.saber[1].name = G_NewString( saber1Name );
-				ent->client->ps.dualSabers = qtrue;
-			}
-			else
-			{//have only 1 saber
-				ent->client->ps.dualSabers = qfalse;
-			}
-
-// slight issue with ths for the moment in that although it'll correctly restore angles it doesn't take into account
-//	the overall map orientation, so (eg) exiting east to enter south will be out by 90 degrees, best keep spawn angles for now
-//
-//			VectorClear (ent->client->pers.cmd_angles);
-//
-//			SetClientViewAngle( ent, ent->client->ps.viewangles);
-
-			//ammo
-			gi.Cvar_VariableStringBuffer( "playerammo", s, sizeof(s) );
-			i=0;
-			var = strtok( s, " " );
-			while( var != NULL )
-			{
-			  /* While there are tokens in "s" */
-			  client->ps.ammo[i++] = atoi(var);
-			  /* Get next token: */
-			  var = strtok( NULL, " " );
-			}
-			assert (i==AMMO_MAX);
-
-			//inventory
-			gi.Cvar_VariableStringBuffer( "playerinv", s, sizeof(s) );
-			i=0;
-			var = strtok( s, " " );
-			while( var != NULL )
-			{
-			  /* While there are tokens in "s" */
-			  client->ps.inventory[i++] = atoi(var);
-			  /* Get next token: */
-			  var = strtok( NULL, " " );
-			}
-			assert (i==INV_MAX);
-
-
-			// the new JK2 stuff - force powers, etc...
-			//
-			gi.Cvar_VariableStringBuffer( "playerfplvl", s, sizeof(s) );
-			i=0;
-			var = strtok( s, " " );
-			while( var != NULL )
-			{
-				/* While there are tokens in "s" */
-				  client->ps.forcePowerLevel[i++] = atoi(var);
-				/* Get next token: */
-				var = strtok( NULL, " " );
-			}
-			assert (i==NUM_FORCE_POWERS);
-
-			client->ps.forceGripEntityNum = client->ps.forceDrainEntityNum = ENTITYNUM_NONE;
+	for(int i=0;i<2;++i){
+		auto& saber=ps.saber[i];
+		const auto& carry=saved.sabers[i];
+		if(saber.name&&gi.bIsFromZone(saber.name,TAG_G_ALLOC))gi.Free(saber.name);
+		saber.name=carry.name[0]?G_NewString(carry.name):nullptr;
+		for(int blade=0;blade<MAX_BLADES;++blade){
+			saber.blade[blade].active=carry.active[blade]?qtrue:qfalse;
+			saber.blade[blade].color=saber_colors_t(carry.color[blade]);
 		}
 	}
+	ps.dualSabers=ps.saber[1].name?qtrue:qfalse;
+	ps.saberStylesKnown=saved.styles;
+	ps.saberAnimLevel=saved.style;
+	ps.saberLockEnemy=saved.lockEnemy<0?ENTITYNUM_NONE:saved.lockEnemy;
+	ps.saberLockTime=saved.lockTime;
+
+	char text[MAX_STRING_CHARS];
+	std::array<int,AMMO_MAX> ammo;
+	gi.Cvar_VariableStringBuffer("playerammo",text,sizeof(text));
+	if(jar::playerTransfer::ReadAmmo(text,ammo))
+		std::copy(ammo.begin(),ammo.end(),ps.ammo);
+
+	gi.Cvar_VariableStringBuffer("playerinv",text,sizeof(text));
+	jar::ReadInventory(text,ps.inventory,MAX_INVENTORY);
+
+	std::array<int,NUM_FORCE_POWERS> forceRanks;
+	gi.Cvar_VariableStringBuffer("playerfplvl",text,sizeof(text));
+	if(jar::playerTransfer::ReadForceRanks(text,forceRanks)){
+		std::copy(forceRanks.begin(),forceRanks.end(),ps.forcePowerLevel);
+		ps.forcePowersKnown=saved.forceKnown;
+		ps.forcePower=saved.force;
+		ps.forcePowerMax=saved.forceMax;
+		ps.forcePowerRegenRate=saved.regenRate;
+		ps.forcePowerRegenAmount=saved.regenAmount;
+	}else{
+		WP_InitForcePowers(ent);
+	}
+
+	ps.forceGripEntityNum=ps.forceDrainEntityNum=ENTITYNUM_NONE;
+	return true;
 }
 
 /*
@@ -1319,6 +1192,16 @@ qboolean G_SetG2PlayerModelInfo( gentity_t *ent, const char *modelName, const ch
 				ent->kneeRBolt = gi.G2API_AddBolt(&ent->ghoul2[ent->playerModel], "*hips_r_knee");
 				ent->footLBolt = gi.G2API_AddBolt(&ent->ghoul2[ent->playerModel], "*l_leg_foot");
 				ent->footRBolt = gi.G2API_AddBolt(&ent->ghoul2[ent->playerModel], "*r_leg_foot");
+			}
+			else if ( !Q_stricmp( "galak_mech", modelName ))
+			{
+				ent->genericBolt1 = gi.G2API_AddBolt(&ent->ghoul2[ent->playerModel], "*antenna_effect");
+				ent->headBolt = gi.G2API_AddBolt(&ent->ghoul2[ent->playerModel], "*head_eyes");
+				ent->torsoBolt = gi.G2API_AddBolt(&ent->ghoul2[ent->playerModel], "torso");
+				ent->crotchBolt = gi.G2API_AddBolt(&ent->ghoul2[ent->playerModel], "hips");
+				ent->handRBolt = gi.G2API_AddBolt(&ent->ghoul2[ent->playerModel], "*flasha");
+				ent->genericBolt3 = gi.G2API_AddBolt(&ent->ghoul2[ent->playerModel], "*flashb");
+				ent->handLBolt = gi.G2API_AddBolt(&ent->ghoul2[ent->playerModel], "*flashc");
 			}
 			else
 			{//TEMP HACK: not a non-humanoid droid
@@ -2129,7 +2012,7 @@ qboolean ClientSpawn(gentity_t *ent, SavedGameJustLoaded_e eSavedGameJustLoaded 
 	usercmd_t	ucmd;
 	gentity_t	*spawnPoint;
 	qboolean	beamInEffect = qfalse;
-	extern qboolean g_qbLoadTransition;
+	const bool returningToHub=eSavedGameJustLoaded==eFULL&&g_qbLoadTransition;
 
 	index = ent - g_entities;
 	client = ent->client;
@@ -2178,10 +2061,20 @@ qboolean ClientSpawn(gentity_t *ent, SavedGameJustLoaded_e eSavedGameJustLoaded 
 
 		//setup sabers
 		G_ReloadSaberData( ent );
+		G_RestoreCarriedWeaponHand(*ent);
 		//force power levels should already be set
 	}
 	else
 	{
+		if (returningToHub) {
+			// The destination checkpoint may remember the player in a seat.
+			if (ent->s.m_iVehicleNum>0&&ent->s.m_iVehicleNum<ENTITYNUM_WORLD) {
+				auto* vehicle=G_IsRidingVehicle(ent);
+				if (vehicle&&vehicle->m_pVehicleInfo&&vehicle->m_pVehicleInfo->Eject)
+					vehicle->m_pVehicleInfo->Eject(vehicle,ent,qtrue);
+			}
+			ent->s.m_iVehicleNum=0;
+		}
 		// find a spawn point
 		// do it before setting health back up, so farthest
 		// ranging doesn't count this client
@@ -2346,7 +2239,15 @@ qboolean ClientSpawn(gentity_t *ent, SavedGameJustLoaded_e eSavedGameJustLoaded 
 
 		// restore some player data
 		//
-		Player_RestoreFromPrevLevel(ent, eSavedGameJustLoaded);
+		if(!Player_RestoreFromPrevLevel(ent)&&eSavedGameJustLoaded!=eNO){
+			WP_SaberParseParms(g_saber->string,&client->ps.saber[0]);
+			WP_InitForcePowers(ent);
+		}
+		if (returningToHub) {
+			SetClientViewAngle(ent,spawn_angles);
+			client->ps.saberLockEnemy=ENTITYNUM_NONE;
+			client->ps.saberLockTime=0;
+		}
 
 		//FIXME: put this BEFORE the Player_RestoreFromPrevLevel check above?
 		if (eSavedGameJustLoaded == eNO)
@@ -2377,6 +2278,9 @@ qboolean ClientSpawn(gentity_t *ent, SavedGameJustLoaded_e eSavedGameJustLoaded 
 			G_ReloadSaberData( ent );
 			//force power levels should already be set
 		}
+
+		G_JAR_RandomizePlayerLoadout(ent, spawnPoint->spawnflags);
+		if (ent->s.number==0) G_JAR_WorkshopSpawned(returningToHub);
 
 		//NEVER start a map with either of your sabers or blades on...
 		ent->client->ps.SaberDeactivate();

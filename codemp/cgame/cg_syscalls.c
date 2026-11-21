@@ -111,6 +111,23 @@ void trap_SendClientCommand( const char *s ) {
 void trap_UpdateScreen( void ) {
 	Q_syscall( CG_UPDATESCREEN );
 }
+static qboolean trap_CM_BSPModelInfo(const char*name,int*first,int*count){return (qboolean)Q_syscall(CG_CM_BSPMODELINFO,name,first,count);}
+static qboolean trap_CM_HothSectionSky(int model, const vec3_t point) {
+	return (qboolean)Q_syscall(CG_CM_HOTHSECTIONSKY, model, point);
+}
+static qboolean trap_CM_RiftSectionAir(int model, const vec3_t point) {
+	return (qboolean)Q_syscall(CG_CM_RIFTSECTIONAIR, model, point);
+}
+static qboolean trap_CM_KorribanSectionFog(int model) {
+	return (qboolean)Q_syscall(CG_CM_KORRIBANSECTIONFOG, model);
+}
+static qboolean trap_CM_YavinSectionSky(int model, const vec3_t point) {
+	return (qboolean)Q_syscall(CG_CM_YAVINSECTIONSKY, model, point);
+}
+static void trap_R_AddPortalToScene(const jarPortablePortalView_t* view) {
+	Q_syscall(CG_R_ADDPORTALTOSCENE, view);
+}
+
 void trap_CM_LoadMap( const char *mapname, qboolean SubBSP ) {
 	Q_syscall( CG_CM_LOADMAP, mapname, SubBSP );
 }
@@ -771,6 +788,12 @@ static void TranslateSyscalls( void ) {
 	trap->UpdateScreen						= trap_UpdateScreen;
 	trap->CM_InlineModel					= trap_CM_InlineModel;
 	trap->CM_LoadMap						= trap_CM_LoadMap;
+	trap->CM_BSPModelInfo = trap_CM_BSPModelInfo;
+	trap->CM_HothSectionSky = trap_CM_HothSectionSky;
+	trap->CM_RiftSectionAir = trap_CM_RiftSectionAir;
+	trap->CM_KorribanSectionFog = trap_CM_KorribanSectionFog;
+	trap->CM_YavinSectionSky = trap_CM_YavinSectionSky;
+	trap->R_AddPortalToScene = trap_R_AddPortalToScene;
 	trap->CM_NumInlineModels				= trap_CM_NumInlineModels;
 	trap->CM_PointContents					= trap_CM_PointContents;
 	trap->CM_TempModel						= CGSyscall_CM_TempModel;

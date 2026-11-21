@@ -22,13 +22,16 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "cg_media.h"
+#include "../../shared/qcommon/jar_logic_marker.h"
 #include "FxScheduler.h"
 
 #include "../client/vmachine.h"
 #include "g_local.h"
 
 #include "../qcommon/sstring.h"
+#include "qcommon/jar_npc_resources.h"
 #include "qcommon/ojk_saved_game_helper.h"
+#include "qcommon/jar_force_enlightenment.h"
 
 //NOTENOTE: Be sure to change the mirrored code in g_shared.h
 typedef	std::map< sstring_t, unsigned char  >	namePrecache_m;
@@ -239,6 +242,9 @@ inventoryInfo_t		cg_inventory[INV_MAX];
 vmCvar_t	cg_runpitch;
 vmCvar_t	cg_runroll;
 vmCvar_t	cg_bobup;
+vmCvar_t jar_cameraPreset;
+vmCvar_t jar_facePreset, jar_faceSensitivity;
+vmCvar_t jar_saberExtension;
 vmCvar_t	cg_bobpitch;
 vmCvar_t	cg_bobroll;
 vmCvar_t	cg_shadows;
@@ -277,6 +283,7 @@ vmCvar_t	cg_drawGun;
 vmCvar_t	cg_autoswitch;
 vmCvar_t	cg_simpleItems;
 vmCvar_t	cg_fov;
+vmCvar_t jar_sceneBrightness;
 vmCvar_t	cg_fovAspectAdjust;
 vmCvar_t	cg_endcredits;
 vmCvar_t	cg_updatedDataPadForcePower1;
@@ -349,9 +356,14 @@ typedef struct {
 } cvarTable_t;
 
 static cvarTable_t cvarTable[] = {
+    { &jar_facePreset, "jar_facePreset", "0", CVAR_ARCHIVE },
+    { &jar_faceSensitivity, "jar_faceSensitivity", "1", CVAR_ARCHIVE },
+    { &jar_cameraPreset, "jar_cameraPreset", "0", CVAR_ARCHIVE },
+    { &jar_saberExtension, "jar_saberExtension", "1", CVAR_ARCHIVE },
 	{ &cg_autoswitch, "cg_autoswitch", "1", CVAR_ARCHIVE },
 	{ &cg_drawGun, "cg_drawGun", "1", CVAR_ARCHIVE },
 	{ &cg_fov, "cg_fov", "80", CVAR_ARCHIVE },
+    { &jar_sceneBrightness, "jar_sceneBrightness", "1", CVAR_ARCHIVE_ND },
 	{ &cg_fovAspectAdjust, "cg_fovAspectAdjust", "0", CVAR_ARCHIVE },
 	{ &cg_stereoSeparation, "cg_stereoSeparation", "0.4", CVAR_ARCHIVE  },
 	{ &cg_shadows, "cg_shadows", "1", CVAR_ARCHIVE  },
@@ -998,27 +1010,13 @@ void CG_RegisterClientRenderInfo(clientInfo_t *ci, renderInfo_t *ri)
 	char			legsModelName[MAX_QPATH];
 	char			headSkinName[MAX_QPATH];
 	char			torsoSkinName[MAX_QPATH];
-	char			legsSkinName[MAX_QPATH];
 
 	if(!ri->legsModelName[0])
 	{//Must have at LEAST a legs model
 		return;
 	}
 
-	Q_strncpyz( legsModelName, ri->legsModelName, sizeof( legsModelName ) );
-	//Legs skin
-	slash = strchr( legsModelName, '/' );
-	if ( !slash )
-	{
-		// modelName didn not include a skin name
-		Q_strncpyz( legsSkinName, "default", sizeof( legsSkinName ) );
-	}
-	else
-	{
-		Q_strncpyz( legsSkinName, slash + 1, sizeof( legsSkinName ) );
-		// truncate modelName
-		*slash = 0;
-	}
+	const char* legsSkinName = JAR_NpcSplitLegacyModel(ri->legsModelName, legsModelName);
 
 	if(ri->torsoModelName[0])
 	{
@@ -1277,10 +1275,14 @@ This function may execute for a couple of minutes with a slow disk.
 =================
 */
 void CG_CreateMiscEnts(void);
+#define JAR_BSP_CALL(name) cgi_##name
+#include "../../shared/qcommon/jar_bsp_client.inc"
+#undef JAR_BSP_CALL
+
 static void CG_RegisterGraphics( void ) {
 	int			i;
 	char		items[MAX_ITEMS+1];
-	int			breakPoint = 0;
+
 	const char		*sb_nums[11] = {
 		"gfx/2d/numbers/zero",
 		"gfx/2d/numbers/one",
@@ -1352,6 +1354,7 @@ static void CG_RegisterGraphics( void ) {
 
 	cgs.media.explosionModel				= cgi_R_RegisterModel ( "models/weaphits/explosion.md3" );
 	cgs.media.surfaceExplosionShader		= cgi_R_RegisterShader( "surfaceExplosion" );
+	cgs.media.wastelandSnowShader = cgi_R_RegisterShader("jar/world/wasteland_snow");
 
 	cgs.media.halfShieldModel				= cgi_R_RegisterModel( "models/weaphits/testboom.md3" );
 
@@ -1548,8 +1551,9 @@ static void CG_RegisterGraphics( void ) {
 
 	CG_LoadingString("map brushes");
 	// register the inline models
-	breakPoint = cgs.numInlineModels = cgi_CM_NumInlineModels();
-	assert ((size_t)cgs.numInlineModels < sizeof(cgs.inlineDrawModel)/sizeof(cgs.inlineDrawModel[0]) );
+	CG_ResetBSPModels();
+	cgs.numInlineModels = cgi_CM_NumInlineModels();
+	if(cgs.numInlineModels<1 || cgs.numInlineModels>(int)ARRAY_LEN(cgs.inlineDrawModel))CG_Error("BSP inline model capacity exceeded");
 	for ( i = 1 ; i < cgs.numInlineModels ; i++ ) {
 		char	name[10];
 		vec3_t			mins, maxs;
@@ -1560,7 +1564,6 @@ static void CG_RegisterGraphics( void ) {
 
 		if (!cgs.inlineDrawModel[i])
 		{
-			breakPoint = i;
 			break;
 		}
 
@@ -1697,45 +1700,8 @@ Ghoul2 Insert End
 		cgi_R_RegisterShader( "gfx/misc/nav_node" );
 	}
 
-	for(i = 1; i < MAX_SUB_BSP; i++)
-	{
-		const char		*bspName = 0;
-		vec3_t			mins, maxs;
-		int				j = 0;
-		int				sub = 0;
-		char			temp[MAX_QPATH];
+	CG_RegisterBSPModels();
 
-		bspName = CG_ConfigString( CS_BSP_MODELS+i );
-		if ( !bspName[0] )
-		{
-			break;
-		}
-		CG_LoadingString( "BSP instances" );
-
-		cgi_CM_LoadMap( bspName, qtrue );
-		cgs.inlineDrawModel[breakPoint] = cgi_R_RegisterModel( bspName );
-		cgi_R_ModelBounds( cgs.inlineDrawModel[breakPoint], mins, maxs );
-		for ( j = 0 ; j < 3 ; j++ )
-		{
-			cgs.inlineModelMidpoints[breakPoint][j] = mins[j] + 0.5 * ( maxs[j] - mins[j] );
-		}
-		breakPoint++;
-		for(sub=1;sub<MAX_MODELS;sub++)
-		{
-			Com_sprintf(temp, MAX_QPATH, "*%d-%d", i, sub);
-			cgs.inlineDrawModel[breakPoint] = cgi_R_RegisterModel( temp );
-			if (!cgs.inlineDrawModel[breakPoint])
-			{
-				break;
-			}
-			cgi_R_ModelBounds( cgs.inlineDrawModel[breakPoint], mins, maxs );
-			for ( j = 0 ; j < 3 ; j++ )
-			{
-				cgs.inlineModelMidpoints[breakPoint][j] = mins[j] + 0.5 * ( maxs[j] - mins[j] );
-			}
-			breakPoint++;
-		}
-	}
 
 	const char	*terrainInfo;
 	int			terrainID;
@@ -2105,7 +2071,10 @@ CG_Init
 Called after every level change or subsystem restart
 =================
 */
+#include "cg_weather.inc"
+#include "cg_reflection_probe.inc"
 void CG_Init( int serverCommandSequence ) {
+ CG_JAR_ReflectionClear();CG_JAR_WeatherClear();
 	cgs.serverCommandSequence = serverCommandSequence;
 
 	cgi_Cvar_Set( "cg_drawHUD", "1" );
@@ -2118,6 +2087,7 @@ void CG_Init( int serverCommandSequence ) {
 	cgs.media.qhFontMedium= cgi_R_RegisterFont("ergoec");
 
 	cgs.media.whiteShader   = cgi_R_RegisterShader( "white" );
+	cgs.media.jarLogicMarkerShader = cgi_R_RegisterShader(JAR_LOGIC_MARKER_SHADER);
 	cgs.media.loadTick		= cgi_R_RegisterShaderNoMip( "gfx/hud/load_tick" );
 	cgs.media.loadTickCap	= cgi_R_RegisterShaderNoMip( "gfx/hud/load_tick_cap" );
 
@@ -2183,6 +2153,7 @@ Called before every level change or subsystem restart
 */
 void CG_Shutdown( void )
 {
+ CG_JAR_ReflectionClear();CG_JAR_WeatherClear();
 	in_camera = false;
 	FX_Free();
 }
@@ -3459,6 +3430,8 @@ const char *inventoryDesc[15] =
 "PORTABLE_SENTRY_DESC",
 "GOODIE_KEY_DESC",
 "SECURITY_KEY_DP_DESC",
+"PORTABLE_SHIELD_DESC",
+"DATAPAD_DESC",
 };
 
 
@@ -3623,7 +3596,9 @@ void CG_DrawDataPadInventorySelect( void )
 	// draw the weapon description
 	if ((cg.DataPadInventorySelect>=0) && (cg.DataPadInventorySelect<13))
 	{
-		cgi_SP_GetStringTextString( va("SP_INGAME_%s",inventoryDesc[cg.DataPadInventorySelect]), text, sizeof(text) );
+		if(cg.DataPadInventorySelect==INV_PORTABLE_SHIELD) Q_strncpyz(text,"Portable shield: use inventory to deploy a wall on nearby solid ground. Blocks attacks for up to 25 seconds; friendly actors can pass through.",sizeof(text));
+		else if(cg.DataPadInventorySelect==INV_DATAPAD) Q_strncpyz(text,"Datapad: use inventory to open mission objectives, equipment and combat information. Reusable. A message on a world pickup is displayed when collected.",sizeof(text));
+		else cgi_SP_GetStringTextString( va("SP_INGAME_%s",inventoryDesc[cg.DataPadInventorySelect]), text, sizeof(text) );
 
 		if (text[0])
 		{
@@ -3729,8 +3704,8 @@ qboolean ForcePower_Valid(int index)
 
 	assert (MAX_SHOWPOWERS == ( sizeof(showPowers)/sizeof(showPowers[0]) ));
 	assert (index < MAX_SHOWPOWERS );	//is this a valid index?
-	if (player->client->ps.forcePowersKnown & (1 << showPowers[index]) &&
-		player->client->ps.forcePowerLevel[showPowers[index]])	// Does he have the force power?
+	if (jar::enlightenment::Known(player->client->ps) & (1 << showPowers[index]) &&
+		jar::enlightenment::Rank(player->client->ps,showPowers[index]))	// Does he have the force power?
 	{
 		return qtrue;
 	}

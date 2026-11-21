@@ -361,6 +361,11 @@ static void RB_SurfacePolychain( srfPoly_t *p ) {
 	numv = tess.numVertexes;
 	for ( i = 0; i < p->numVerts; i++ ) {
 		VectorCopy( p->verts[i].xyz, tess.xyz[numv] );
+		if (p->jarPortal) {
+			vec3_t normal;
+			VectorCopy(p->jarPortal->axis[0],normal);
+			tess.normal[numv]=R_VboPackNormal(normal);
+		}
 		tess.texCoords[numv][0][0] = p->verts[i].st[0];
 		tess.texCoords[numv][0][1] = p->verts[i].st[1];
 		tess.vertexColors[numv][0] = p->verts[ i ].modulate[0] / 255.0f;

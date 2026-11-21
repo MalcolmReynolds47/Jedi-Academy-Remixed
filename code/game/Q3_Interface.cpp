@@ -27,6 +27,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 //
 //	-- jweier
 #include "g_local.h"
+#include "g_mover_portal.h"
+#include "g_randomizer.h"
 #include "g_functions.h"
 #include "Q3_Interface.h"
 #include "anims.h"
@@ -621,6 +623,7 @@ void Q3_TaskIDComplete( gentity_t *ent, taskID_t taskType )
 
 	if ( ent->m_iIcarusID != IIcarusInterface::ICARUS_INVALID /*ent->taskManager*/ && Q3_TaskIDPending( ent, taskType ) )
 	{//Complete it
+		CQuake3GameInterface::GetGame()->DebugPrint(IGameInterface::WL_DEBUG, "%4d task_complete(type=%d id=%d);",ent->s.number,taskType,ent->taskID[taskType]);
 		IIcarusInterface::GetIcarus()->Completed( ent->m_iIcarusID, ent->taskID[taskType] );
 
 		//See if any other tasks have the name number and clear them so we don't complete more than once
@@ -1348,7 +1351,7 @@ void moverCallback( gentity_t *ent )
 		//close the portal
 		if ( ent->svFlags & SVF_MOVER_ADJ_AREA_PORTALS )
 		{
-			gi.AdjustAreaPortalState( ent, qfalse );
+			G_AdjustMoverAreaPortalState( ent, qfalse );
 		}
 	}
 
@@ -1519,7 +1522,7 @@ Lerps the origin of an entity to its ending position
 	{//open the portal
 		if ( ent->svFlags & SVF_MOVER_ADJ_AREA_PORTALS )
 		{
-			gi.AdjustAreaPortalState( ent, qtrue );
+			G_AdjustMoverAreaPortalState( ent, qtrue );
 		}
 	}
 
@@ -1592,7 +1595,7 @@ Lerps the origin and angles of an entity to the destination values
 		{//open the portal
 			if ( ent->svFlags & SVF_MOVER_ADJ_AREA_PORTALS )
 			{
-				gi.AdjustAreaPortalState( ent, qtrue );
+				G_AdjustMoverAreaPortalState( ent, qtrue );
 			}
 		}
 
@@ -1702,7 +1705,7 @@ static void Q3_Lerp2Origin( int taskID, int entID, vec3_t origin, float duration
 		{//open the portal
 			if ( ent->svFlags & SVF_MOVER_ADJ_AREA_PORTALS )
 			{
-				gi.AdjustAreaPortalState( ent, qtrue );
+				G_AdjustMoverAreaPortalState( ent, qtrue );
 			}
 		}
 
@@ -4058,48 +4061,14 @@ Q3_SetParm
   Argument		: const char *parmValue
 ============
 */
-void Q3_SetParm (int entID, int parmNum, const char *parmValue)
+#include "g_script_parms.h"
+void Q3_SetParm(int entID,int parmNum,const char*parmValue)
 {
-	gentity_t	*ent = &g_entities[entID];
-	float		val;
-
-	if ( !ent )
-	{
-		Quake3Game()->DebugPrint( IGameInterface::WL_WARNING, "Q3_SetParm: invalid entID %d\n", entID);
-		return;
-	}
-
-	if ( parmNum < 0 || parmNum >= MAX_PARMS )
-	{
-		Quake3Game()->DebugPrint( IGameInterface::WL_WARNING, "SET_PARM: parmNum %d out of range!\n", parmNum );
-		return;
-	}
-
-	if( !ent->parms )
-	{
-		ent->parms = (parms_t *)G_Alloc( sizeof(parms_t) );
-		memset( ent->parms, 0, sizeof(parms_t) );
-	}
-
-	if ( (val = Q3_CheckStringCounterIncrement( parmValue )) )
-	{
-		val += atof( ent->parms->parm[parmNum] );
-		Com_sprintf( ent->parms->parm[parmNum], sizeof(ent->parms->parm[parmNum]), "%f", val );
-	}
-	else
-	{//Just copy the string
-		//copy only 16 characters
-		strncpy( ent->parms->parm[parmNum], parmValue, sizeof(ent->parms->parm[parmNum]) );
-		//set the last character to null in case we had to truncate their passed string
-		if ( ent->parms->parm[parmNum][sizeof(ent->parms->parm[parmNum]) - 1] != 0 )
-		{//Tried to set a string that is too long
-			ent->parms->parm[parmNum][sizeof(ent->parms->parm[parmNum]) - 1] = 0;
-			Quake3Game()->DebugPrint( IGameInterface::WL_WARNING, "SET_PARM: parm%d string too long, truncated to '%s'!\n", parmNum, ent->parms->parm[parmNum] );
-		}
-	}
+ if(entID<0||entID>=ENTITYNUM_WORLD){Quake3Game()->DebugPrint(IGameInterface::WL_WARNING,"Q3_SetParm: invalid entID %d\n",entID);return;}
+ const auto result=jar::entityParms::Native(g_entities[entID],parmNum,parmValue);
+ if(result==jar::entityParms::Invalid)Quake3Game()->DebugPrint(IGameInterface::WL_WARNING,"SET_PARM: invalid slot/value for parm%d\n",parmNum);
+ else if(result==jar::entityParms::Truncated)Quake3Game()->DebugPrint(IGameInterface::WL_WARNING,"SET_PARM: parm%d string too long, truncated\n",parmNum);
 }
-
-
 
 /*
 =============
@@ -4176,8 +4145,11 @@ static void Q3_SetEvent( int entID, const char *event_name )
 			spot[2] += ent->maxs[2]/2;
 		}
 		tent = G_TempEntity( spot, EV_DISINTEGRATION );
-		tent->s.eventParm = PW_REGEN;
-		tent->owner = ent;
+		if (tent)
+		{
+			tent->s.eventParm = PW_REGEN;
+			tent->owner = ent;
+		}
 		break;
 
 */
@@ -6755,6 +6727,8 @@ static void Q3_RemoveEnt( gentity_t *victim )
 		return;
 	}
 
+	G_JAR_ForgetActor(victim); // authored removal remains final after its delayed free
+
 	if( victim->client )
 	{
 		if ( victim->client->NPC_class == CLASS_VEHICLE )
@@ -7537,29 +7511,13 @@ bool CQuake3GameInterface::InitEntity( gentity_t *pEntity )
 	return false;
 }
 
+#include "g_script_entities.inc"
+
 // Free an Entity by ID.
 void CQuake3GameInterface::FreeEntity( gentity_t *pEntity )
 {
-	//Make sure the entity is valid
-	if ( pEntity->m_iIcarusID == IIcarusInterface::ICARUS_INVALID )
-		return;
-
-	// Remove the Entity from the Entity map so that when their g_entity index is reused,
-	// ICARUS doesn't try to affect the new (incorrect) pEntity.
-	if VALIDSTRING( pEntity->script_targetname )
-	{
-		char	temp[1024];
-
-		strncpy( (char *) temp, pEntity->script_targetname, 1023 );
-		temp[ 1023 ] = 0;
-
-		entitylist_t::iterator it = m_EntityList.find( Q_strupr(temp) );
-
-		if (it != m_EntityList.end())
-		{
-			m_EntityList.erase(it);
-		}
-	}
+	if (pEntity->m_iIcarusID == IIcarusInterface::ICARUS_INVALID) return;
+	JarForgetScriptEntity(m_EntityList,pEntity);
 
 	// Delete the Icarus ID, but lets not construct icarus to do it
 	if (IIcarusInterface::GetIcarus(0,false))
@@ -7594,15 +7552,7 @@ bool CQuake3GameInterface::ValidEntity( gentity_t *pEntity )
 // Associate the entity's id and name so that it can be referenced later.
 void CQuake3GameInterface::AssociateEntity( gentity_t *pEntity )
 {
-	char	temp[1024];
-
-	if ( VALIDSTRING( pEntity->script_targetname ) == false )
-		return;
-
-	strncpy( (char *) temp, pEntity->script_targetname, 1023 );
-	temp[ 1023 ] = 0;
-
-	m_EntityList[ Q_strupr( (char *) temp ) ] = pEntity->s.number;
+    JarAssociateScriptEntity(m_EntityList,pEntity);
 }
 
 // Make a valid script name.
@@ -8072,7 +8022,7 @@ void	CQuake3GameInterface::Lerp2Pos( int taskID, int entID, vec3_t origin, vec3_
 		{//open the portal
 			if ( ent->svFlags & SVF_MOVER_ADJ_AREA_PORTALS )
 			{
-				gi.AdjustAreaPortalState( ent, qtrue );
+				G_AdjustMoverAreaPortalState( ent, qtrue );
 			}
 		}
 
@@ -8240,6 +8190,14 @@ void	CQuake3GameInterface::Set( int taskID, int entID, const char *type_name, co
 
 	//Set this for callbacks
 	toSet = GetIDForString( setTable, type_name );
+	if(G_JAR_IsActorStandin(ent) && (toSet==SET_BEHAVIOR_STATE || toSet==SET_DEFAULT_BSTATE || toSet==SET_TEMP_BSTATE)
+		&& Q_stricmp(data,"BS_CINEMATIC") && Q_stricmp(data,"BS_DEFAULT")) {
+		// Combat/jump behavior tasks cannot be truthfully completed by a
+		// noncombat controller. Keep the task pending and report the exact cause.
+		if(gi.JAR_Log)gi.JAR_Log(0,"randomizer","actor_recovery_unsupported","entity=%d name=%s operation=%s value=%s task=%d",entID,ent->targetname?ent->targetname:"",type_name,data,taskID);
+		DebugPrint(WL_ERROR,"Actor recovery cannot execute %s %s for %s; task remains pending\n",type_name,data,ent->targetname?ent->targetname:"");
+		Q3_TaskIDSet(ent,TID_BSTATE,taskID);return;
+	}
 
 	//TODO: Throw in a showscript command that will list each command and what they're doing...
 	//		maybe as simple as printing that line of the script to the console preceeded by the person's name?
@@ -8401,6 +8359,7 @@ void	CQuake3GameInterface::Set( int taskID, int entID, const char *type_name, co
 
 	case SET_HEALTH:
 		int_data = atoi((char *) data);
+		if(int_data<=0)G_JAR_ForgetActor(ent);
 		Q3_SetHealth( entID, int_data );
 		break;
 
@@ -9150,7 +9109,12 @@ void	CQuake3GameInterface::Set( int taskID, int entID, const char *type_name, co
 
 	case SET_DAMAGEENTITY:
 		int_data = atoi((char *) data);
-		G_Damage( ent, ent, ent, NULL, NULL, int_data, 0, MOD_UNKNOWN );
+		if(G_JAR_IsActorStandin(ent)&&int_data>0){Kill(entID,"self");break;}
+		{
+			JarAuthoredDeathScope authoredDamage(ent);
+			if(int_data>0)G_JAR_ForgetActor(ent);
+			G_Damage( ent, ent, ent, NULL, NULL, int_data, 0, MOD_UNKNOWN );
+		}
 		break;
 
 	case SET_SABER_ORIGIN:
@@ -9695,6 +9659,7 @@ void	CQuake3GameInterface::Kill( int entID, const char *name )
 		victim->svFlags |= SVF_KILLED_SELF;
 	}
 
+	G_JAR_ForgetActor(victim); // authored kill is never recovered, including later corpse cleanup
 	o_health = victim->health;
 	victim->health = 0;
 	if ( victim->client )
@@ -9704,6 +9669,7 @@ void	CQuake3GameInterface::Kill( int entID, const char *name )
 	//G_SetEnemy(victim, ent);
 	if( victim->e_DieFunc != dieF_NULL )	// check can be omitted
 	{
+		JarAuthoredDeathScope jarAuthoredKill(victim);
 		GEntity_DieFunc( victim, NULL, NULL, o_health, MOD_UNKNOWN );
 	}
 }
@@ -11221,31 +11187,9 @@ int		CQuake3GameInterface::CreateIcarus( int entID )
 }
 
 //Polls the engine for the sequencer of the entity matching the name passed
-int		CQuake3GameInterface::GetByName( const char *name )
+int CQuake3GameInterface::GetByName(const char *name)
 {
-	gentity_t				*ent;
-	entitylist_t::iterator		ei;
-	char					temp[1024];
-
-	if ( name == NULL || name[0] == '\0' )
-		return -1;
-
-	strncpy( (char *) temp, name, sizeof(temp) );
-	temp[sizeof(temp)-1] = 0;
-
-	ei = m_EntityList.find( Q_strupr( (char *) temp ) );
-
-	if ( ei == m_EntityList.end() )
-		return -1;
-
-	ent = &g_entities[(*ei).second];
-
-	return ent->s.number;
-
-	// this now returns the ent instead of the sequencer -- dmv 06/27/01
-//	if (ent == NULL)
-//		return NULL;
-//	return ent->sequencer;
+    return JarScriptEntityByName(m_EntityList,name);
 }
 
 // (g_entities[m_ownerID].svFlags&SVF_ICARUS_FREEZE)

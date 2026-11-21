@@ -1202,6 +1202,8 @@ optimization to prevent disk rescanning if they are
 asked for again.
 ====================
 */
+#include "../../code/rd-common/tr_bsp_register.inc"
+
 static qhandle_t RE_RegisterModel_Actual( const char *name ) {
 	model_t		*mod;
 	unsigned	*buf;
@@ -1260,24 +1262,7 @@ Ghoul2 Insert Start
 //		}
 //	}
 
-	if (name[0] == '#')
-	{
-		char		temp[MAX_QPATH];
-
-		tr.numBSPModels++;
-		RE_LoadWorldMap_Actual(va("maps/%s.bsp", name + 1), tr.bspModels[tr.numBSPModels - 1], tr.numBSPModels);
-		Com_sprintf(temp, MAX_QPATH, "*%d-0", tr.numBSPModels);
-		hash = generateHashValue(temp, FILE_HASH_SIZE);
-		for (mh=mhHashTable[hash]; mh; mh=mh->next)
-		{
-			if (Q_stricmp(mh->name, temp) == 0)
-			{
-				return mh->handle;
-			}
-		}
-
-		return 0;
-	}
+	if (name[0] == '#')return JAR_RegisterBSPModel(name);
 
 	if (name[0] == '*')
 	{	// don't create a bad model for a bsp model
@@ -1684,6 +1669,7 @@ R_ModelInit
 */
 void R_ModelInit( void )
 {
+	R_ClearBSPGridInstances();
 	model_t		*mod;
 
 	if(!CachedModels)

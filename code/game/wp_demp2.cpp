@@ -43,6 +43,7 @@ static void WP_DEMP2_MainFire( gentity_t *ent )
 	WP_MissileTargetHint(ent, start, forwardVec);
 
 	gentity_t *missile = CreateMissile( start, forwardVec, DEMP2_VELOCITY, 10000, ent );
+	if (!missile) return;
 
 	missile->classname = "demp2_proj";
 	missile->s.weapon = WP_DEMP2;
@@ -221,6 +222,7 @@ static void WP_DEMP2_AltFire( gentity_t *ent )
 	// the shot can travel a whopping 4096 units in 1 second. Note that the shot will auto-detonate at 4096 units...we'll see if this looks cool or not
 	WP_MissileTargetHint(ent, start, forwardVec);
 	gentity_t *missile = CreateMissile( start, forwardVec, DEMP2_ALT_RANGE, 1000, ent, qtrue );
+	if (!missile) return;
 
 	// letting it know what the charge size is.
 	missile->count = count;

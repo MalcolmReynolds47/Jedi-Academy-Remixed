@@ -1,3 +1,5 @@
+#include "qcommon/jar_live_randomizer.h"
+#include "qcommon/jar_diagnostics.h"
 /*
 ===========================================================================
 Copyright (C) 2000 - 2013, Raven Software, Inc.
@@ -31,6 +33,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 										//	(EF1 behaviour). I should maybe time/date check them though?
 
 #include "server.h"
+#include "qcommon/jar_hub_transition.h"
 #include "../qcommon/stringed_ingame.h"
 #include "../game/statindex.h"
 #include "../game/weapons.h"
@@ -163,7 +166,8 @@ void SG_StoreSaveGameComment(const char *sComment)
 
 qboolean SV_TryLoadTransition( const char *mapname )
 {
-	char *psFilename = va( "hub/%s", mapname );
+	char psFilename[MAX_QPATH];
+	Com_sprintf(psFilename,sizeof(psFilename),"hub/%s",mapname);
 
 	Com_Printf (S_COLOR_CYAN "Restoring game \"%s\"...\n", psFilename);
 
@@ -522,6 +526,7 @@ extern  cvar_t	*cvar_vars;	// I know this is really unpleasant, but I need acces
 
 void SG_WriteCvars(void)
 {
+    JAR_RandomizerBeforeSave();
 	cvar_t	*var;
 	int		iCount = 0;
 
@@ -574,8 +579,15 @@ void SG_WriteCvars(void)
 	}
 }
 
-void SG_ReadCvars()
+static void SG_ReadCvars(bool hubReturn)
 {
+    JAR_RandomizerBeforeLoad();
+    // Pre-0.5 saves have no Chaos settings. Do not inherit a later run's new
+    // features when replaying their level-entry autosaves. Present save fields
+    // below override these defaults normally, including current Chaos saves.
+    Cvar_Set("jar_randomWide", "0");
+    Cvar_Set("jar_randomEnemies", "0");
+    Cvar_Set("jar_randomLoadout", "0");
 	int iCount = 0;
 	std::string psName;
 	const char* psValue;
@@ -602,8 +614,10 @@ void SG_ReadCvars()
 		psValue = reinterpret_cast<const char*>(
 			saved_game.get_buffer_data());
 
-		::Cvar_Set(psName.c_str(), psValue);
+		if (!hubReturn || !jar::hubTransition::RetainOutgoingCvar(psName.c_str()))
+			::Cvar_Set(psName.c_str(), psValue);
 	}
+    JAR_RandomizerReadComplete();
 }
 
 void SG_WriteServerConfigStrings()
@@ -1150,6 +1164,7 @@ qboolean SG_GameAllowedToSaveHere(qboolean inCamera)
 
 qboolean SG_WriteSavegame(const char *psPathlessBaseName, qboolean qbAutosave)
 {
+	JAR_Log(1,"save","write_begin","name=%s autosave=%d",psPathlessBaseName,qbAutosave);
 	if (!qbAutosave && !SG_GameAllowedToSaveHere(qfalse))	//full check
 		return qfalse;	// this prevents people saving via quick-save now during cinematics
 
@@ -1172,7 +1187,7 @@ qboolean SG_WriteSavegame(const char *psPathlessBaseName, qboolean qbAutosave)
 
 	ojk::SavedGame& saved_game = ojk::SavedGame::get_instance();
 
-	if(!saved_game.create( "current" ))
+	if(!saved_game.create( "current", ge->PrepareWorkshopSave(qbAutosave)!=qfalse ))
 	{
 		Com_Printf (GetString_FailedToOpenSaveGame("current",qfalse));//S_COLOR_RED "Failed to create savegame\n");
 		SG_WipeSavegame( "current" );
@@ -1215,7 +1230,7 @@ qboolean SG_WriteSavegame(const char *psPathlessBaseName, qboolean qbAutosave)
 		CM_WritePortalState();
 		SG_WriteServerConfigStrings();
 	}
-	ge->WriteLevel(qbAutosave);	// always done now, but ent saver only does player if auto
+	ge->WriteLevel(qbAutosave,saved_game.version());	// always done now, but ent saver only does player if auto
 
 	bool is_write_failed = saved_game.is_failed();
 
@@ -1234,12 +1249,17 @@ qboolean SG_WriteSavegame(const char *psPathlessBaseName, qboolean qbAutosave)
 		psPathlessBaseName);
 
 	sv_testsave->integer = iPrevTestSave;
+	JAR_Log(1,"save","write_end","name=%s",psPathlessBaseName);
 	return qtrue;
 }
 
 qboolean SG_ReadSavegame(
 	const char* psPathlessBaseName)
 {
+	const bool hubReturn=qbLoadTransition!=qfalse;
+	if (!hubReturn)
+		Cvar_Set("jar_inventoryTransferCount","0");
+	JAR_Log(1,"save","read_begin","name=%s",psPathlessBaseName);
 	char sComment[iSG_COMMENT_SIZE];
 	char sMapCmd[iSG_MAPCMD_SIZE];
 
@@ -1315,7 +1335,7 @@ qboolean SG_ReadSavegame(
 		INT_ID('M', 'P', 'C', 'M'),
 		sMapCmd);
 
-	::SG_ReadCvars();
+	::SG_ReadCvars(hubReturn);
 
 	// read game state
 	const qboolean qbAutosave = ::ReadGame();
@@ -1347,8 +1367,12 @@ qboolean SG_ReadSavegame(
 	// always done now, but ent reader only does player if auto
 	::ge->ReadLevel(
 		qbAutosave,
-		qbLoadTransition);
+		hubReturn?qtrue:qfalse,
+		saved_game.version());
+	sv.hubArrivalPending=hubReturn&&!qbAutosave?qtrue:qfalse;
 
+	JAR_Log(1,"save","read_end","name=%s",psPathlessBaseName);
+	JAR_DiagnosticsSnapshot("save_loaded");
 	return qtrue;
 }
 
@@ -1357,6 +1381,6 @@ void SG_TestSave(void)
 	if (sv_testsave->integer && sv.state == SS_GAME)
 	{
 		WriteGame(qfalse);
-		ge->WriteLevel(qfalse);
+		ge->WriteLevel(qfalse,ojk::SavedGame::get_instance().version());
 	}
 }

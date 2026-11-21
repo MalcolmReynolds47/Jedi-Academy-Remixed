@@ -1,3 +1,4 @@
+#include "qcommon/jar_diagnostics.h"
 /*
 ===========================================================================
 Copyright (C) 1999 - 2005, Id Software, Inc.
@@ -25,6 +26,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "../client/vmachine.h"
 #include "server.h"
+#include "qcommon/jar_skyportal.h"
 
 /*
 =============================================================================
@@ -48,78 +50,7 @@ A normal server packet will look like:
 =============================================================================
 */
 
-/*
-=============
-SV_EmitPacketEntities
-
-Writes a delta update of an entityState_t list to the message.
-=============
-*/
-static void SV_EmitPacketEntities( clientSnapshot_t *from, clientSnapshot_t *to, msg_t *msg ) {
-	entityState_t	*oldent, *newent;
-	int		oldindex, newindex;
-	int		oldnum, newnum;
-	int		from_num_entities;
-
-	// generate the delta update
-	if ( !from ) {
-		from_num_entities = 0;
-	} else {
-		from_num_entities = from->num_entities;
-	}
-
-	newent = NULL;
-	oldent = NULL;
-	newindex = 0;
-	oldindex = 0;
-	const int num2Send = to->num_entities >= svs.numSnapshotEntities ? svs.numSnapshotEntities : to->num_entities;
-
-	while ( newindex < num2Send || oldindex < from_num_entities ) {
-		if ( newindex >= num2Send ) {
-			newnum = 9999;
-		} else {
-			newent = &svs.snapshotEntities[(to->first_entity+newindex) % svs.numSnapshotEntities];
-			newnum = newent->number;
-		}
-
-		if ( oldindex >= from_num_entities ) {
-			oldnum = 9999;
-		} else {
-			oldent = &svs.snapshotEntities[(from->first_entity+oldindex) % svs.numSnapshotEntities];
-			oldnum = oldent->number;
-		}
-
-		if ( newnum == oldnum ) {
-			// delta update from old position
-			// because the force parm is qfalse, this will not result
-			// in any bytes being emited if the entity has not changed at all
-			MSG_WriteEntity(msg, newent, 0);
-			oldindex++;
-			newindex++;
-			continue;
-		}
-
-		if ( newnum < oldnum ) {
-			// this is a new entity, send it from the baseline
-			MSG_WriteEntity (msg, newent, 0);
-			newindex++;
-			continue;
-		}
-
-		if ( newnum > oldnum ) {
-			// the old entity isn't present in the new message
-			if(oldent) {
-				MSG_WriteEntity (msg, NULL, oldent->number);
-			}
-			oldindex++;
-			continue;
-		}
-	}
-
-	MSG_WriteBits( msg, (MAX_GENTITIES-1), GENTITYNUM_BITS );	// end of packetentities
-}
-
-
+// Entity snapshot encoding is shared with the headless tests in snapshot_codec.cpp.
 
 /*
 ==================
@@ -220,7 +151,7 @@ Build a client snapshot structure
 =============================================================================
 */
 
-#define	MAX_SNAPSHOT_ENTITIES	1024
+#define	MAX_SNAPSHOT_ENTITIES	MAX_GENTITIES
 typedef struct {
 	int		numSnapshotEntities;
 	int		snapshotEntities[MAX_SNAPSHOT_ENTITIES];
@@ -503,6 +434,8 @@ currently doesn't.
 For viewing through other player's eyes, clent can be something other than client->gentity
 =============
 */
+
+#include "sv_skyportal.inc"
 static clientSnapshot_t *SV_BuildClientSnapshot( client_t *client ) {
 	vec3_t						org;
 	clientSnapshot_t			*frame;
@@ -577,6 +510,7 @@ static clientSnapshot_t *SV_BuildClientSnapshot( client_t *client ) {
 	// add all the entities directly visible to the eye, which
 	// may include portal entities that merge other viewpoints
 	SV_AddEntitiesVisibleFromPoint( org, frame, &entityNumbers, qfalse );
+	SV_AddPortableSkyEntities(sv.configstrings[CS_SKYBOXORG],frame,&entityNumbers);
 	/*
 	//was in here for debugging- print list of all entities in snapshot when you go over the limit
 	if ( entityNumbers.numSnapshotEntities >= 256 )
@@ -688,6 +622,7 @@ void SV_SendClientSnapshot( client_t *client ) {
 
 	// check for overflow
 	if ( msg.overflowed ) {
+		JAR_Log(0,"snapshot","message_overflow","bytes=%d limit=%d",msg.cursize,msg.maxsize);
 		Com_Printf ("WARNING: msg overflowed for %s\n", client->name);
 		MSG_Clear (&msg);
 	}

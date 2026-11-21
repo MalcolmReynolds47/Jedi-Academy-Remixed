@@ -222,6 +222,8 @@ typedef struct clientInfo_s {
 	vec3_t			color2;
 
 	int				icolor1;
+	byte			saberRGB[2][3];
+	qboolean		customSaberRGB[2];
 	int				icolor2;
 
 	int				score;			// updated by score servercmds
@@ -384,6 +386,9 @@ typedef struct centity_s {
 
 	qboolean		noLumbar; //if true only do anims and things on model_root instead of lower_lumbar, this will be the case for some NPCs.
 	qboolean		noFace;
+	int jarSaberTime;
+	qboolean jarSaberClockValid;
+	int jarColdBreathTime;
 
 	//For keeping track of the current surface status in relation to the entitystate surface fields.
 	int				npcLocalSurfOn;
@@ -402,6 +407,8 @@ typedef struct centity_s {
 
 	//sometimes used as a bolt index, but these values are also used as generic values for clientside entities
 	//at times
+	qboolean		jarEmplacedAimed;
+	qboolean		jarEWebWrecked;
 	int				bolt1;
 	int				bolt2;
 	int				bolt3;
@@ -1084,6 +1091,7 @@ enum
 typedef struct cgMedia_s {
 	qhandle_t	charsetShader;
 	qhandle_t	whiteShader;
+	qhandle_t	jarLogicMarkerShader;
 
 	qhandle_t	loadBarLED;
 	qhandle_t	loadBarLEDCap;
@@ -1546,6 +1554,7 @@ typedef struct cgs_s {
 	int				showDuelHealths;
 	gametype_t		gametype;
 	int				debugMelee;
+	int jarMPVersion;
 	int				stepSlideFix;
 	int				noSpecMove;
 	int				dmflags;
@@ -1832,6 +1841,14 @@ void CG_S_UpdateLoopingSounds(int entityNum);
 
 void CG_SetEntitySoundPosition( centity_t *cent );
 void CG_AddPacketEntities( qboolean isPortal );
+void CG_CalcEntityLerpPositions(centity_t *cent);
+qboolean CG_SectionSky(const entityState_t *state, const vec3_t localPoint, vec3_t camera);
+qboolean CG_RiftSectionAir(const vec3_t point);
+void CG_JAR_EmplacedFireEvent(centity_t *chair, const vec3_t origin);
+qboolean CG_JAR_EmplacedSlotChanged(const entityState_t *current, const entityState_t *next);
+void CG_JAR_EmplacedTransition(centity_t *chair, const entityState_t *next);
+qboolean CG_JAR_EWebOperator(const centity_t *gun, const playerState_t *player);
+qboolean CG_JAR_EWebMuzzle(centity_t *gun, vec3_t point, vec3_t direction);
 void CG_ManualEntityRender(centity_t *cent);
 void CG_Beam( centity_t *cent );
 void CG_AdjustPositionForMover( const vec3_t in, int moverNum, int fromTime, int toTime, vec3_t out );
@@ -1914,7 +1931,7 @@ void CG_GlassShatter(int entnum, vec3_t dmgPt, vec3_t dmgDir, float dmgRadius, i
 void CG_ScorePlum( int client, vec3_t org, int score );
 
 void CG_Chunks( int owner, vec3_t origin, const vec3_t normal, const vec3_t mins, const vec3_t maxs,
-						float speed, int numChunks, material_t chunkType, int customChunk, float baseScale );
+						float speed, int numChunks, material_t chunkType, int customChunk, float baseScale, const vec3_t boxAngles );
 void CG_MiscModelExplosion( vec3_t mins, vec3_t maxs, int size, material_t chunkType );
 
 localEntity_t *CG_MakeExplosion( vec3_t origin, vec3_t dir,
@@ -2070,3 +2087,6 @@ Ghoul2 Insert End
 */
 
 extern cgameImport_t *trap;
+#include "cg_jar_sandbox.h"
+
+void CG_RegisterBSPModels(void);

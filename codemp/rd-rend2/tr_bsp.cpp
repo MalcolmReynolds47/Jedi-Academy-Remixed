@@ -2925,7 +2925,9 @@ void R_LoadLightGridArray( world_t *worldData, lump_t *l ) {
 R_LoadEntities
 ================
 */
-void R_LoadEntities( world_t *worldData, lump_t *l ) {
+#include "tr_bsp_entity_text.inc"
+
+static void R_LoadEntities( world_t *worldData, lump_t *l ) {
 	const char *p;
 	char *token, *s;
 	char vertexRemapShaderText[] = "vertexremapshader";
@@ -2941,12 +2943,13 @@ void R_LoadEntities( world_t *worldData, lump_t *l ) {
 
 	tr.distanceCull = 6000;//DEFAULT_DISTANCE_CULL;
 
-	p = (char *)(fileBase + l->fileofs);
-
-	// store for reference by the cgame
-	w->entityString = (char *)ri.Hunk_Alloc( l->filelen + 1, h_low );
-	strcpy( w->entityString, p );
-	w->entityParsePoint = w->entityString;
+	// Parse the bounded copy, not the raw non-NUL-terminated lump.
+	w->entityString = R_CopyBSPEntityText(fileBase + l->fileofs, l->filelen);
+	if (!w->entityString) {
+		ri.Error(ERR_DROP, "R_LoadEntities: invalid entity text size");
+		return;
+	}
+	p = w->entityParsePoint = w->entityString;
 
 	token = COM_ParseExt( &p, qtrue );
 	if (!*token || *token != '{') {
@@ -4199,66 +4202,57 @@ world_t *R_LoadBSP(const char *name, int *bspIndex)
 		void *v;
 	} buffer;
 
-	world_t *worldData;
-	int worldIndex = -1;
-	if (bspIndex == nullptr)
-	{
-		worldData = &s_worldData;
-	}
-	else
-	{
-		if (tr.numBspModels >= MAX_SUB_BSP)
-		{
-			// too many
-			return nullptr;
+	if (bspIndex) {
+		for (int i = 0; i < tr.numBspModels; ++i) {
+			if (tr.bspModels[i] && !Q_stricmp(tr.bspModels[i]->name, name)) {
+				*bspIndex = i;
+				return tr.bspModels[i];
+			}
 		}
-
-		worldIndex = *bspIndex = tr.numBspModels;
-
-		worldData = (world_t *)ri.Hunk_Alloc(sizeof(*worldData), h_low);
-		tr.bspModels[tr.numBspModels] = worldData;
-		++tr.numBspModels;
+		if (tr.numBspModels >= MAX_SUB_BSP) return nullptr;
 	}
 
-	// load it
-    ri.FS_ReadFile(name, &buffer.v);
-	if (!buffer.b)
-	{
-		if (bspIndex == nullptr)
-		{
-			ri.Error (ERR_DROP, "RE_LoadWorldMap: %s not found", name);
-		}
-
+	buffer.v = nullptr;
+	const long length = ri.FS_ReadFile(name, &buffer.v);
+	if (!buffer.b) {
+		if (!bspIndex) ri.Error(ERR_DROP, "RE_LoadWorldMap: %s not found", name);
 		return nullptr;
 	}
 
-	Com_Memset(worldData, 0, sizeof(*worldData));
-	Q_strncpyz(worldData->name, name, sizeof(worldData->name));
-	Q_strncpyz(worldData->baseName, COM_SkipPath(worldData->name), sizeof(worldData->name));
-	COM_StripExtension(worldData->baseName, worldData->baseName, sizeof(worldData->baseName));
-
-	Q_strncpyz(tr.worldName, worldData->name, sizeof(worldData->name));
-	COM_StripExtension(tr.worldName, tr.worldName, sizeof(tr.worldName));
-
-	const byte *startMarker = (const byte *)ri.Hunk_Alloc(0, h_low);
-	dheader_t *header = (dheader_t *)buffer.b;
-	fileBase = (byte *)header;
-
-	int bspVersion = LittleLong(header->version);
-	if (bspVersion != BSP_VERSION)
-	{
-		ri.Error(
-			ERR_DROP,
-			"R_LoadBSP: %s has wrong version number (%i should be %i)",
-			name,
-			bspVersion,
-			BSP_VERSION);
+	dheader_t* header = reinterpret_cast<dheader_t*>(buffer.b);
+	bool valid = length >= static_cast<long>(sizeof(*header)) && LittleLong(header->ident) == BSP_IDENT && LittleLong(header->version) == BSP_VERSION;
+	for (int i = 0; valid && i < HEADER_LUMPS; ++i) {
+		const int offset = LittleLong(header->lumps[i].fileofs);
+		const int bytes = LittleLong(header->lumps[i].filelen);
+		valid = offset >= 0 && bytes >= 0 && offset <= length && bytes <= length - offset;
+	}
+	if (!valid) {
+		ri.FS_FreeFile(buffer.v);
+		if (!bspIndex) ri.Error(ERR_DROP, "R_LoadBSP: %s has an invalid header or lump range", name);
+		else ri.Printf(PRINT_WARNING, "R_LoadBSP: %s has an invalid header or lump range\n", name);
+		return nullptr;
 	}
 
-	// swap all the lumps
-	for (int i = 0; i < sizeof(dheader_t) / 4; ++i)
-	{
-		((int *)header)[i] = LittleLong ( ((int *)header)[i]);
+	int worldIndex = -1;
+	world_t* worldData = &s_worldData;
+	if (bspIndex) {
+		worldIndex = *bspIndex = tr.numBspModels;
+		worldData = (world_t*)ri.Hunk_Alloc(sizeof(*worldData), h_low);
+		tr.bspModels[tr.numBspModels++] = worldData;
+	}
+	Com_Memset(worldData, 0, sizeof(*worldData));
+	Q_strncpyz(worldData->name, name, sizeof(worldData->name));
+	Q_strncpyz(worldData->baseName, COM_SkipPath(worldData->name), sizeof(worldData->baseName));
+	COM_StripExtension(worldData->baseName, worldData->baseName, sizeof(worldData->baseName));
+	if (!bspIndex) {
+		Q_strncpyz(tr.worldName, worldData->name, sizeof(tr.worldName));
+		COM_StripExtension(tr.worldName, tr.worldName, sizeof(tr.worldName));
+	}
+
+	const byte* startMarker = (const byte*)ri.Hunk_Alloc(0, h_low);
+	fileBase = buffer.b;
+	for (int i = 0; i < sizeof(*header) / 4; ++i) {
+		((int*)header)[i] = LittleLong(((int*)header)[i]);
 	}
 
 	// load into heap

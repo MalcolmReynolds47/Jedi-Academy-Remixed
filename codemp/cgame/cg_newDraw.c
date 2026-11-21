@@ -747,6 +747,7 @@ void CG_OwnerDraw(float x, float y, float w, float h, float text_x, float text_y
 }
 
 void CG_MouseEvent(int x, int y) {
+	if(CG_JAR_Mouse(x,y))return;
 	int n;
 
 	/*
@@ -831,6 +832,7 @@ void CG_EventHandling(int type) {
 
 
 void CG_KeyEvent(int key, qboolean down) {
+	if(CG_JAR_Key(key,down))return;
 
 	if (!down) {
 		return;

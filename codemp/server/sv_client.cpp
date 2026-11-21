@@ -26,6 +26,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "server.h"
 #include "qcommon/stringed_ingame.h"
+#include "game/jar_mp_policy.h"
 
 #ifdef USE_INTERNAL_ZLIB
 #include "zlib/zlib.h"
@@ -482,7 +483,7 @@ the wrong gamestate.
 */
 void SV_SendClientGameState( client_t *client ) {
 	msg_t		msg;
-	byte		msgBuffer[MAX_MSGLEN];
+	static byte		msgBuffer[MAX_MSGLEN];
 
 	MSG_Init( &msg, msgBuffer, sizeof( msgBuffer ) );
 
@@ -519,7 +520,7 @@ void SV_SendClientGameState( client_t *client ) {
 void SV_SendClientMapChange( client_t *client )
 {
 	msg_t		msg;
-	byte		msgBuffer[MAX_MSGLEN];
+	static byte		msgBuffer[MAX_MSGLEN];
 
 	MSG_Init( &msg, msgBuffer, sizeof( msgBuffer ) );
 
@@ -1276,7 +1277,11 @@ static qboolean SV_ClientCommand( client_t *cl, msg_t *msg ) {
 	// but not other people
 	// We don't do this when the client hasn't been active yet since its
 	// normal to spam a lot of commands when downloading
-	if ( !com_cl_running->integer &&
+	// Sandbox requests have a bounded per-player game-module rate limiter. The
+	// chat flood window must not swallow wheel ticks or a selection/property pair.
+	Cmd_TokenizeString(s);
+	const bool jarRequest = JAR_MP_IsCommand(Cmd_Argv(0)) != 0;
+	if ( !jarRequest && !com_cl_running->integer &&
 		cl->state >= CS_ACTIVE &&
 		sv_floodProtect->integer )
 	{

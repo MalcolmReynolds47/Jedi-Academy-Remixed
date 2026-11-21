@@ -27,6 +27,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "server/exe_headers.h"
 
 #include "client.h"
+#include "qcommon/jar_console_style.h"
 #include "qcommon/stringed_ingame.h"
 #include "qcommon/game_version.h"
 
@@ -41,6 +42,7 @@ cvar_t		*con_autoclear;
 cvar_t		*con_height;
 cvar_t		*con_scale;
 cvar_t		*con_timestamps;
+static cvar_t *jar_consoleStyle;
 
 #define	DEFAULT_CONSOLE_WIDTH	78
 
@@ -410,6 +412,7 @@ Con_Init
 ================
 */
 void Con_Init (void) {
+	jar_consoleStyle = Cvar_Get("jar_consoleStyle","0",CVAR_ARCHIVE);
 	int		i;
 
 	con_notifytime = Cvar_Get ("con_notifytime", "3", 0);
@@ -725,7 +728,10 @@ void Con_DrawSolidConsole( float frac )
 		{
 			re.SetColor(NULL);
 		}
-		SCR_DrawPic( 0, 0, SCREEN_WIDTH, y, cls.consoleShader );
+		vec4_t color;
+		if (JAR_ConsoleColor(jar_consoleStyle->integer,frac,Com_Clamp(0.0f,1.0f,con_opacity->value),color))
+			SCR_FillRect(0,0,SCREEN_WIDTH,y,color);
+		else SCR_DrawPic( 0, 0, SCREEN_WIDTH, y, cls.consoleShader );
 	}
 
 	// draw the bottom bar and version number

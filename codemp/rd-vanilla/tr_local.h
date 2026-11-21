@@ -131,6 +131,8 @@ typedef struct trRefEntity_s {
 	int			ambientLightInt;	// 32 bit rgba packed
 	vec3_t		directedLight;
 	int			dlightBits;
+	const struct trRefEntity_s *riftFogRoom;
+	int riftFogIndex;
 } trRefEntity_t;
 
 
@@ -594,6 +596,7 @@ typedef struct viewParms_s {
 	vec3_t		pvsOrigin;			// may be different than or.origin for portals
 	qboolean	isPortal;			// true if this view is through a portal
 	qboolean	isMirror;			// the portal is a mirror, invert the face culling
+	int portalMonitor; // Zero for ordinary views, otherwise color target slot plus one.
 	int			frameSceneNum;		// copied from tr.frameSceneNum
 	int			frameCount;			// copied from tr.frameCount
 	cplane_t	portalPlane;		// clip anything behind this if mirroring
@@ -603,6 +606,7 @@ typedef struct viewParms_s {
 	cplane_t	frustum[4];
 	vec3_t		visBounds[2];
 	float		zFar;
+	const trRefEntity_t *riftFogRoom;
 } viewParms_t;
 
 
@@ -639,7 +643,7 @@ Ghoul2 Insert End
 } surfaceType_t;
 
 typedef struct drawSurf_s {
-	unsigned			sort;			// bit combination for fast compares
+	uint64_t			sort;			// bit combination for fast compares
 	surfaceType_t		*surface;		// any of surface*_t
 } drawSurf_t;
 
@@ -656,6 +660,10 @@ typedef struct srfPoly_s {
 	int				fogIndex;
 	int				numVerts;
 	polyVert_t		*verts;
+	const jarPortablePortalView_t* jarPortal;
+	qhandle_t jarFallback;
+	bool jarSelected;
+	qhandle_t jarMonitorShader;
 } srfPoly_t;
 
 typedef struct srfDisplayList_s {
@@ -793,6 +801,7 @@ typedef struct bmodel_s {
 	vec3_t		bounds[2];		// for culling
 	msurface_t	*firstSurface;
 	int			numSurfaces;
+	int bspIndex;
 } bmodel_t;
 
 typedef struct
@@ -832,6 +841,8 @@ typedef struct world_s {
 	int			numfogs;
 	fog_t		*fogs;
 	int			globalFog;
+	int inheritedFog;
+	int			startLightMapIndex, numLightmaps;
 
 
 	vec3_t		lightGridOrigin;
@@ -846,6 +857,7 @@ typedef struct world_s {
 	mgrid_t			*lightGridData;
 	word		*lightGridArray;
 	int			numGridArrayElements;
+	int numGridDataElements;
 
 
 	int			numClusters;
@@ -860,7 +872,7 @@ typedef struct world_s {
 
 //======================================================================
 
-#define	MAX_MOD_KNOWN	1024
+#define MAX_MOD_KNOWN 16384
 
 void		R_ModelInit (void);
 
@@ -876,15 +888,15 @@ void		R_Modellist_f (void);
 
 #define	MAX_DRAWIMAGES			2048
 #define	MAX_LIGHTMAPS			256
-#define	MAX_SKINS				1024
+#define MAX_SKINS 16384
 
 
-#define	MAX_DRAWSURFS			0x10000
+#define MAX_DRAWSURFS 0x100000
 #define	DRAWSURF_MASK			(MAX_DRAWSURFS-1)
 
 /*
 
-the drawsurf sort data is packed into a single 32 bit value so it can be
+the drawsurf sort data is packed into a single 64 bit value so it can be
 compared quickly during the qsorting process
 
 the bits are allocated as follows:
@@ -897,7 +909,7 @@ the bits are allocated as follows:
 #define	QSORT_FOGNUM_SHIFT		2
 #define	QSORT_REFENTITYNUM_SHIFT	7
 #define	QSORT_SHADERNUM_SHIFT	(QSORT_REFENTITYNUM_SHIFT+REFENTITYNUM_BITS)
-#if (QSORT_SHADERNUM_SHIFT+SHADERNUM_BITS) > 32
+#if (QSORT_SHADERNUM_SHIFT+SHADERNUM_BITS) > 64
 	#error "Need to update sorting, too many bits."
 #endif
 
@@ -1000,6 +1012,7 @@ typedef struct trGlobals_s {
 	image_t					*fogImage;
 	image_t					*dlightImage;	// inverse-quare highlight for projective adding
 	image_t					*flareImage;
+	image_t					*portalMonitorImages[JAR_PORTAL_CAMERA_FEEDS];
 	image_t					*whiteImage;			// full of 0xff
 	image_t					*identityLightImage;	// full of tr.identityLightByte
 
@@ -1290,9 +1303,12 @@ void R_AddLightningBoltSurfaces( trRefEntity_t *e );
 
 void R_AddPolygonSurfaces( void );
 
-void R_DecomposeSort( unsigned sort, int *entityNum, shader_t **shader, int *fogNum, int *dlightMap );
+void R_DecomposeSort( uint64_t sort, int *entityNum, shader_t **shader, int *fogNum, int *dlightMap );
 
 void R_AddDrawSurf( surfaceType_t *surface, shader_t *shader, int fogIndex, int dlightMap );
+void R_AssignRiftFog(trRefdef_t& scene, int firstEntity);
+const trRefEntity_t *R_RiftFogRoomAtPoint(const vec3_t point);
+const fog_t *R_RiftCameraFog(const trRefEntity_t *room);
 
 
 #define	CULL_IN		0		// completely unclipped
@@ -1405,6 +1421,9 @@ void	R_FontList_f( void );
 void	R_InitFogTable( void );
 float	R_FogFactor( float s, float t );
 void	R_InitImages( void );
+void R_InitPortalMonitor();
+void R_ShutdownPortalMonitor();
+bool R_PortalMonitorReady(int slot);
 void	R_DeleteTextures( void );
 float	R_SumOfUsedImages( qboolean bUseFormat );
 void	R_InitSkins( void );
@@ -1563,6 +1582,8 @@ LIGHTS
 
 void R_DlightBmodel( bmodel_t *bmodel, bool NoLight );
 void R_SetupEntityLighting( const trRefdef_t *refdef, trRefEntity_t *ent );
+void R_ClearBSPGridInstances();
+void R_BuildBSPGridInstances(const trRefdef_t *scene);
 void R_TransformDlights( int count, dlight_t *dl, orientationr_t *ori );
 int R_LightForPoint( vec3_t point, vec3_t ambientLight, vec3_t directedLight, vec3_t lightDir );
 
@@ -1633,6 +1654,7 @@ SCENE GENERATION
 */
 
 void R_InitNextFrame( void );
+void R_ResetGhoul2Surfaces(void);
 
 void RE_ClearScene( void );
 void RE_AddRefEntityToScene( const refEntity_t *ent );
@@ -1725,6 +1747,8 @@ void	R_TransformClipToWindow( const vec4_t clip, const viewParms_t *view, vec4_t
 void	RB_DeformTessGeometry( void );
 
 void	RB_CalcEnvironmentTexCoords( float *dstTexCoords );
+fog_t RB_BSPFog(int index);
+bool RB_BSPFogIsGlobal(int index, bool includeSpecial = false);
 void	RB_CalcFogTexCoords( float *dstTexCoords );
 void	RB_CalcScrollTexCoords( const float scroll[2], float *dstTexCoords );
 void	RB_CalcRotateTexCoords( float rotSpeed, float *dstTexCoords );
@@ -1768,7 +1792,9 @@ RENDERER BACK END COMMAND QUEUE
 #define	MAX_RENDER_COMMANDS	0x80000
 
 typedef struct renderCommandList_s {
-	byte	cmds[MAX_RENDER_COMMANDS];
+	// The backend aligns each command address, so the buffer itself must
+	// begin on the same boundary as the frontend's padded command sizes.
+	alignas(void *) byte cmds[MAX_RENDER_COMMANDS];
 	int		used;
 } renderCommandList_t;
 
@@ -1859,6 +1885,8 @@ typedef struct backEndData_s {
 	trMiniRefEntity_t	miniEntities[MAX_MINI_ENTITIES];
 	srfPoly_t	*polys;//[MAX_POLYS];
 	polyVert_t	*polyVerts;//[MAX_POLYVERTS];
+	jarPortablePortalView_t jarPortals[JAR_PORTAL_SURFACE_LIMIT];
+	unsigned numJarPortals;
 	renderCommandList_t	commands;
 } backEndData_t;
 
@@ -1866,6 +1894,7 @@ extern	int		max_polys;
 extern	int		max_polyverts;
 
 extern	backEndData_t	*backEndData;
+void RE_AddPortalToScene(const jarPortablePortalView_t*);
 
 
 void RB_ExecuteRenderCommands( const void *data );

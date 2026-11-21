@@ -77,6 +77,7 @@ typedef struct {
 	int				mLocalSubBSPIndex;
 	int				mLocalSubBSPModelOffset;
 	char			*mLocalSubBSPEntityParsePoint;
+	qboolean		hubArrivalPending;	// Serviced when the owner joins the restored world.
 
 	svEntity_t		svEntities[MAX_GENTITIES];
 } server_t;
@@ -219,6 +220,7 @@ void SV_AddServerCommand( client_t *client, const char *cmd );
 void SV_SendMessageToClient( msg_t *msg, client_t *client );
 void SV_SendClientMessages( void );
 void SV_SendClientSnapshot( client_t *client );
+void SV_EmitPacketEntities(clientSnapshot_t *from, clientSnapshot_t *to, msg_t *msg);
 
 
 
@@ -276,6 +278,11 @@ Ghoul2 Insert Start
 */
 void SV_Trace( trace_t *results, const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end,
 			  const int passEntityNum, const int contentmask, const EG2_Collision eG2TraceType = G2_NOCOLLIDE, const int useLod = 0);
+void SV_TraceMovingHull(trace_t*,const vec3_t start,const vec3_t end,const vec3_t mins,const vec3_t maxs,
+ int passEntityNum,int contentmask,const struct JarSweepHull&);
+void SV_TraceSceneryHull(trace_t*,const vec3_t start,const vec3_t end,const vec3_t mins,const vec3_t maxs,
+ int passEntityNum,int contentmask,const struct JarSweepHull&);
+void SV_TraceBrushLine(trace_t*,const vec3_t start,const vec3_t end,int passEntityNum,int contentmask);
 /*
 Ghoul2 Insert End
 */
@@ -314,7 +321,7 @@ void SG_TestSave(void);
 // What it's used for is for things like mission pack etc if we need to distinguish "street-copy" savegames from
 //	any new enhanced ones that need to ask for new chunks during loading.
 //
-#define iSAVEGAME_VERSION 1
+#define iSAVEGAME_VERSION JAR_SAVE_VERSION
 int SG_Version(void);	// call this to know what version number a successfully-opened savegame file was
 //
 extern SavedGameJustLoaded_e eSavedGameJustLoaded;

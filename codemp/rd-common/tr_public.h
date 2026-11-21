@@ -30,7 +30,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../qcommon/qcommon.h"
 #include "../ghoul2/ghoul2_shared.h"
 
-#define	REF_API_VERSION 9
+#include "qcommon/jar_probe.h"
+#include "../../shared/qcommon/jar_portal_limits.h"
+#define	REF_API_VERSION 15
 
 //
 // these are the functions exported by the refresh module
@@ -245,6 +247,12 @@ typedef struct refexport_s {
 		float				(*Font_StrLenPixels)					( const char *text, const int iFontIndex, const float scale );
 	} ext;
 
+	qboolean (*G2API_JAR_PoseBounds)(CGhoul2Info_v&,int,int*,vec3_t,vec3_t);
+	void (*G2API_JAR_ApplyFace)(CGhoul2Info_v&,int,int,int,float,float,qboolean,int);
+	int (*SetReflectionProbes)(const jarProbe_t*, int);
+	void (*AddPortalToScene)(const jarPortablePortalView_t* view);
+	qboolean (*G2API_JAR_PoseGeometry)(CGhoul2Info_v&,int,int*,vec3_t,vec3_t,
+		void*,void (*)(void*,const float*));
 } refexport_t;
 
 //

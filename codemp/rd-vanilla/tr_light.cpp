@@ -131,144 +131,8 @@ R_SetupEntityLightingGrid
 
 =================
 */
-static void R_SetupEntityLightingGrid( trRefEntity_t *ent ) {
-	vec3_t			lightOrigin;
-	int				pos[3];
-	int				i, j;
-	float			frac[3];
-	int				gridStep[3];
-	vec3_t			direction;
-	float			totalFactor;
-	unsigned short	*startGridPos;
+#include "../../code/rd-common/tr_bsp_grid_sample.inc"
 
-	if (r_fullbright->integer)
-	{
-		ent->ambientLight[0] = ent->ambientLight[1] = ent->ambientLight[2] = 255.0;
-		ent->directedLight[0] = ent->directedLight[1] = ent->directedLight[2] = 255.0;
-		VectorCopy( tr.sunDirection, ent->lightDir );
-		return;
-	}
-
-	if ( ent->e.renderfx & RF_LIGHTING_ORIGIN ) {
-		// seperate lightOrigins are needed so an object that is
-		// sinking into the ground can still be lit, and so
-		// multi-part models can be lit identically
-		VectorCopy( ent->e.lightingOrigin, lightOrigin );
-	} else {
-		VectorCopy( ent->e.origin, lightOrigin );
-	}
-
-	VectorSubtract( lightOrigin, tr.world->lightGridOrigin, lightOrigin );
-	for ( i = 0 ; i < 3 ; i++ ) {
-		float	v;
-
-		v = lightOrigin[i]*tr.world->lightGridInverseSize[i];
-		pos[i] = floor( v );
-		frac[i] = v - pos[i];
-		if ( pos[i] < 0 ) {
-			pos[i] = 0;
-		} else if ( pos[i] >= tr.world->lightGridBounds[i] - 1 ) {
-			pos[i] = tr.world->lightGridBounds[i] - 1;
-		}
-	}
-
-	VectorClear( ent->ambientLight );
-	VectorClear( ent->directedLight );
-	VectorClear( direction );
-
-	// trilerp the light value
-	gridStep[0] = 1;
-	gridStep[1] = tr.world->lightGridBounds[0];
-	gridStep[2] = tr.world->lightGridBounds[0] * tr.world->lightGridBounds[1];
-	startGridPos = tr.world->lightGridArray + (pos[0] * gridStep[0] + pos[1] * gridStep[1] + pos[2] * gridStep[2]);
-
-	totalFactor = 0;
-	for ( i = 0 ; i < 8 ; i++ ) {
-		float			factor;
-		mgrid_t			*data;
-		unsigned short	*gridPos;
-		int				lat, lng;
-		vec3_t			normal;
-
-		factor = 1.0;
-		gridPos = startGridPos;
-		for ( j = 0 ; j < 3 ; j++ ) {
-			if ( i & (1<<j) ) {
-				factor *= frac[j];
-				gridPos += gridStep[j];
-			} else {
-				factor *= (1.0 - frac[j]);
-			}
-		}
-
-		if (gridPos >= tr.world->lightGridArray + tr.world->numGridArrayElements)
-		{//we've gone off the array somehow
-			continue;
-		}
-		data = tr.world->lightGridData + *gridPos;
-
-		if ( data->styles[0] == LS_LSNONE )
-		{
-			continue;	// ignore samples in walls
-		}
-
-		totalFactor += factor;
-
-		for(j=0;j<MAXLIGHTMAPS;j++)
-		{
-			if (data->styles[j] != LS_LSNONE)
-			{
-				const byte	style= data->styles[j];
-
-				ent->ambientLight[0] += factor * data->ambientLight[j][0] * styleColors[style][0] / 255.0f;
-				ent->ambientLight[1] += factor * data->ambientLight[j][1] * styleColors[style][1] / 255.0f;
-				ent->ambientLight[2] += factor * data->ambientLight[j][2] * styleColors[style][2] / 255.0f;
-
-				ent->directedLight[0] += factor * data->directLight[j][0] * styleColors[style][0] / 255.0f;
-				ent->directedLight[1] += factor * data->directLight[j][1] * styleColors[style][1] / 255.0f;
-				ent->directedLight[2] += factor * data->directLight[j][2] * styleColors[style][2] / 255.0f;
-			}
-			else
-			{
-				break;
-			}
-		}
-
-		lat = data->latLong[1];
-		lng = data->latLong[0];
-		lat *= (FUNCTABLE_SIZE/256);
-		lng *= (FUNCTABLE_SIZE/256);
-
-		// decode X as cos( lat ) * sin( long )
-		// decode Y as sin( lat ) * sin( long )
-		// decode Z as cos( long )
-
-		normal[0] = tr.sinTable[(lat + (FUNCTABLE_SIZE / 4)) & FUNCTABLE_MASK] * tr.sinTable[lng];
-		normal[1] = tr.sinTable[lat] * tr.sinTable[lng];
-		normal[2] = tr.sinTable[(lng + (FUNCTABLE_SIZE / 4)) & FUNCTABLE_MASK];
-
-		VectorMA( direction, factor, normal, direction );
-	}
-
-	if ( totalFactor > 0 && totalFactor < 0.99 )
-	{
-		totalFactor = 1.0 / totalFactor;
-		VectorScale( ent->ambientLight, totalFactor, ent->ambientLight );
-		VectorScale( ent->directedLight, totalFactor, ent->directedLight );
-	}
-
-	VectorScale( ent->ambientLight, r_ambientScale->value, ent->ambientLight );
-	VectorScale( ent->directedLight, r_directedScale->value, ent->directedLight );
-
-	VectorNormalize2( direction, ent->lightDir );
-}
-
-
-/*
-===============
-LogLight
-===============
-*/
 static void LogLight( trRefEntity_t *ent ) {
 	int	max1, max2;
 
@@ -329,10 +193,7 @@ void R_SetupEntityLighting( const trRefdef_t *refdef, trRefEntity_t *ent ) {
 	}
 
 	// if NOWORLDMODEL, only use dynamic lights (menu system, etc)
-	if ( !(refdef->rdflags & RDF_NOWORLDMODEL )
-		&& tr.world->lightGridData ) {
-		R_SetupEntityLightingGrid( ent );
-	} else {
+	if ((refdef->rdflags & RDF_NOWORLDMODEL) || !R_SetupEntityLightingGrid(ent)) {
 		ent->ambientLight[0] = ent->ambientLight[1] =
 			ent->ambientLight[2] = tr.identityLight * 150;
 		ent->directedLight[0] = ent->directedLight[1] =
@@ -420,12 +281,10 @@ int R_LightForPoint( vec3_t point, vec3_t ambientLight, vec3_t directedLight, ve
 {
 	trRefEntity_t ent;
 
-	if ( tr.world->lightGridData == NULL )
-		return qfalse;
 
 	memset(&ent, 0, sizeof(ent));
 	VectorCopy( point, ent.e.origin );
-	R_SetupEntityLightingGrid( &ent );
+	if (!R_SetupEntityLightingGrid(&ent)) return qfalse;
 	VectorCopy(ent.ambientLight, ambientLight);
 	VectorCopy(ent.directedLight, directedLight);
 	VectorCopy(ent.lightDir, lightDir);

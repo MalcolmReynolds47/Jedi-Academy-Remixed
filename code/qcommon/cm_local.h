@@ -99,6 +99,7 @@ typedef struct {
 
 typedef struct {
 	char		name[MAX_QPATH];
+	unsigned checksum; // This map owns its source identity, including cached reloads.
 
 	int			numShaders;
 	//dshader_t	*shaders;
@@ -173,6 +174,9 @@ typedef struct
 } sphere_t;
 
 typedef struct traceWork_s {
+	const struct JarSweepHull* workshopHull;
+	const clipMap_t* workshopMap;
+	vec3_t workshopCenter;
 	vec3_t		start;
 	vec3_t		end;
 	vec3_t		size[2];	// size of the box being swept through the model
@@ -201,6 +205,8 @@ typedef struct traceWork_s {
 	// make sure nothing goes under here for Ghoul2 collision purposes
 } traceWork_t;
 
+float CM_WorkshopHullMin(const traceWork_t& trace,const vec3_t normal);
+
 typedef struct leafList_s {
 	int		count;
 	int		maxcount;
@@ -222,6 +228,7 @@ void CM_CleanLeafCache(void);
 
 // cm_load.c
 void CM_ModelBounds( clipMap_t &cm, clipHandle_t model, vec3_t mins, vec3_t maxs );
+void CM_GetWorldBounds(vec3_t mins, vec3_t maxs);
 
 // cm_patch.c
 

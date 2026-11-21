@@ -152,7 +152,7 @@ qboolean	Sys_IsLANAddress (netadr_t adr);
 void		Sys_ShowIP(void);
 
 
-#define	MAX_MSGLEN				(1*17408)		// max length of a message, which may
+#define	MAX_MSGLEN				JAR_MESSAGE_BYTES		// max length of a message, which may
 //#define	MAX_MSGLEN				(3*16384)		// max length of a message, which may
 											// be fragmented into multiple packets
 
@@ -196,7 +196,7 @@ PROTOCOL
 ==============================================================
 */
 
-#define	PROTOCOL_VERSION	40
+#define	PROTOCOL_VERSION	1040 // JA:R local protocol, incompatible with stock
 
 #define	PORT_SERVER			27960
 
@@ -361,6 +361,8 @@ modules of the program.
 */
 
 cvar_t *Cvar_Get( const char *var_name, const char *value, int flags );
+// Read registered/latched values without consuming the pending value as Cvar_Get does.
+cvar_t *Cvar_FindVar( const char *var_name );
 // creates the variable if it doesn't exist, or returns the existing one
 // if it exists, the value will not be changed, but flags will be ORed in
 // that allows variables to be unarchived without needing bitflags

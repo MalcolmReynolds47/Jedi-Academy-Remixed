@@ -33,6 +33,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 typedef struct gentity_s gentity_t;
 typedef struct gclient_s gclient_t;
+#include "g_jar_sandbox.h"
 
 //npc stuff
 #include "b_public.h"
@@ -387,6 +388,10 @@ struct gentity_s {
 	int			genericValue14;
 	int			genericValue15;
 
+	// Immutable Sandbox projectile provenance, separate from mutable native ownership.
+	int			jarShooterSource;
+	unsigned	jarShooterEpoch;
+
 	char		*soundSet;
 
 	qboolean	isSaberEntity;
@@ -485,6 +490,7 @@ typedef struct clientPersistant_s {
 	usercmd_t	cmd;				// we would lose angles if not persistant
 	qboolean	localClient;		// true if "ip" info key is "localhost"
 	qboolean	initialSpawn;		// the first spawn should be at a cool location
+	qboolean jarContinuousFists;
 	qboolean	predictItemPickup;	// based on cg_predictItems userinfo
 	qboolean	pmoveFixed;			//
 	char		netname[MAX_NETNAME];
@@ -870,6 +876,7 @@ typedef struct {
 	int		cs_index;
 	vec3_t	origin;
 } locationData_t;
+locationData_t *JAR_MP_Location(const gentity_t *subject, locationData_t *authored, float authoredDistance);
 
 typedef struct level_locals_s {
 	struct gclient_s	*clients;		// [maxclients]
@@ -1058,6 +1065,7 @@ void RespawnItem( gentity_t *ent );
 
 gentity_t *Drop_Item( gentity_t *ent, gitem_t *item, float angle );
 gentity_t *LaunchItem( gitem_t *item, vec3_t origin, vec3_t velocity );
+gentity_t *JAR_MP_TryLaunchItem(gitem_t *item, const vec3_t origin, const vec3_t velocity);
 void G_SpawnItem (gentity_t *ent, gitem_t *item);
 void FinishSpawningItem( gentity_t *ent );
 void	Add_Ammo (gentity_t *ent, int weapon, int count);
@@ -1100,6 +1108,7 @@ void	G_SetMovedir ( vec3_t angles, vec3_t movedir);
 void	G_SetAngles( gentity_t *ent, vec3_t angles );
 
 void	G_InitGentity( gentity_t *e );
+gentity_t *G_TrySpawn(void);
 gentity_t	*G_Spawn (void);
 gentity_t *G_TempEntity( vec3_t origin, int event );
 gentity_t	*G_PlayEffect(int fxID, vec3_t org, vec3_t ang);
@@ -1113,6 +1122,7 @@ void	TryUse( gentity_t *ent );
 void	G_SendG2KillQueue(void);
 void	G_KillG2Queue(int entNum);
 void	G_FreeEntity( gentity_t *e );
+void	AI_ForgetGroupEntity( gentity_t *entity );
 qboolean	G_EntitiesFree( void );
 
 qboolean G_ActivateBehavior (gentity_t *self, int bset );
@@ -1183,6 +1193,7 @@ extern int gGAvoidDismember;
 #define DAMAGE_SABER_KNOCKBACK2		0x00020000	// Check the attacker's second saber for a knockbackScale
 #define DAMAGE_SABER_KNOCKBACK1_B2	0x00040000	// Check the attacker's first saber for a knockbackScale2
 #define DAMAGE_SABER_KNOCKBACK2_B2	0x00080000	// Check the attacker's second saber for a knockbackScale2
+#define DAMAGE_JAR_CARGO_WALKER_SHOT 0x00100000 // MP walker projectile provenance, used only by the portable cargo crate
 //
 // g_exphysics.c
 //
@@ -1197,6 +1208,10 @@ void G_RunMissile( gentity_t *ent );
 
 gentity_t *CreateMissile( vec3_t org, vec3_t dir, float vel, int life,
 							gentity_t *owner, qboolean altFire);
+gentity_t *G_TryCreateMissile(vec3_t origin, const vec3_t direction, float speed, int life,
+							gentity_t *owner, qboolean altFire);
+gentity_t *G_TryMissileEvent(const vec3_t origin, int event);
+void G_ShooterBounceSound(const gentity_t *missile);
 void G_BounceProjectile( vec3_t start, vec3_t impact, vec3_t dir, vec3_t endout );
 void G_ExplodeMissile( gentity_t *ent );
 

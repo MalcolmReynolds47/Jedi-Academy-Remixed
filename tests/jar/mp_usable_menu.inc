@@ -1,0 +1,9 @@
+static void UsableMenuCases(void){
+ args[1]="81";CG_JAR_ContextDown();args[1]="64";args[2]="0";args[3]="1";args[4]="99";args[5]="1";args[6]="0";args[7]="6783";args[8]="1";args[9]="0";args[10]="80";args[11]=args[12]="0";CG_JAR_Selection();
+ args[1]="99";args[2]="29";args[3]=args[4]=args[6]=args[9]=args[11]=args[13]=args[14]="0";args[5]="80";args[7]="50";args[8]="100";args[10]="-";args[12]="1";CG_JAR_Controller();assert(contextControllerKind==29&&contextController.count==50&&contextController.active);contextPage=1;CG_JAR_Draw();
+ Click(450,154);assert(!strcmp(request,"jar_property controller_usablemode 99"));Click(450,182);assert(!strcmp(request,"jar_property controller_visible 99"));Click(450,210);assert(contextEditing==203);Q_strncpyz(contextInput,"200",sizeof(contextInput));CG_JAR_Key(A_ENTER,qtrue);assert(!strcmp(request,"jar_property controller_count_200 99"));
+ Click(450,238);assert(!strcmp(request,"jar_property controller_playeruse 99"));Click(550,238);assert(!strcmp(request,"jar_property controller_npconly 99"));Click(450,266);assert(!strcmp(request,"jar_property controller_blockcheck 99"));Click(450,294);assert(!strcmp(request,"jar_property controller_rearm 99"));Click(550,294);assert(!strcmp(request,"jar_property controller_enabled 99"));
+ args[5]="88";args[3]="1000";args[6]="2";CG_JAR_Controller();assert(contextController.repeats==2);Click(450,182);assert(contextEditing==201);Q_strncpyz(contextInput,"500",sizeof(contextInput));CG_JAR_Key(A_ENTER,qtrue);assert(!strcmp(request,"jar_property controller_delay_500 99"));
+ args[12]="0";CG_JAR_Controller();assert(contextController.active);args[12]="1";args[5]="128";CG_JAR_Controller();assert(contextController.flags==88);CG_JAR_Key(A_ESCAPE,qtrue);
+ puts("MP usable UI: typed toggle/button, health, input policy, blocked-space, rearm/enabled controls and state validation passed.");
+}

@@ -21,9 +21,17 @@ if(NOT InOpenJK)
 	message(FATAL_ERROR "Use the top-level cmake script!")
 endif(NOT InOpenJK)
 
-set(MPSharedDefines ${SharedDefines})
+set(MPSharedDefines ${SharedDefines} JAR_MP)
+set(JKAInstallDir "JediAcademy/JediAcademyRemixedMP")
 
 #    Add Game Project
+if((BuildMPGame OR BuildMPEngine OR BuildMPDed) AND NOT TARGET box3d)
+    add_subdirectory("${CMAKE_SOURCE_DIR}/lib/box3d" "${CMAKE_BINARY_DIR}/box3d")
+    set_property(TARGET box3d PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+    if(MSVC)
+        target_compile_options(box3d PRIVATE /fp:precise)
+    endif()
+endif()
 if(BuildMPGame)
 	add_subdirectory("${MPDir}/game")
 endif(BuildMPGame)
@@ -181,6 +189,7 @@ if(BuildMPEngine OR BuildMPDed)
 
 	# Include directories
 	set(MPEngineAndDedIncludeDirectories ${MPDir} ${SharedDir} ${GSLIncludeDirectory} ${CMAKE_BINARY_DIR}/shared)
+	list(APPEND MPEngineAndDedLibraries box3d)
 
 	# Transparently use our bundled minizip.
 	list(APPEND MPEngineAndDedIncludeDirectories ${MINIZIP_INCLUDE_DIRS})
@@ -227,6 +236,9 @@ if(BuildMPEngine OR BuildMPDed)
 		"${MPDir}/qcommon/cm_public.h"
 		"${MPDir}/qcommon/cm_test.cpp"
 		"${MPDir}/qcommon/cm_trace.cpp"
+		"${MPDir}/qcommon/jar_mp_model_hull.cpp"
+		"${MPDir}/qcommon/jar_mp_model_hull.h"
+		"${SPDir}/game/jar_physics.cpp"
 		"${MPDir}/qcommon/cmd.cpp"
 		"${MPDir}/qcommon/common.cpp"
 		"${MPDir}/qcommon/cvar.cpp"
@@ -426,6 +438,7 @@ if(BuildMPEngine)
 	set(MPEngineClientFiles
 		"${MPDir}/client/cl_avi.cpp"
 		"${MPDir}/client/cl_cgame.cpp"
+		"${MPDir}/client/jar_soundscape.cpp"
 		"${MPDir}/client/cl_cgameapi.cpp"
 		"${MPDir}/client/cl_cgameapi.h"
 		"${MPDir}/client/cl_cin.cpp"

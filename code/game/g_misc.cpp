@@ -24,7 +24,12 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // g_misc.c
 
 #include "g_local.h"
+#include "g_start_marker.h"
+#include "g_sandbox_teleport.h"
+#include "g_sandbox_station.h"
+#include "g_subbsp_ownership.h"
 #include "g_functions.h"
+#include "g_workshop.h"
 #include "g_nav.h"
 #include "g_items.h"
 #include "../cgame/cg_local.h"
@@ -36,6 +41,7 @@ extern void SetMiscModelDefaults( gentity_t *ent, useFunc_t use_func, const char
 									qboolean take_damage, qboolean damage_model);
 
 #define MAX_AMMO_GIVE 4
+#include "g_sandbox_station_use.inc"
 
 
 
@@ -190,6 +196,14 @@ void SP_light( gentity_t *self ) {
 
 void misc_dlight_use ( gentity_t *ent, gentity_t *other, gentity_t *activator )
 {
+ // Portable workshop lights have no baked lightstyle. Use the native dynamic
+ // light field instead of changing lightstyle zero for the entire map.
+ if(ent->targetname && !strncmp(ent->targetname,"jar_sb_",7) && ent->startRGBA[3]>0){
+  ent->misc_dlight_active=ent->misc_dlight_active?qfalse:qtrue;
+  ent->s.constantLight=ent->misc_dlight_active?(127 | (178<<8) | (255<<16) | (40<<24)):0;
+  gi.linkentity(ent);return;
+ }
+
 	G_ActivateBehavior(ent,BSET_USE);
 
 	ent->misc_dlight_active = (qboolean)!ent->misc_dlight_active;	//toggle
@@ -205,42 +219,7 @@ TELEPORTERS
 =================================================================================
 */
 
-void TeleportPlayer( gentity_t *player, vec3_t origin, vec3_t angles )
-{
-	if ( player->NPC && ( player->NPC->aiFlags&NPCAI_FORM_TELE_NAV ) )
-	{
-		//My leader teleported, I was trying to catch up, take this off
-		player->NPC->aiFlags &= ~NPCAI_FORM_TELE_NAV;
-
-	}
-
-	// unlink to make sure it can't possibly interfere with G_KillBox
-	gi.unlinkentity (player);
-
-	VectorCopy ( origin, player->client->ps.origin );
-	player->client->ps.origin[2] += 1;
-	VectorCopy ( player->client->ps.origin, player->currentOrigin );
-
-	// spit the player out
-	AngleVectors( angles, player->client->ps.velocity, NULL, NULL );
-	VectorScale( player->client->ps.velocity, 0, player->client->ps.velocity );
-	//player->client->ps.pm_time = 160;		// hold time
-	//player->client->ps.pm_flags |= PMF_TIME_KNOCKBACK;
-
-	// toggle the teleport bit so the client knows to not lerp
-	player->client->ps.eFlags ^= EF_TELEPORT_BIT;
-
-	// set angles
-	SetClientViewAngle( player, angles );
-
-	// kill anything at the destination
-	G_KillBox (player);
-
-	// save results of pmove
-	PlayerStateToEntityState( &player->client->ps, &player->s );
-
-	gi.linkentity (player);
-}
+#include "g_native_teleport.inc"
 
 void TeleportMover( gentity_t *mover, vec3_t origin, vec3_t diffAngles, qboolean snapAngle )
 {//FIXME: need an effect
@@ -316,7 +295,7 @@ void teleporter_touch (gentity_t *self, gentity_t *other, trace_t *trace)
 		return;
 	}
 
-	TeleportPlayer( other, dest->s.origin, dest->s.angles );
+	if (!G_JAR_VisitStart(dest, other)) TeleportPlayer( other, dest->s.origin, dest->s.angles );
 }
 
 /*QUAK-D misc_teleporter (1 0 0) (-32 -32 -24) (32 32 -16)
@@ -426,6 +405,8 @@ void SP_misc_model_static(gentity_t *ent)
 }
 
 //===========================================================
+
+#include "g_portal.inc"
 
 void setCamera ( gentity_t *ent )
 {
@@ -586,62 +567,8 @@ void G_SubBSPSpawnEntitiesFromString(const char *entityString, vec3_t posOffset,
 /*QUAKED misc_bsp (1 0 0) (-16 -16 -16) (16 16 16)
 "bspmodel"		arbitrary .bsp file to display
 */
-void SP_misc_bsp(gentity_t *ent)
-{
-	char	temp[MAX_QPATH];
-	char	*out;
-	float	newAngle;
-	int		tempint;
-
-	G_SpawnFloat( "angle", "0", &newAngle );
-	if (newAngle != 0.0)
-	{
-		ent->s.angles[1] = newAngle;
-	}
-	// don't support rotation any other way
-	ent->s.angles[0] = 0.0;
-	ent->s.angles[2] = 0.0;
-
-	G_SpawnString("bspmodel", "", &out);
-
-	ent->s.eFlags = EF_PERMANENT;
-
-	// Mainly for debugging
-	G_SpawnInt( "spacing", "0", &tempint);
-	ent->s.time2 = tempint;
-	G_SpawnInt( "flatten", "0", &tempint);
-	ent->s.time = tempint;
-
-	Com_sprintf(temp, MAX_QPATH, "#%s", out);
-	gi.SetBrushModel( ent, temp );  // SV_SetBrushModel -- sets mins and maxs
-	G_BSPIndex(temp);
-
-	level.mNumBSPInstances++;
-	Com_sprintf(temp, MAX_QPATH, "%d-", level.mNumBSPInstances);
-	VectorCopy(ent->s.origin, level.mOriginAdjust);
-	level.mRotationAdjust = ent->s.angles[1];
-	level.mTargetAdjust = temp;
-	level.hasBspInstances = qtrue;
-	level.mBSPInstanceDepth++;
-
-	VectorCopy( ent->s.origin, ent->s.pos.trBase );
-	VectorCopy( ent->s.origin, ent->currentOrigin );
-	VectorCopy( ent->s.angles, ent->s.apos.trBase );
-	VectorCopy( ent->s.angles, ent->currentAngles );
-
-	ent->s.eType = ET_MOVER;
-
-	gi.linkentity (ent);
-
-	const char *ents = gi.SetActiveSubBSP(ent->s.modelindex);
-	if (ents)
-	{
-		G_SubBSPSpawnEntitiesFromString(ents, ent->s.origin, ent->s.angles);
-	}
-	gi.SetActiveSubBSP(-1);
-
-	level.mBSPInstanceDepth--;
-}
+#include "g_subbsp_root.inc"
+#include "g_bsp_section.inc"
 
 #define MAX_INSTANCE_TYPES		16
 
@@ -711,6 +638,7 @@ To have the portal sky fogged, enter any of the following values:
 rww - NOTE: fog doesn't work with these currently (at least not in this way).
 Use a fog brush instead.
 */
+#include "g_skyportal.inc"
 void SP_misc_skyportal (gentity_t *ent)
 {
 	vec3_t	fogv;	//----(SA)
@@ -722,213 +650,13 @@ void SP_misc_skyportal (gentity_t *ent)
 	isfog += G_SpawnInt ("fognear", "0", &fogn);
 	isfog += G_SpawnInt ("fogfar", "300", &fogf);
 
-	gi.SetConfigstring( CS_SKYBOXORG, va("%.2f %.2f %.2f %i %.2f %.2f %.2f %i %i", ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], isfog, fogv[0], fogv[1], fogv[2], fogn, fogf ) );
+	G_SetSkyPortal( va("%.2f %.2f %.2f %i %.2f %.2f %.2f %i %i", ent->s.origin[0], ent->s.origin[1], ent->s.origin[2], isfog, fogv[0], fogv[1], fogv[2], fogn, fogf ) );
 
 	ent->e_ThinkFunc = thinkF_G_PortalifyEntities;
 	ent->nextthink = level.time + 1050; //give it some time first so that all other entities are spawned.
 }
 
-extern qboolean G_ClearViewEntity( gentity_t *ent );
-extern void G_SetViewEntity( gentity_t *self, gentity_t *viewEntity );
-extern void SP_fx_runner( gentity_t *ent );
-void camera_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int damage, int mod,int dFlags,int hitLoc )
-{
-	if ( player && player->client && player->client->ps.viewEntity == self->s.number )
-	{
-		G_UseTargets2( self, player, self->target4 );
-		G_ClearViewEntity( player );
-		G_Sound( player, self->soundPos2 );
-	}
-	G_UseTargets2( self, player, self->closetarget );
-	//FIXME: explosion fx/sound
-	//leave sparks at origin- where base's pole is still at?
-	gentity_t *sparks = G_Spawn();
-	if ( sparks )
-	{
-		sparks->fxFile = "sparks/spark";
-		sparks->delay = 100;
-		sparks->random = 500;
-		sparks->s.angles[0] = 180;//point down
-		VectorCopy( self->s.origin, sparks->s.origin );
-		SP_fx_runner( sparks );
-	}
-
-	//bye!
-	self->takedamage = qfalse;
-	self->contents = 0;
-	self->s.eFlags |= EF_NODRAW;
-	self->s.modelindex = 0;
-}
-
-void camera_use( gentity_t *self, gentity_t *other, gentity_t *activator )
-{
-	if ( !activator || !activator->client || activator->s.number )
-	{//really only usable by the player
-		return;
-	}
-	self->painDebounceTime = level.time + (self->wait*1000);//FRAMETIME*5;//don't check for player buttons for 500 ms
-
-	// FIXME: I guess we are allowing them to switch to a dead camera.  Maybe we should conditionally do this though?
-	if ( /*self->health <= 0 ||*/ (player && player->client && player->client->ps.viewEntity == self->s.number) )
-	{//I'm already viewEntity, or I'm destroyed, find next
-		gentity_t *next = NULL;
-		if ( self->target2 != NULL )
-		{
-			next = G_Find( NULL, FOFS(targetname), self->target2 );
-		}
-		if ( next )
-		{//found another one
-			if ( !Q_stricmp( "misc_camera", next->classname ) )
-			{//make sure it's another camera
-				camera_use( next, other, activator );
-			}
-		}
-		else //if ( self->health > 0 )
-		{//I was the last (only?) one, clear out the viewentity
-			G_UseTargets2( self, activator, self->target4 );
-			G_ClearViewEntity( activator );
-			G_Sound( activator, self->soundPos2 );
-		}
-	}
-	else
-	{//set me as view entity
-		G_UseTargets2( self, activator, self->target3 );
-		self->s.eFlags |= EF_NODRAW;
-		self->s.modelindex = 0;
-		G_SetViewEntity( activator, self );
-		G_Sound( activator, self->soundPos1 );
-	}
-}
-
-void camera_aim( gentity_t *self )
-{
-	self->nextthink = level.time + FRAMETIME;
-	if ( player && player->client && player->client->ps.viewEntity == self->s.number )
-	{//I am the viewEntity
-		if ( player->client->usercmd.forwardmove || player->client->usercmd.rightmove || player->client->usercmd.upmove )
-		{//player wants to back out of camera
-			G_UseTargets2( self, player, self->target4 );
-			G_ClearViewEntity( player );
-			G_Sound( player, self->soundPos2 );
-			self->painDebounceTime = level.time + (self->wait*1000);//FRAMETIME*5;//don't check for player buttons for 500 ms
-			if ( player->client->usercmd.upmove > 0 )
-			{//stop player from doing anything for a half second after
-				player->aimDebounceTime = level.time + 500;
-			}
-		}
-		else if ( self->painDebounceTime < level.time )
-		{//check for use button
-			if ( (player->client->usercmd.buttons&BUTTON_USE) )
-			{//player pressed use button, wants to cycle to next
-				camera_use( self, player, player );
-			}
-		}
-		else
-		{//don't draw me when being looked through
-			self->s.eFlags |= EF_NODRAW;
-			self->s.modelindex = 0;
-		}
-	}
-	else if ( self->health > 0 )
-	{//still alive, can draw me again
-		self->s.eFlags &= ~EF_NODRAW;
-		self->s.modelindex = self->s.modelindex3;
-	}
-	//update my aim
-	if ( self->target )
-	{
-		gentity_t *targ = G_Find( NULL, FOFS(targetname), self->target );
-		if ( targ )
-		{
-			vec3_t angles, dir;
-			VectorSubtract( targ->currentOrigin, self->currentOrigin, dir );
-			vectoangles( dir, angles );
-			//FIXME: if a G2 model, do a bone override..???
-			VectorCopy( self->currentAngles, self->s.apos.trBase );
-
-			for( int i = 0; i < 3; i++ )
-			{
-				angles[i] = AngleNormalize180( angles[i] );
-				self->s.apos.trDelta[i] = AngleNormalize180( (angles[i]-self->currentAngles[i])*10 );
-			}
-			//VectorSubtract( angles, self->currentAngles, self->s.apos.trDelta );
-			//VectorScale( self->s.apos.trDelta, 10, self->s.apos.trDelta );
-			self->s.apos.trTime = level.time;
-			self->s.apos.trDuration = FRAMETIME;
-			VectorCopy( angles, self->currentAngles );
-
-			if ( DistanceSquared( self->currentAngles, self->lastAngles ) > 0.01f ) // if it moved at all, start a loop sound? not exactly the "bestest" solution
-			{
-				self->s.loopSound = G_SoundIndex( "sound/movers/objects/cameramove_lp2" );
-			}
-			else
-			{
-				self->s.loopSound = 0; // not moving so don't bother
-			}
-
-			VectorCopy( self->currentAngles, self->lastAngles );
-			//G_SetAngles( self, angles );
-		}
-	}
-}
-/*QUAKED misc_camera (0 0 1) (-8 -8 -12) (8 8 16) VULNERABLE
-A model in the world that can be used by the player to look through it's viewpoint
-
-There will be a video overlay instead of the regular HUD and the FOV will be wider
-
-VULNERABLE - allow camera to be destroyed
-
-"target" - camera will remain pointed at this entity (if it's a train or some other moving object, it will keep following it)
-"target2" - when player is in this camera and hits the use button, it will cycle to this next camera (if no target2, returns to normal view )
-"target3" - thing to use when player enters this camera view
-"target4" - thing to use when player leaves this camera view
-"closetarget" - (sigh...) yet another target, fired this when it's destroyed
-"wait"    - how long to wait between being used (default 0.5)
-*/
-void SP_misc_camera( gentity_t *self )
-{
-	G_SpawnFloat( "wait", "0.5", &self->wait );
-
-	//FIXME: spawn base, too
-	gentity_t *base = G_Spawn();
-	if ( base )
-	{
-		base->s.modelindex = G_ModelIndex( "models/map_objects/kejim/impcam_base.md3" );
-		VectorCopy( self->s.origin, base->s.origin );
-		base->s.origin[2] += 16;
-		G_SetOrigin( base, base->s.origin );
-		G_SetAngles( base, self->s.angles );
-		gi.linkentity( base );
-	}
-	self->s.modelindex3 = self->s.modelindex = G_ModelIndex( "models/map_objects/kejim/impcam.md3" );
-	self->soundPos1 = G_SoundIndex( "sound/movers/camera_on.mp3" );
-	self->soundPos2 = G_SoundIndex( "sound/movers/camera_off.mp3" );
-	G_SoundIndex( "sound/movers/objects/cameramove_lp2" );
-
-	G_SetOrigin( self, self->s.origin );
-	G_SetAngles( self, self->s.angles );
-	self->s.apos.trType = TR_LINEAR_STOP;//TR_INTERPOLATE;//
-	self->alt_fire = qtrue;
-	VectorSet( self->mins, -8, -8, -12 );
-	VectorSet( self->maxs, 8, 8, 0 );
-	self->contents = CONTENTS_SOLID;
-	gi.linkentity( self );
-
-	self->fxID = G_EffectIndex( "sparks/spark" );
-
-	if ( self->spawnflags & 1 ) // VULNERABLE
-	{
-		self->takedamage = qtrue;
-	}
-
-	self->health = 10;
-	self->e_DieFunc = dieF_camera_die;
-
-	self->e_UseFunc = useF_camera_use;
-
-	self->e_ThinkFunc = thinkF_camera_aim;
-	self->nextthink = level.time + START_TIME_LINK_ENTS;
-}
+#include "g_security_camera.inc"
 /*
 ======================================================================
 
@@ -1002,58 +730,8 @@ health		 default = 20
 splashDamage default = 100
 splashRadius default = 200
 */
-void SP_object_cargo_barrel1(gentity_t *ent)
-{
-	if(ent->spawnflags & 8)
-	{
-		ent->s.modelindex = G_ModelIndex( "/models/mapobjects/cargo/barrel_wood2.md3" );
-//		ent->sounds = G_SoundIndex("sound/weapons/explosions/explode3.wav");
-	}
-	else if(ent->spawnflags & 2)
-	{
-		ent->s.modelindex = G_ModelIndex( "/models/mapobjects/scavenger/k_barrel.md3" );
-//		ent->sounds = G_SoundIndex("sound/weapons/explosions/explode4.wav");
-	}
-	else
-	{
-		ent->s.modelindex = G_ModelIndex( va("/models/mapobjects/cargo/barrel%i.md3", Q_irand( 0, 2 )) );
-//		ent->sounds = G_SoundIndex("sound/weapons/explosions/explode1.wav");
-	}
+#include "g_cargo_barrel.inc"
 
-	ent->contents = CONTENTS_SOLID|CONTENTS_OPAQUE;
-
-	if ( ent->spawnflags & 1 )
-	{
-		VectorSet (ent->mins, -8, -8, -16);
-		VectorSet (ent->maxs, 8, 8, 8);
-	}
-	else
-	{
-		VectorSet (ent->mins, -16, -16, -16);
-		VectorSet (ent->maxs, 16, 16, 29);
-	}
-
-	G_SetOrigin( ent, ent->s.origin );
-	VectorCopy( ent->s.angles, ent->s.apos.trBase );
-
-	if(!ent->health)
-		ent->health = 20;
-
-	if(!ent->splashDamage)
-		ent->splashDamage = 100;
-
-	if(!ent->splashRadius)
-		ent->splashRadius = 200;
-
-	ent->takedamage = qtrue;
-
-	ent->e_DieFunc = dieF_ExplodeDeath_Wait;
-
-	if(ent->targetname)
-		ent->e_UseFunc = useF_GoExplodeDeath;
-
-	gi.linkentity (ent);
-}
 
 
 /*QUAKED misc_dlight (0.2 0.8 0.2) (-4 -4 -4) (4 4 4) STARTOFF FADEON FADEOFF PULSE
@@ -1660,61 +1338,7 @@ void spawn_ammo_crystal_trigger( gentity_t *ent )
 	gi.linkentity( other );
 }
 
-void misc_replicator_item_remove ( gentity_t *self, gentity_t *other, gentity_t *activator )
-{
-	self->s.eFlags |= EF_NODRAW;
-	//self->contents = 0;
-	self->s.modelindex = 0;
-	self->e_UseFunc = useF_misc_replicator_item_spawn;
-	//FIXME: pickup sound?
-	if ( activator->client )
-	{
-		activator->health += 5;
-		if ( activator->health > activator->client->ps.stats[STAT_MAX_HEALTH] )	// Past max health
-		{
-			activator->health = activator->client->ps.stats[STAT_MAX_HEALTH];
-		}
-	}
-}
-
-void misc_replicator_item_finish_spawn( gentity_t *self )
-{
-	//self->contents = CONTENTS_ITEM;
-	//FIXME: blinks out for a couple frames when transporter effect is done?
-	self->e_UseFunc = useF_misc_replicator_item_remove;
-}
-
-void misc_replicator_item_spawn ( gentity_t *self, gentity_t *other, gentity_t *activator )
-{
-	switch ( Q_irand( 1, self->count ) )
-	{
-	case 1:
-		self->s.modelindex = self->bounceCount;
-		break;
-	case 2:
-		self->s.modelindex = self->fly_sound_debounce_time;
-		break;
-	case 3:
-		self->s.modelindex = self->painDebounceTime;
-		break;
-	case 4:
-		self->s.modelindex = self->disconnectDebounceTime;
-		break;
-	case 5:
-		self->s.modelindex = self->attackDebounceTime;
-		break;
-	case 6://max
-		self->s.modelindex = self->pushDebounceTime;
-		break;
-	}
-	self->s.eFlags &= ~EF_NODRAW;
-	self->e_ThinkFunc = thinkF_misc_replicator_item_finish_spawn;
-	self->nextthink = level.time + 4000;//shorter?
-	self->e_UseFunc = useF_NULL;
-
-	gentity_t *tent = G_TempEntity( self->currentOrigin, EV_REPLICATOR );
-	tent->owner = self;
-}
+#include "g_replicator_use.inc"
 
 /*QUAK-ED misc_replicator_item (0.2 0.8 0.2) (-4 -4 0) (4 4 8)
 When used. this will "spawn" an entity with a random model from the ones provided below...
@@ -1877,114 +1501,7 @@ void SP_misc_trip_mine( gentity_t *self )
 	gi.linkentity( self );
 }
 
-/*QUAKED misc_maglock (0 .5 .8) (-8 -8 -8) (8 8 8) x x x x x x x x
-Place facing a door (using the angle, not a targetname) and it will lock that door.  Can only be destroyed by lightsaber and will automatically unlock the door it's attached to
-
-NOTE: place these half-way in the door to make it flush with the door's surface.
-
-"target"	thing to use when destoryed (not doors - it automatically unlocks the door it was angled at)
-"health"	default is 10
-*/
-void maglock_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int damage, int mod, int dFlags, int hitLoc )
-{
-	//unlock our door if we're the last lock pointed at the door
-	if ( self->activator )
-	{
-		self->activator->lockCount--;
-		if ( !self->activator->lockCount )
-		{
-			self->activator->svFlags &= ~SVF_INACTIVE;
-		}
-	}
-
-	//use targets
-	G_UseTargets( self, attacker );
-	//die
-	WP_Explode( self );
-}
-void SP_misc_maglock ( gentity_t *self )
-{
-	//NOTE: May have to make these only work on doors that are either untargeted
-	//		or are targeted by a trigger, not doors fired off by scripts, counters
-	//		or other such things?
-	self->s.modelindex = G_ModelIndex( "models/map_objects/imp_detention/door_lock.md3" );
-	self->fxID = G_EffectIndex( "maglock/explosion" );
-
-	G_SetOrigin( self, self->s.origin );
-
-	self->e_ThinkFunc = thinkF_maglock_link;
-	//FIXME: for some reason, when you re-load a level, these fail to find their doors...?  Random?  Testing an additional 200ms after the START_TIME_FIND_LINKS
-	self->nextthink = level.time + START_TIME_FIND_LINKS+200;//START_TIME_FIND_LINKS;//because we need to let the doors link up and spawn their triggers first!
-}
-void maglock_link( gentity_t *self )
-{
-	//find what we're supposed to be attached to
-	vec3_t	forward, start, end;
-	trace_t	trace;
-
-	AngleVectors( self->s.angles, forward, NULL, NULL );
-	VectorMA( self->s.origin, 128, forward, end );
-	VectorMA( self->s.origin, -4, forward, start );
-
-	gi.trace( &trace, start, vec3_origin, vec3_origin, end, self->s.number, MASK_SHOT, (EG2_Collision)0, 0 );
-
-	if ( trace.allsolid || trace.startsolid )
-	{
-		Com_Error( ERR_DROP,"misc_maglock at %s in solid\n", vtos(self->s.origin) );
-		G_FreeEntity( self );
-		return;
-	}
-	if ( trace.fraction == 1.0 )
-	{
-		self->e_ThinkFunc = thinkF_maglock_link;
-		self->nextthink = level.time + 100;
-		/*
-		Com_Error( ERR_DROP,"misc_maglock at %s pointed at no surface\n", vtos(self->s.origin) );
-		G_FreeEntity( self );
-		*/
-		return;
-	}
-	gentity_t *traceEnt = &g_entities[trace.entityNum];
-	if ( trace.entityNum >= ENTITYNUM_WORLD || !traceEnt || Q_stricmp( "func_door", traceEnt->classname ) )
-	{
-		self->e_ThinkFunc = thinkF_maglock_link;
-		self->nextthink = level.time + 100;
-		//Com_Error( ERR_DROP,"misc_maglock at %s not pointed at a door\n", vtos(self->s.origin) );
-		//G_FreeEntity( self );
-		return;
-	}
-
-	//check the traceEnt, make sure it's a door and give it a lockCount and deactivate it
-	//find the trigger for the door
-	self->activator = G_FindDoorTrigger( traceEnt );
-	if ( !self->activator )
-	{
-		self->activator = traceEnt;
-	}
-	self->activator->lockCount++;
-	self->activator->svFlags |= SVF_INACTIVE;
-
-	//now position and orient it
-	vectoangles( trace.plane.normal, end );
-	G_SetOrigin( self, trace.endpos );
-	G_SetAngles( self, end );
-
-	//make it hittable
-	//FIXME: if rotated/inclined this bbox may be off... but okay if we're a ghoul model?
-	//self->s.modelindex = G_ModelIndex( "models/map_objects/imp_detention/door_lock.md3" );
-	VectorSet( self->mins, -8, -8, -8 );
-	VectorSet( self->maxs, 8, 8, 8 );
-	self->contents = CONTENTS_CORPSE;
-
-	//make it destroyable
-	self->flags |= FL_SHIELDED;//only damagable by lightsabers
-	self->takedamage = qtrue;
-	self->health = 10;
-	self->e_DieFunc = dieF_maglock_die;
-	//self->fxID = G_EffectIndex( "maglock/explosion" );
-
-	gi.linkentity( self );
-}
+#include "g_maglock.inc"
 
 /*
 ================
@@ -2018,7 +1535,7 @@ void EnergyShieldStationSettings(gentity_t *ent)
 shield_power_converter_use
 ================
 */
-void shield_power_converter_use( gentity_t *self, gentity_t *other, gentity_t *activator)
+static void shield_power_converter_dispense( gentity_t *self, gentity_t *other, gentity_t *activator)
 {
 	int dif,add;
 
@@ -2100,6 +1617,12 @@ void shield_power_converter_use( gentity_t *self, gentity_t *other, gentity_t *a
 	}
 }
 
+
+void shield_power_converter_use(gentity_t* self,gentity_t* other,gentity_t* activator)
+{
+	if(G_SandboxStation(*self))sandboxStationUse(self,other,activator,shield_power_converter_dispense);
+	else shield_power_converter_dispense(self,other,activator);
+}
 
 /*QUAKED misc_model_shield_power_converter (1 0 0) (-16 -16 -16) (16 16 16) x x x USETARGET
 model="models/items/psd_big.md3"
@@ -2364,6 +1887,7 @@ void EnergyAmmoStationSettings(gentity_t *ent)
 //------------------------------------------------------------------
 void poll_converter( gentity_t *self )
 {
+	if(G_SandboxStation(*self)){G_SandboxStationPoll(*self);return;}
 	self->s.loopSound = 0;
 	self->nextthink = 0;
 	self->e_ThinkFunc = thinkF_NULL;
@@ -2374,7 +1898,7 @@ void poll_converter( gentity_t *self )
 ammo_power_converter_use
 ================
 */
-void ammo_power_converter_use( gentity_t *self, gentity_t *other, gentity_t *activator)
+static void ammo_power_converter_dispense( gentity_t *self, gentity_t *other, gentity_t *activator)
 {
 	int			add;
 	int			difBlaster,difPowerCell,difMetalBolts;
@@ -2479,6 +2003,12 @@ void ammo_power_converter_use( gentity_t *self, gentity_t *other, gentity_t *act
 	}
 }
 
+void ammo_power_converter_use(gentity_t* self,gentity_t* other,gentity_t* activator)
+{
+	if(G_SandboxStation(*self))sandboxStationUse(self,other,activator,ammo_power_converter_dispense);
+	else ammo_power_converter_dispense(self,other,activator);
+}
+
 /*QUAKED misc_model_ammo_power_converter (1 0 0) (-16 -16 -16) (16 16 16) x x x USETARGET
 model="models/items/power_converter.md3"
 Gives ammo energy when used.
@@ -2546,6 +2076,8 @@ void SP_misc_ammo_floor_unit( gentity_t *ent )
 welder_think
 ================
 */
+#include "g_welder.inc"
+
 void welder_think( gentity_t *self )
 {
 	self->nextthink = level.time + 200;
@@ -2590,6 +2122,7 @@ welder_use
 */
 void welder_use( gentity_t *self, gentity_t *other, gentity_t *activator )
 {
+ if(G_WelderPortable(*self)){G_WelderUse(self);return;}
 	// Toggle on and off
 	if( self->spawnflags & 1 )
 	{
@@ -2613,6 +2146,7 @@ START_OFF  - welder starts off, using it toggles it on/off
 //------------------------------------------------------------
 void SP_misc_model_welder( gentity_t *ent )
 {
+ if(G_WelderSpawn(ent))return;
 	VectorSet( ent->mins, 336, -16, 0 );
 	VectorSet( ent->maxs, 368, 16, 32 );
 
@@ -2643,8 +2177,11 @@ void SP_misc_model_welder( gentity_t *ent )
 jabba_cam_use
 ================
 */
+#include "g_door_camera.inc"
+
 void jabba_cam_use( gentity_t *self, gentity_t *other, gentity_t *activator )
 {
+ if(G_DoorCameraPortable(*self)){G_DoorCameraUse(self);return;}
 	if( self->spawnflags & 1 )
 	{
 		self->spawnflags &= ~1;
@@ -2672,6 +2209,7 @@ The eye camera that popped out of Jabba's front door
 void SP_misc_model_jabba_cam( gentity_t *ent )
 //-----------------------------------------------------
 {
+ if(G_DoorCameraPortable(*ent)){G_DoorCameraSpawn(ent);return;}
 
 	VectorSet( ent->mins, -60.0f, -8.0f, 0.0f );
 	VectorSet( ent->maxs, 60.0f, 8.0f, 16.0f );
@@ -2847,8 +2385,10 @@ NON_SOLID - can only be shot
 */
 
 //------------------------------------------------------------
+#include "g_crystal_crate.inc"
 void CrystalCratePain( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, const vec3_t point, int damage, int mod, int hitLoc )
 {
+ if(G_CrystalCratePain(self))return;
 	vec3_t pt;
 
 	VectorCopy( self->currentOrigin, pt );
@@ -2865,6 +2405,7 @@ void CrystalCratePain( gentity_t *self, gentity_t *inflictor, gentity_t *attacke
 //------------------------------------------------------------
 void SP_misc_crystal_crate( gentity_t *ent )
 {
+ if(G_CrystalCratePortable(*ent)){G_CrystalCrateSpawn(ent);return;}
 	G_SpawnInt( "health", "80", &ent->health );
 	G_SpawnInt( "splashRadius", "80", &ent->splashRadius );
 	G_SpawnInt( "splashDamage", "40", &ent->splashDamage );
@@ -3139,8 +2680,10 @@ extern int	G_FindConfigstringIndex( const char *name, int start, int max, qboole
 Determines a region to check for weather contents - (optional, used to reduce load times)
 Place surrounding your inside/outside brushes.  It will not check for weather contents outside of these zones.
 */
+#include "g_weather.h"
 void SP_misc_weather_zone( gentity_t *ent )
 {
+ if(G_WeatherSpawnPortable(ent))return;
 	gi.SetBrushModel(ent, ent->model);
 
 	char	temp[256];
@@ -3154,7 +2697,4 @@ void SP_misc_weather_zone( gentity_t *ent )
 	G_FreeEntity(ent);
 }
 
-void SP_misc_cubemap( gentity_t *ent )
-{
-	G_FreeEntity( ent );
-}
+#include "g_reflection_probe.inc"

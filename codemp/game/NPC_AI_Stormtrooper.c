@@ -770,7 +770,7 @@ qboolean NPC_CheckPlayerTeamStealth( void )
 	gentity_t *enemy;
 	int i;
 
-	for ( i = 0; i < ENTITYNUM_WORLD; i++ )
+	for ( i = 0; i < level.num_entities; i++ )
 	{
 		enemy = &g_entities[i];
 

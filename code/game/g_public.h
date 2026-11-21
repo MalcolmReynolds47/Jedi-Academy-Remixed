@@ -1,3 +1,4 @@
+#include "qcommon/jar_diagnostics.h"
 /*
 ===========================================================================
 Copyright (C) 1999 - 2005, Id Software, Inc.
@@ -25,7 +26,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define __G_PUBLIC_H__
 // g_public.h -- game module information visible to server
 
-#define	GAME_API_VERSION	10
+#define	GAME_API_VERSION	1031 // JA:R convex Workshop placement against scenery
 
 // entity->svFlags
 // the server does not know how to interpret most of the values
@@ -150,6 +151,17 @@ typedef struct {
 	//============== general Quake services ==================
 
 	// print message on the local console
+	void (*JAR_Log)(int level, const char *category, const char *event, const char *format, ...);
+	int (*JAR_LogLevel)();
+	int (*JAR_CollisionPolygons)(int model,int mask,void* context,qboolean (*emit)(void*,int,const float*,const float*));
+	void (*JAR_WorldBounds)(vec3_t mins, vec3_t maxs);
+	void (*JAR_WorldTrace)(trace_t*, const vec3_t start, const vec3_t end,
+		const vec3_t mins, const vec3_t maxs, int model, int mask);
+	void (*JAR_TraceMovingHull)(trace_t*, const vec3_t start, const vec3_t end,
+		const vec3_t mins, const vec3_t maxs, int passEntityNum, int mask, const struct JarSweepHull&);
+	void (*JAR_TraceSceneryHull)(trace_t*, const vec3_t start, const vec3_t end,
+		const vec3_t mins, const vec3_t maxs, int passEntityNum, int mask, const struct JarSweepHull&);
+	void (*JAR_DiagnosticsCount)(JARDiagnosticCounter counter);
 	void	(*Printf)( const char *fmt, ... );
 
 	// Write a camera ref_tag to cameras.map
@@ -219,6 +231,9 @@ typedef struct {
 
 	// sets mins and maxs based on the brushmodel name
 	void	(*SetBrushModel)( gentity_t *ent, const char *name );
+	// BSPModelAt: index -1 is the main map; return 1=record, 0=end, -1=invalid.
+	int (*BSPModelAt)(int index,char*name,int size,int*first,int*count,unsigned*checksum);
+	qboolean (*RegisterBSPModel)(const char*name,int*first,int*count,unsigned*checksum);
 
 	// collision detection against all linked entities
 	void	(*trace)( trace_t *results, const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end,
@@ -315,6 +330,8 @@ Ghoul2 Insert Start
 	int			(*G2API_GetGhoul2ModelFlags)(CGhoul2Info *ghlInfo);
 
 	qboolean	(*G2API_GetAnimFileName)(CGhoul2Info *ghlInfo, char **filename);
+	qboolean (*G2API_JAR_ModelBounds)(CGhoul2Info_v&, int, vec3_t, vec3_t);
+	qboolean (*G2API_JAR_ModelGeometry)(CGhoul2Info_v&, int, vec3_t, vec3_t, void*, void (*)(void*, const float*));
 	void		(*G2API_CollisionDetect)(CCollisionRecord *collRecMap, CGhoul2Info_v &ghoul2, const vec3_t angles, const vec3_t position,
 									int frameNumber, int entNum, vec3_t rayStart, vec3_t rayEnd, vec3_t scale, CMiniHeap *G2VertSpace,
 									EG2_Collision eG2TraceType, int useLod, float fRadius);
@@ -383,6 +400,8 @@ Ghoul2 Insert End
 */
 
 
+	// Continuous pre-mix voice strength for optional facial accents.
+	float (*JAR_VoiceEnergy)(int entity);
 } game_import_t;
 
 //
@@ -400,8 +419,8 @@ typedef struct {
 
 	// ReadLevel is called after the default map information has been
 	// loaded with SpawnEntities
-	void		(*WriteLevel) (qboolean qbAutosave);
-	void		(*ReadLevel)  (qboolean qbAutosave, qboolean qbLoadTransition);
+	void		(*WriteLevel) (qboolean qbAutosave, int jarSaveVersion);
+	void		(*ReadLevel)  (qboolean qbAutosave, qboolean qbLoadTransition, int jarSaveVersion);
 	qboolean	(*GameAllowedToSaveHere)(void);
 
 	// return NULL if the client is allowed to connect, otherwise return
@@ -437,6 +456,11 @@ typedef struct {
 	struct gentity_s	*gentities;
 	int			gentitySize;
 	int			num_entities;		// current number, <= MAX_GENTITIES
+	qboolean (*PrepareWorkshopSave)(qboolean autosave);
+	void (*StageWorkshopTransition)();
+	qboolean (*TraceWorkshopProp)(const struct gentity_s*, const vec3_t origin, const vec3_t angles,
+		const vec3_t start, const vec3_t end, const vec3_t mins, const vec3_t maxs, int mask,
+		trace_t*, const JarSweepHull* movingHull);
 } game_export_t;
 
 game_export_t *GetGameApi (game_import_t *import);

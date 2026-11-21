@@ -816,7 +816,9 @@ void MSG_WriteEntity( msg_t *msg, struct entityState_s *to, int removeNum)
 		MSG_WriteBits(msg, to->number, GENTITYNUM_BITS);
 		MSG_WriteBits(msg, 0, 1); //not removed
 	}
-	assert(( to - svs.snapshotEntities ) >= 0 && ( to - svs.snapshotEntities ) < 512);
+	if (to->number < 0 || to->number >= ENTITYNUM_WORLD ||
+		to < svs.snapshotEntities || to >= svs.snapshotEntities + svs.numSnapshotEntities)
+		Com_Error(ERR_DROP, "JA:R: invalid snapshot entity");
 	MSG_WriteLong(msg, to - svs.snapshotEntities);
 }
 
@@ -832,7 +834,8 @@ void MSG_ReadEntity( msg_t *msg, entityState_t *to)
 	//No remove, read data
 	int index;
 	index = MSG_ReadLong(msg);
-	assert(index >= 0 && index < svs.numSnapshotEntities);
+	if (msg->readcount > msg->cursize || index < 0 || index >= svs.numSnapshotEntities)
+		Com_Error(ERR_DROP, "JA:R: invalid snapshot index %d", index);
 	*to = svs.snapshotEntities[index];
 }
 

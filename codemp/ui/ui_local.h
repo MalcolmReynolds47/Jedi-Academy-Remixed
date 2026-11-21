@@ -38,7 +38,7 @@ void UI_RegisterCvars( void );
 void UI_UpdateCvars( void );
 
 #define MAX_FORCE_CONFIGS		128
-#define MAX_SABER_HILTS			256 //64
+#define MAX_SABER_HILTS			1024
 
 //
 // ui_main.c
@@ -47,6 +47,7 @@ qboolean UI_FeederSelection( float feederID, int index, itemDef_t *item );
 void UI_Report( void );
 void UI_Load( void );
 void UI_LoadMenus( const char *menuFile, qboolean reset );
+void UI_LoadJARControls(qboolean inGame);
 void UI_LoadArenas( void );
 void UI_LoadForceConfig_List( void );
 

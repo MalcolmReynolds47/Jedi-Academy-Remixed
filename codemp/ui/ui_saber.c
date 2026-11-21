@@ -29,6 +29,7 @@ USER INTERFACE SABER LOADING & DISPLAY CODE
 */
 
 #include "ui_local.h"
+#include "game/jar_saber_rgb.h"
 #include "ui_shared.h"
 
 void WP_SaberLoadParms( void );
@@ -216,23 +217,6 @@ qboolean UI_SaberProperNameForSaber( const char *saberName, char *saberProperNam
 	return ret;
 }
 
-qboolean UI_SaberValidForPlayerInMP( const char *saberName )
-{
-	char allowed [8]={0};
-	if ( !WP_SaberParseParm( saberName, "notInMP", allowed ) )
-	{//not defined, default is yes
-		return qtrue;
-	}
-	if ( !allowed[0] )
-	{//not defined, default is yes
-		return qtrue;
-	}
-	else
-	{//return value
-		return ((qboolean)(atoi(allowed)==0));
-	}
-}
-
 void UI_SaberLoadParms( void )
 {
 	ui_saber_parms_parsed = qtrue;
@@ -241,7 +225,8 @@ void UI_SaberLoadParms( void )
 	WP_SaberLoadParms();
 }
 
-void UI_DoSaber( vec3_t origin, vec3_t dir, float length, float lengthMax, float radius, saber_colors_t color )
+static void UI_DoSaber( vec3_t origin, vec3_t dir, float length, float lengthMax, float radius,
+	saber_colors_t color, const byte *customRGB )
 {
 	vec3_t		mid, rgb={1,1,1};
 	qhandle_t	blade = 0, glow = 0;
@@ -295,6 +280,11 @@ void UI_DoSaber( vec3_t origin, vec3_t dir, float length, float lengthMax, float
 			break;
 	}
 
+	if (customRGB)
+	{
+		glow = trap->R_RegisterShaderNoMip("gfx/jar/saber_rgb_glow");
+		blade = trap->R_RegisterShaderNoMip("gfx/jar/saber_rgb_core");
+	}
 	memset( &saber, 0, sizeof( refEntity_t ));
 
 	// Saber glow is it's own ref type because it uses a ton of sprites, otherwise it would eat up too many
@@ -323,6 +313,8 @@ void UI_DoSaber( vec3_t origin, vec3_t dir, float length, float lengthMax, float
 	saber.reType = RT_SABER_GLOW;
 	saber.customShader = glow;
 	saber.shaderRGBA[0] = saber.shaderRGBA[1] = saber.shaderRGBA[2] = saber.shaderRGBA[3] = 0xff;
+	if (customRGB)
+		memcpy(saber.shaderRGBA, customRGB, 3);
 	//saber.renderfx = rfx;
 
 	trap->R_AddRefEntityToScene( &saber );
@@ -572,7 +564,9 @@ void UI_SaberDrawBlade( itemDef_t *item, char *saberName, int saberModel, saberT
 		return;
 	}
 
-	UI_DoSaber( bladeOrigin, axis[0], bladeLength, bladeLength, bladeRadius, bladeColor );
+	byte rgb[3];
+	UI_DoSaber(bladeOrigin, axis[0], bladeLength, bladeLength, bladeRadius, bladeColor,
+		JAR_ParseSaberRGB(bladeColorString, rgb) ? rgb : NULL);
 }
 
 void UI_GetSaberForMenu( char *saber, int saberNum )
@@ -583,20 +577,10 @@ void UI_GetSaberForMenu( char *saber, int saberNum )
 	if ( saberNum == 0 )
 	{
 		trap->Cvar_VariableStringBuffer("ui_saber", saber, MAX_QPATH );
-		if ( !UI_SaberValidForPlayerInMP( saber ) )
-		{
-			trap->Cvar_Set( "ui_saber", DEFAULT_SABER );
-			trap->Cvar_VariableStringBuffer("ui_saber", saber, MAX_QPATH );
-		}
 	}
 	else
 	{
 		trap->Cvar_VariableStringBuffer("ui_saber2", saber, MAX_QPATH );
-		if ( !UI_SaberValidForPlayerInMP( saber ) )
-		{
-			trap->Cvar_Set( "ui_saber2", DEFAULT_SABER );
-			trap->Cvar_VariableStringBuffer("ui_saber2", saber, MAX_QPATH );
-		}
 	}
 	//read this from the sabers.cfg
 	UI_SaberTypeForSaber( saber, saberTypeString );
@@ -656,21 +640,11 @@ void UI_SaberDrawBlades( itemDef_t *item, vec3_t origin, vec3_t angles )
 		else if ( (item->flags&ITF_ISSABER) )
 		{
 			trap->Cvar_VariableStringBuffer("ui_saber", saber, sizeof(saber) );
-			if ( !UI_SaberValidForPlayerInMP( saber ) )
-			{
-				trap->Cvar_Set( "ui_saber", DEFAULT_SABER );
-				trap->Cvar_VariableStringBuffer("ui_saber", saber, sizeof(saber) );
-			}
 			saberModel = 0;
 		}
 		else if ( (item->flags&ITF_ISSABER2) )
 		{
 			trap->Cvar_VariableStringBuffer("ui_saber2", saber, sizeof(saber) );
-			if ( !UI_SaberValidForPlayerInMP( saber ) )
-			{
-				trap->Cvar_Set( "ui_saber2", DEFAULT_SABER );
-				trap->Cvar_VariableStringBuffer("ui_saber2", saber, sizeof(saber) );
-			}
 			saberModel = 0;
 		}
 		else

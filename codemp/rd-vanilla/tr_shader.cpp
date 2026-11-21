@@ -24,6 +24,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // tr_shader.c -- this file deals with the parsing and definition of shaders
 
 #include "tr_local.h"
+#include "../../code/qcommon/jar_portal.h"
 
 static char *s_shaderText;
 
@@ -1193,7 +1194,12 @@ static qboolean ParseStage( shaderStage_t *stage, const char **text )
 				return qfalse;
 			}
 
-			if ( !Q_stricmp( token, "$whiteimage" ) )
+			const int slot = jar::portal::MonitorImageSlot(token);
+			if (slot >= 0)
+			{
+				stage->bundle[0].image = tr.portalMonitorImages[slot] ? tr.portalMonitorImages[slot] : tr.whiteImage;
+			}
+			else if ( !Q_stricmp( token, "$whiteimage" ) )
 			{
 				stage->bundle[0].image = tr.whiteImage;
 				continue;
@@ -2601,7 +2607,7 @@ static void FixRenderCommandList( int newShader ) {
 						sortedIndex = (( drawSurf->sort >> QSORT_SHADERNUM_SHIFT ) & (MAX_SHADERS-1));
 						if( sortedIndex >= newShader ) {
 							sortedIndex++;
-							drawSurf->sort = (sortedIndex << QSORT_SHADERNUM_SHIFT) | (entityNum << QSORT_REFENTITYNUM_SHIFT) | ( fogNum << QSORT_FOGNUM_SHIFT ) | (int)dlightMap;
+							drawSurf->sort = (uint64_t(sortedIndex) << QSORT_SHADERNUM_SHIFT) | (entityNum << QSORT_REFENTITYNUM_SHIFT) | ( fogNum << QSORT_FOGNUM_SHIFT ) | (int)dlightMap;
 						}
 					}
 					curCmd = (const void *)(ds_cmd + 1);
@@ -3333,42 +3339,12 @@ inline qboolean IsShader(shader_t *sh, const char *name, const int *lightmapInde
  an external lightmap image and/or sets the index to a valid number
  ===============
  */
-#define EXTERNAL_LIGHTMAP     "lm_%04d.tga"     // THIS MUST BE IN SYNC WITH Q3MAP2
-static inline const int *R_FindLightmap( const int *lightmapIndex )
-{
-	image_t          *image;
-	char          fileName[ MAX_QPATH ];
-
-	// don't bother with vertex lighting
-	if( *lightmapIndex < 0 )
-		return lightmapIndex;
-
-	// does this lightmap already exist?
-	if( *lightmapIndex < tr.numLightmaps && tr.lightmaps[ *lightmapIndex ] != NULL )
-		return lightmapIndex;
-
-	// bail if no world dir
-	if( tr.worldDir[0] == '\0' )
-	{
-		return lightmapsVertex;
-	}
-
-	// sync up render thread, because we're going to have to load an image
-	//R_SyncRenderThread();
-
-	// attempt to load an external lightmap
-	Com_sprintf( fileName, sizeof(fileName), "%s/" EXTERNAL_LIGHTMAP, tr.worldDir, *lightmapIndex );
-	image = R_FindImageFile( fileName, qfalse, qfalse, (qboolean)r_ext_compressed_lightmaps->integer, GL_CLAMP );
-	if( image == NULL )
-	{
-		return lightmapsVertex;
-	}
-
-	// add it to the lightmap list
-	if( *lightmapIndex >= tr.numLightmaps )
-		tr.numLightmaps = *lightmapIndex + 1;
-	tr.lightmaps[ *lightmapIndex ] = image;
-	return lightmapIndex;
+// BSP loaders have already resolved internal and external lightmaps by owner.
+static inline const int *R_FindLightmap(const int *indices) {
+	if (indices[0] < 0) return indices;
+	for (int i=0; i<MAXLIGHTMAPS; ++i)
+		if (indices[i] >= 0 && (indices[i] >= tr.numLightmaps || !tr.lightmaps[indices[i]])) return lightmapsVertex;
+	return indices;
 }
 
 /*

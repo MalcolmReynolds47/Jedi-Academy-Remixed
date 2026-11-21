@@ -24,6 +24,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // g_combat.c
 
 #include "b_local.h"
+#include "g_jar_sandbox.h"
+#include "jar_mp_crystal_crate.h"
 #include "bg_saga.h"
 
 extern int G_ShipSurfaceForSurfName( const char *surfaceName );
@@ -2230,6 +2232,7 @@ void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 		}
 	}
 
+	JAR_MP_NativeEmplacedDetachUser(self);
 	self->client->ps.emplacedIndex = 0;
 
 	G_BreakArm(self, 0); //unbreak anything we have broken
@@ -2946,6 +2949,7 @@ int CheckArmor (gentity_t *ent, int damage, int dflags)
 	{//ion-cannon has disabled this ship's shields, take damage on hull!
 		return 0;
 	}
+	if(client->NPC_class==CLASS_GALAKMECH && client->ps.stats[STAT_ARMOR]>0){client->ps.stats[STAT_ARMOR]=Q_max(0,client->ps.stats[STAT_ARMOR]-damage);return damage;}
 	// armor
 	count = client->ps.stats[STAT_ARMOR];
 
@@ -3813,7 +3817,7 @@ qboolean G_GetHitLocFromSurfName( gentity_t *ent, const char *surfName, int *hit
 		{
 			*hitLoc = HL_GENERIC1;
 		}
-		else if (!Q_stricmp("torso_shield",surfName))
+		else if ((!Q_stricmp("torso_shield",surfName)||!Q_stricmp("torso_shield_off",surfName)))
 		{
 			*hitLoc = HL_GENERIC2;
 		}
@@ -4427,7 +4431,9 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, vec3_
 	int			take, asave, max, subamt = 0, knockback;
 	float		famt = 0, hamt = 0, shieldAbsorbed = 0;
 
-	if (!targ)
+	if (!targ || JAR_MP_BreakableDamageBlocked(targ) || JAR_MP_SectionCityDamageBlocked(targ) ||
+		JAR_MP_SmallCargoDamageBlocked(targ, inflictor, dflags, mod) ||
+		(inflictor && inflictor->jarShooterSource && JAR_MP_ShooterDamageDenied(inflictor, targ)))
 		return;
 
 	if (targ && targ->damageRedirect)
@@ -5510,8 +5516,12 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, vec3_
 			}
 
 			targ->enemy = attacker;
+			const qboolean crystalCrate = JAR_MP_CrystalCrateRootState(&targ->s);
+			const int targetSlot = targ->s.number;
+			const unsigned targetEpoch = crystalCrate ? JAR_MP_EntityEpoch(targetSlot) : 0;
 			targ->die (targ, inflictor, attacker, take, mod);
-			G_ActivateBehavior( targ, BSET_DEATH );
+			if (!crystalCrate || (targ->inuse && JAR_MP_EntityEpoch(targetSlot) == targetEpoch))
+				G_ActivateBehavior( targ, BSET_DEATH );
 			return;
 		}
 		else
@@ -5560,10 +5570,12 @@ qboolean CanDamage (gentity_t *targ, vec3_t origin) {
 	trace_t	tr;
 	vec3_t	midpoint;
 
-	// use the midpoint of the bounds instead of the origin, because
-	// bmodels may have their origin is 0,0,0
-	VectorAdd (targ->r.absmin, targ->r.absmax, midpoint);
-	VectorScale (midpoint, 0.5, midpoint);
+	// A rotated section block's linked bounds are a broad-phase sphere.
+	const qboolean cityBlock = JAR_MP_SectionCityDamageCenter(targ, midpoint);
+	if (!cityBlock) {
+		VectorAdd (targ->r.absmin, targ->r.absmax, midpoint);
+		VectorScale (midpoint, 0.5, midpoint);
+	}
 
 	VectorCopy (midpoint, dest);
 	trap->Trace ( &tr, origin, vec3_origin, vec3_origin, dest, ENTITYNUM_NONE, MASK_SOLID, qfalse, 0, 0);
@@ -5576,28 +5588,28 @@ qboolean CanDamage (gentity_t *targ, vec3_t origin) {
 	dest[0] += 15.0;
 	dest[1] += 15.0;
 	trap->Trace ( &tr, origin, vec3_origin, vec3_origin, dest, ENTITYNUM_NONE, MASK_SOLID, qfalse, 0, 0);
-	if (tr.fraction == 1.0)
+	if (cityBlock ? tr.entityNum == targ->s.number : tr.fraction == 1.0)
 		return qtrue;
 
 	VectorCopy (midpoint, dest);
 	dest[0] += 15.0;
 	dest[1] -= 15.0;
 	trap->Trace ( &tr, origin, vec3_origin, vec3_origin, dest, ENTITYNUM_NONE, MASK_SOLID, qfalse, 0, 0);
-	if (tr.fraction == 1.0)
+	if (cityBlock ? tr.entityNum == targ->s.number : tr.fraction == 1.0)
 		return qtrue;
 
 	VectorCopy (midpoint, dest);
 	dest[0] -= 15.0;
 	dest[1] += 15.0;
 	trap->Trace ( &tr, origin, vec3_origin, vec3_origin, dest, ENTITYNUM_NONE, MASK_SOLID, qfalse, 0, 0);
-	if (tr.fraction == 1.0)
+	if (cityBlock ? tr.entityNum == targ->s.number : tr.fraction == 1.0)
 		return qtrue;
 
 	VectorCopy (midpoint, dest);
 	dest[0] -= 15.0;
 	dest[1] -= 15.0;
 	trap->Trace ( &tr, origin, vec3_origin, vec3_origin, dest, ENTITYNUM_NONE, MASK_SOLID, qfalse, 0, 0);
-	if (tr.fraction == 1.0)
+	if (cityBlock ? tr.entityNum == targ->s.number : tr.fraction == 1.0)
 		return qtrue;
 
 
@@ -5655,26 +5667,41 @@ qboolean G_RadiusDamage ( vec3_t origin, gentity_t *attacker, float damage, floa
 
 	numListedEntities = trap->EntitiesInBox( mins, maxs, entityList, MAX_GENTITIES );
 
+	// Keep applying the section guard if a damage callback removes the source.
+	const qboolean sectionFire = JAR_MP_SectionFireSource(attacker);
+	unsigned blastEpoch = 0, currentEpoch = 0;
+	const qboolean ownedBlast = JAR_MP_BreakableRadiusSource(attacker, &blastEpoch);
+	const qboolean shooterBlast = missile && missile->jarShooterSource;
+	const int shotSlot = shooterBlast ? missile->s.number : 0;
+	const unsigned shotEpoch = shooterBlast ? JAR_MP_EntityEpoch(shotSlot) : 0;
 	for ( e = 0 ; e < numListedEntities ; e++ ) {
+		if (ownedBlast && (!JAR_MP_BreakableRadiusSource(attacker, &currentEpoch) ||
+			currentEpoch != blastEpoch)) break;
+		if (shooterBlast && (!missile->inuse || JAR_MP_EntityEpoch(shotSlot) != shotEpoch)) break;
 		ent = &g_entities[entityList[ e ]];
+		if ((sectionFire && JAR_MP_SectionRadiusDenied(attacker, ent)) ||
+			JAR_MP_BreakableRadiusDenied(attacker, ent) ||
+			(shooterBlast && JAR_MP_ShooterDamageDenied(missile, ent))) continue;
 
 		if (ent == ignore)
 			continue;
 		if (!ent->takedamage)
 			continue;
 
-		// find the distance from the edge of the bounding box
-		for ( i = 0 ; i < 3 ; i++ ) {
-			if ( origin[i] < ent->r.absmin[i] ) {
-				v[i] = ent->r.absmin[i] - origin[i];
-			} else if ( origin[i] > ent->r.absmax[i] ) {
-				v[i] = origin[i] - ent->r.absmax[i];
-			} else {
-				v[i] = 0;
+		if (!JAR_MP_SectionCityDamageDistance(ent, origin, &dist)) {
+			// find the distance from the edge of the bounding box
+			for ( i = 0 ; i < 3 ; i++ ) {
+				if ( origin[i] < ent->r.absmin[i] ) {
+					v[i] = ent->r.absmin[i] - origin[i];
+				} else if ( origin[i] > ent->r.absmax[i] ) {
+					v[i] = origin[i] - ent->r.absmax[i];
+				} else {
+					v[i] = 0;
+				}
 			}
-		}
 
-		dist = VectorLength( v );
+			dist = VectorLength( v );
+		}
 		if ( dist >= radius ) {
 			continue;
 		}
@@ -5700,7 +5727,7 @@ qboolean G_RadiusDamage ( vec3_t origin, gentity_t *attacker, float damage, floa
 			}
 			else
 			{
-				G_Damage (ent, NULL, attacker, dir, origin, (int)points, DAMAGE_RADIUS, mod);
+				G_Damage (ent, shooterBlast ? missile : NULL, attacker, dir, origin, (int)points, DAMAGE_RADIUS, mod);
 			}
 
 			if (ent && ent->client && roastPeople && missile &&

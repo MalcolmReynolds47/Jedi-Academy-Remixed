@@ -34,6 +34,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "wp_saber.h"
 #include "g_vehicles.h"
 #include "../ghoul2/ghoul2_gore.h"
+#include "qcommon/jar_force_enlightenment.h"
 
 extern void CG_SetClientViewAngles( vec3_t angles, qboolean overrideViewEnt );
 extern qboolean PM_InAnimForSaberMove( int anim, int saberMove );
@@ -746,15 +747,15 @@ int G_MinGetUpTime( gentity_t *ent )
 	else if ( (ent->s.clientNum < MAX_CLIENTS||G_ControlledByPlayer(ent)) )
 	{//player can get up faster based on his/her force jump skill
 		int getUpTime = PLAYER_KNOCKDOWN_HOLD_EXTRA_TIME;
-		if ( ent->client->ps.forcePowerLevel[FP_LEVITATION] >= FORCE_LEVEL_3 )
+		if ( jar::enlightenment::Rank(ent->client->ps,FP_LEVITATION) >= FORCE_LEVEL_3 )
 		{
 			return (getUpTime+400);//750
 		}
-		else if ( ent->client->ps.forcePowerLevel[FP_LEVITATION] == FORCE_LEVEL_2 )
+		else if ( jar::enlightenment::Rank(ent->client->ps,FP_LEVITATION) == FORCE_LEVEL_2 )
 		{
 			return (getUpTime+200);//500
 		}
-		else if ( ent->client->ps.forcePowerLevel[FP_LEVITATION] == FORCE_LEVEL_1 )
+		else if ( jar::enlightenment::Rank(ent->client->ps,FP_LEVITATION) == FORCE_LEVEL_1 )
 		{
 			return (getUpTime+100);//250
 		}

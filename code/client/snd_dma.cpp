@@ -1,3 +1,5 @@
+#include "qcommon/jar_diagnostics.h"
+#include "qcommon/jar_sound_randomizer.h"
 /*
 ===========================================================================
 Copyright (C) 1999 - 2005, Id Software, Inc.
@@ -32,6 +34,11 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "sdl/sdl_sound.h"
 #include "snd_local.h"
+#include "../../shared/client/jar_soundscape_pan.h"
+#include "jar_audio_channel_policy.h"
+#include "qcommon/jar_face.h"
+#include "qcommon/jar_audio_catalog.h"
+#include <algorithm>
 #include "cl_mp3.h"
 #include "snd_music.h"
 #define __STDC_FORMAT_MACROS
@@ -41,6 +48,14 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #endif
 
 static void S_Play_f(void);
+static void S_JAR_RestoreAudio();
+static void S_JAR_AudioCatalog_f();
+static void S_JAR_AudioValidate_f();
+static void S_JAR_FreeAudioCache();
+qboolean S_FileExists(const char *);
+extern const char *S_JAR_DecodeCatalog(const char *,sfx_t *);
+extern void S_JAR_Capture_f();
+extern void S_JAR_CaptureStop();
 static void S_SoundList_f(void);
 static void S_Music_f(void);
 static void S_StopMusic_f(void);
@@ -201,6 +216,8 @@ typedef struct
 	int				mergeFrame;
 	int				entnum;
 	soundChannel_t	entchan;
+	using Pan=jar::soundscape::Pan;
+	Pan pan;
 
 	// For Open AL
 	qboolean	bProcessed;
@@ -216,6 +233,16 @@ portable_samplepair_t	s_rawsamples[MAX_RAW_SAMPLES];
 vec3_t		s_entityPosition[MAX_GENTITIES];
 int			s_entityWavVol[MAX_GENTITIES];
 int			s_entityWavVol_back[MAX_GENTITIES];
+static float jarVoiceEnergy[MAX_GENTITIES];
+
+float S_JAR_VoiceEnergy(int entity) {
+    if(entity<0 || entity>=MAX_GENTITIES || !s_soundStarted || s_soundMuted || s_entityWavVol[entity]<=0) return 0;
+#ifdef USE_OPENAL
+    // Legacy OpenAL stores four precomputed levels; smooth them in cgame.
+    if(s_UseOpenAL) return jar::FaceClamp(s_entityWavVol[entity]*0.25f,0,1);
+#endif
+    return jarVoiceEnergy[entity];
+}
 
 int			s_numChannels;			// Number of AL Sources == Num of Channels
 
@@ -480,6 +507,13 @@ void S_Init( void ) {
 	Cmd_AddCommand("stopmusic", S_StopMusic_f);
 	Cmd_AddCommand("soundlist", S_SoundList_f);
 	Cmd_AddCommand("soundinfo", S_SoundInfo_f);
+    Cmd_AddCommand("jar_audio_capture",S_JAR_Capture_f);
+    Cmd_AddCommand("jar_audio_capture_stop",S_JAR_CaptureStop);
+    Cmd_AddCommand("jar_audio_refresh",S_RestartMusic);
+    Cmd_AddCommand("jar_audio_restore",S_JAR_RestoreAudio);
+    Cmd_AddCommand("jar_audio_catalog",S_JAR_AudioCatalog_f);
+    Cmd_AddCommand("jar_audio_validate",S_JAR_AudioValidate_f);
+    for (const char *name : jar::soundCvars) Cvar_Get(name,"0",CVAR_ARCHIVE | CVAR_SAVEGAME | CVAR_NORESTART);
 	Cmd_AddCommand("soundstop", S_StopAllSounds);
 	Cmd_AddCommand("mp3_calcvols", S_MP3_CalcVols_f);
 	Cmd_AddCommand("s_dynamic", S_SetDynamicMusic_f);
@@ -668,6 +702,7 @@ void S_ReloadAllUsedSounds(void)
 
 void S_Shutdown( void )
 {
+    S_JAR_CaptureStop();
 	if ( !s_soundStarted ) {
 		return;
 	}
@@ -732,6 +767,12 @@ void S_Shutdown( void )
 	Cmd_RemoveCommand("stopsound");
 	Cmd_RemoveCommand("soundlist");
 	Cmd_RemoveCommand("soundinfo");
+    Cmd_RemoveCommand("jar_audio_capture");
+    Cmd_RemoveCommand("jar_audio_capture_stop");
+    Cmd_RemoveCommand("jar_audio_refresh");
+    Cmd_RemoveCommand("jar_audio_restore");
+    Cmd_RemoveCommand("jar_audio_catalog");
+    Cmd_RemoveCommand("jar_audio_validate");
 	Cmd_RemoveCommand("soundstop");
 	Cmd_RemoveCommand("mp3_calcvols");
 	Cmd_RemoveCommand("s_dynamic");
@@ -1154,6 +1195,7 @@ channel_t *S_PickChannel(int entnum, int entchannel)
 		Com_Printf( S_COLOR_RED"***kicking %s\n", firstToDie->thesfx->sSoundName );
 	}
 
+	if(firstToDie->thesfx) JAR_DiagnosticsCount(JAR_SOUND_STOLEN);
 	Channel_Clear(firstToDie);	// memset(firstToDie, 0, sizeof(*firstToDie));
 
 	return firstToDie;
@@ -1439,6 +1481,8 @@ Starts an ambient, 'one-shot" sound.
 ====================
 */
 
+#include "jar_audio_runtime.inc"
+
 void S_StartAmbientSound( const vec3_t origin, int entityNum, unsigned char volume, sfxHandle_t sfxHandle )
 {
 	channel_t	*ch;
@@ -1454,9 +1498,11 @@ void S_StartAmbientSound( const vec3_t origin, int entityNum, unsigned char volu
 		Com_Error( ERR_DROP, "S_StartAmbientSound: handle %i out of range", sfxHandle );
 
 	sfx = &s_knownSfx[ sfxHandle ];
+	JAR_Log(3,"sound","ambient_start","entity=%d handle=%d file=%s",entityNum,sfxHandle,sfx->sSoundName);
 	if (sfx->bInMemory == qfalse){
 		S_memoryLoad(sfx);
 	}
+	sfx = S_JAR_RandomSound(sfx, CHAN_AMBIENT, false);
 	SND_TouchSFX(sfx);
 
 #ifdef USE_OPENAL
@@ -1491,6 +1537,7 @@ void S_StartAmbientSound( const vec3_t origin, int entityNum, unsigned char volu
 	ch->entnum = entityNum;
 	ch->entchannel = CHAN_AMBIENT;
 	ch->thesfx = sfx;
+
 	ch->startSample = START_SAMPLE_IMMEDIATE;
 
 	ch->leftvol = ch->master_vol;		// these will get calced at next spatialize
@@ -1517,6 +1564,13 @@ if pos is NULL, the sound will be dynamically sourced from the entity
 Entchannel 0 will never override a playing sound
 ====================
 */
+
+static void S_JAR_RestoreAudio() {
+    for (const char *name : jar::soundCvars) Cvar_Set(name,"0");
+    S_RestartMusic();
+    JAR_Log(1,"randomizer","audio_restore","Original future sounds/loops and current music restored");
+}
+
 void S_StartSound(const vec3_t origin, int entityNum, soundChannel_t entchannel, sfxHandle_t sfxHandle )
 {
 	channel_t	*ch;
@@ -1535,6 +1589,7 @@ void S_StartSound(const vec3_t origin, int entityNum, soundChannel_t entchannel,
 	}
 
 	sfx = &s_knownSfx[ sfxHandle ];
+	JAR_Log(3,"sound","start","entity=%d channel=%d handle=%d file=%s",entityNum,entchannel,sfxHandle,sfx->sSoundName);
 	if (sfx->bInMemory == qfalse){
 		S_memoryLoad(sfx);
 	}
@@ -1562,7 +1617,7 @@ void S_StartSound(const vec3_t origin, int entityNum, soundChannel_t entchannel,
 			ch = s_channels + 1;
 			for (i = 1; i < s_numChannels; i++, ch++)
 			{
-				if ((ch->entnum == entityNum) && (ch->entchannel == CHAN_WEAPON) && (ch->thesfx) && (strstr(ch->thesfx->sSoundName, "altcharge") != NULL))
+				if ((ch->entnum == entityNum) && (ch->entchannel == CHAN_WEAPON) && (ch->thesfx) && (strstr((ch->jarLogicalSource?ch->jarLogicalSource:ch->thesfx)->sSoundName, "altcharge") != NULL))
 				{
 					// Stop this sound
 					alSourceStop(ch->alSource);
@@ -1578,7 +1633,7 @@ void S_StartSound(const vec3_t origin, int entityNum, soundChannel_t entchannel,
 			ch = s_channels + 1;
 			for (i = 1; i < s_numChannels; i++, ch++)
 			{
-				if ((ch->entnum == entityNum) && (ch->thesfx) && (strstr(ch->thesfx->sSoundName, "falling") != NULL))
+				if ((ch->entnum == entityNum) && (ch->thesfx) && (strstr((ch->jarLogicalSource?ch->jarLogicalSource:ch->thesfx)->sSoundName, "falling") != NULL))
 				{
 					// Stop this sound
 					alSourceStop(ch->alSource);
@@ -1592,10 +1647,13 @@ void S_StartSound(const vec3_t origin, int entityNum, soundChannel_t entchannel,
 	}
 #endif
 
+	const sfx_t *logicalSource=sfx;
+    sfx = S_JAR_RandomSound(sfx,entchannel,false);
 	// pick a channel to play on
 
 	ch = S_PickChannel( entityNum, entchannel );
 	if (!ch) {
+		JAR_DiagnosticsCount(JAR_SOUND_DROPPED);
 		return;
 	}
 
@@ -1610,6 +1668,9 @@ void S_StartSound(const vec3_t origin, int entityNum, soundChannel_t entchannel,
 	ch->entnum = entityNum;
 	ch->entchannel = entchannel;
 	ch->thesfx = sfx;
+    ch->jarLogicalSource=logicalSource;
+    ch->jarMaxSamples=(sfx!=logicalSource && JarVoiceChannel(entchannel))?logicalSource->iSoundLengthInSamples:0;
+    if(JarVoiceChannel(entchannel) && entityNum>=0 && entityNum<MAX_GENTITIES)jarVoiceEnd[entityNum]=0;
 	ch->startSample = START_SAMPLE_IMMEDIATE;
 
 	ch->leftvol = ch->master_vol;		// these will get calced at next spatialize
@@ -1711,6 +1772,7 @@ void S_ClearSoundBuffer( void ) {
 	// clear all the sounds so they don't
 	// start back up after the load finishes
 	memset( s_channels, 0, sizeof( s_channels ) );
+	std::memset(jarVoiceEnd,0,sizeof(jarVoiceEnd));
 	// clear out the lip synching override array
 	memset(s_entityWavVol, 0,sizeof(s_entityWavVol));
 #endif
@@ -1756,7 +1818,7 @@ void S_CIN_StopSound(sfxHandle_t sfxHandle)
 		if ( !ch->thesfx || (ch->leftvol<0.25 && ch->rightvol<0.25 )) {
 			continue;
 		}
-		if (ch->thesfx == sfx)
+		if (JarAudioMatches(*ch,sfx))
 		{
 #ifdef USE_OPENAL
 			if (s_UseOpenAL)
@@ -1764,13 +1826,9 @@ void S_CIN_StopSound(sfxHandle_t sfxHandle)
 				alSourceStop(s_channels[i].alSource);
 			}
 #endif
-			SND_FreeSFXMem(ch->thesfx);	// heh, may as well...
-			ch->thesfx = NULL;
-			memset(&ch->MP3StreamHeader, 0, sizeof(MP3STREAM));
-			ch->bLooping = false;
-			ch->bProcessed = false;
-			ch->bPlaying = false;
-			ch->bStreaming = false;
+			// Registered/cache sounds can be shared by other channels; release only this channel.
+            if(ch->entnum>=0&&ch->entnum<MAX_GENTITIES&&JarVoiceChannel(ch->entchannel))jarVoiceEnd[ch->entnum]=0;
+			JarAudioReleaseChannel(*ch);
 			break;
 		}
 	}
@@ -1816,6 +1874,7 @@ void S_StopSounds(void)
 	}
 #endif
 
+	std::memset(jarVoiceEnd,0,sizeof(jarVoiceEnd));
 	// clear out the lip synching override array
 	memset(s_entityWavVol, 0,sizeof(s_entityWavVol));
 
@@ -1895,6 +1954,7 @@ void S_AddLoopingSound( int entityNum, const vec3_t origin, const vec3_t velocit
 		S_memoryLoad(sfx);
 	}
 	SND_TouchSFX(sfx);
+	sfx = S_JAR_RandomSound(sfx,chan,true);
 
 	if ( !sfx->iSoundLengthInSamples ) {
 		Com_Error( ERR_DROP, "%s has length 0", sfx->sSoundName );
@@ -1906,6 +1966,7 @@ void S_AddLoopingSound( int entityNum, const vec3_t origin, const vec3_t velocit
 	loopSounds[numLoopSounds].volume = SOUND_MAXVOL;
 	loopSounds[numLoopSounds].entnum = entityNum;
 	loopSounds[numLoopSounds].entchan = chan;
+	loopSounds[numLoopSounds].pan = loopSound_t::Pan::World;
 	numLoopSounds++;
 }
 
@@ -1914,7 +1975,7 @@ void S_AddLoopingSound( int entityNum, const vec3_t origin, const vec3_t velocit
 S_AddAmbientLoopingSound
 ==================
 */
-void S_AddAmbientLoopingSound( const vec3_t origin, unsigned char volume, sfxHandle_t sfxHandle )
+static void S_QueueAmbientLoop(const vec3_t origin,unsigned char volume,sfxHandle_t sfxHandle,loopSound_t::Pan pan)
 {
 	/*const*/ sfx_t *sfx;
 
@@ -1934,6 +1995,7 @@ void S_AddAmbientLoopingSound( const vec3_t origin, unsigned char volume, sfxHan
 #endif
 
 	if ( sfxHandle < 0 || sfxHandle >= s_numSfx ) {
+		if(pan!=loopSound_t::Pan::World)return;
 		Com_Error( ERR_DROP, "S_StartSound: handle %i out of range", sfxHandle );
 	}
 
@@ -1942,17 +2004,33 @@ void S_AddAmbientLoopingSound( const vec3_t origin, unsigned char volume, sfxHan
 		S_memoryLoad(sfx);
 	}
 	SND_TouchSFX(sfx);
+	if(pan==loopSound_t::Pan::World)sfx = S_JAR_RandomSound(sfx,CHAN_AMBIENT,true);
 
 	if ( !sfx->iSoundLengthInSamples ) {
+		if(pan!=loopSound_t::Pan::World)return;
 		Com_Error( ERR_DROP, "%s has length 0", sfx->sSoundName );
 	}
+	if(pan!=loopSound_t::Pan::World&&sfx->pMP3StreamHeader)return;
 	VectorCopy( origin, loopSounds[numLoopSounds].origin );
 	loopSounds[numLoopSounds].sfx = sfx;
 	assert(!sfx->pMP3StreamHeader);
 
 	//TODO: Calculate the distance falloff
 	loopSounds[numLoopSounds].volume = volume;
+	loopSounds[numLoopSounds].pan = pan;
+	if(pan!=loopSound_t::Pan::World){
+		loopSounds[numLoopSounds].entnum=listener_number;
+		loopSounds[numLoopSounds].entchan=CHAN_AMBIENT;
+	}
 	numLoopSounds++;
+}
+
+void S_AddAmbientLoopingSound(const vec3_t origin,unsigned char volume,sfxHandle_t sound){
+ S_QueueAmbientLoop(origin,volume,sound,loopSound_t::Pan::World);
+}
+
+void S_AddSoundscapeLoop(sfxHandle_t sound,unsigned char volume,int pan){
+ S_QueueAmbientLoop(vec3_origin,volume,sound,jar::soundscape::ClipPan(pan));
 }
 
 /*
@@ -1989,7 +2067,12 @@ void S_AddLoopSounds (void)
 			}
 			loop2->mergeFrame = loopFrame;	// don't check this again later
 
-			S_SpatializeOrigin( loop2->origin, loop2->volume, &left, &right, loop2->entchan);
+			using Pan=loopSound_t::Pan;
+			if(loop2->pan==Pan::World){
+				S_SpatializeOrigin(loop2->origin,loop2->volume,&left,&right,loop2->entchan);
+			}else{
+				jar::soundscape::Levels(loop2->pan,loop2->volume,dma.channels==1,left,right);
+			}
 
 			left_total += left;
 			right_total += right;
@@ -2324,128 +2407,7 @@ void S_UpdateEntityPosition( int entityNum, const vec3_t origin )
 //
 // (this is mostly Jake's code from EF1, which explains a lot...:-)
 //
-static int next_amplitude = 0;
-static int S_CheckAmplitude(channel_t	*ch, const int s_oldpaintedtime )
-{
-	// now, is this a cycle - or have we just started a new sample - where we should update the backup table, and write this value
-	// into the new table? or should we just take the value FROM the back up table and feed it out.
-	assert( ch->startSample != START_SAMPLE_IMMEDIATE );
-	if ( ch->startSample == s_oldpaintedtime || (next_amplitude < s_soundtime) )//(ch->startSample == START_SAMPLE_IMMEDIATE)//!s_entityWavVol_back[ch->entnum]
-	{
-		int	sample;
-		int	sample_total = 0;
-		int	count = 0;
-		short *current_pos_s;
-//		char *current_pos_c;
-		int	offset = 0;
-
-		// if we haven't started the sample yet, we must be at the beginning
-		current_pos_s = ((short*)ch->thesfx->pSoundData);
-//		current_pos_c = ((char*)ch->thesfx->data);
-
-		//if (ch->startSample != START_SAMPLE_IMMEDIATE)
-		//{
-			// figure out where we are in the sample right now.
-			offset = s_oldpaintedtime - ch->startSample;//s_paintedtime
-			current_pos_s += offset;
-//			current_pos_c += offset;
-		//}
-
-		// scan through 10 samples 100( at 11hz or 200 at 22hz) samples apart.
-		//
-		for (int i=0; i<10; i++)
-		{
-			//
-			// have we run off the end?
-			if ((offset + (i*100)) > ch->thesfx->iSoundLengthInSamples)
-			{
-				break;
-			}
-//			if (ch->thesfx->width == 1)
-//			{
-//				sample = current_pos_c[i*100];
-//			}
-//			else
-			{
-				switch (ch->thesfx->eSoundCompressionMethod)
-				{
-					case ct_16:
-					{
-						sample = current_pos_s[i*100];
-					}
-					break;
-
-					case ct_MP3:
-					{
-						const int iIndex = (i*100) + ((offset * /*ch->thesfx->width*/2) - ch->iMP3SlidingDecodeWindowPos);
-						const short* pwSamples = (short*) (ch->MP3SlidingDecodeBuffer + iIndex);
-
-						sample = *pwSamples;
-					}
-					break;
-
-					default:
-					{
-						assert(0);
-						sample = 0;
-					}
-					break;
-				}
-
-//				if (sample < 0)
-//					sample = -sample;
-				sample = sample>>8;
-			}
-			// square it for better accuracy
-			sample_total += (sample * sample);
-			count++;
-		}
-
-		// if we are already done with this sample, then its silence
-		if (!count)
-		{
-			return(0);
-		}
-		sample_total /= count;
-
-		// I hate doing this, but its the simplest way
-		if (sample_total < ch->thesfx->fVolRange * s_lip_threshold_1->value)
-		{
-		// tell the scripts that are relying on this that we are still going, but actually silent right now.
-			sample = -1;
-		}
-		else
-		if (sample_total < ch->thesfx->fVolRange * s_lip_threshold_2->value)
-		{
-			sample = 1;
-		}
-		else
-		if (sample_total < ch->thesfx->fVolRange * s_lip_threshold_3->value)
-		{
-			sample = 2;
-		}
-		else
-		if (sample_total < ch->thesfx->fVolRange * s_lip_threshold_4->value)
-		{
-			sample = 3;
-		}
-		else
-		{
-			sample = 4;
-		}
-
-#ifdef _MSC_VER
-//		OutputDebugString(va("Returning sample %d\n",sample));
-#endif
-
-		// store away the value we got into the back up table
-		s_entityWavVol_back[ ch->entnum ] = sample;
-		return (sample);
-	}
-	// no, just get last value calculated from backup table
-	assert( s_entityWavVol_back[ch->entnum] );
-	return (s_entityWavVol_back[ ch->entnum]);
-}
+#include "jar_audio_amplitude.inc"
 
 /*
 ============
@@ -2633,13 +2595,13 @@ qboolean S_ScanChannelStarts( void ) {
 		// set the sample count to it begins mixing
 		// into the very first sample
 		if ( ch->startSample == START_SAMPLE_IMMEDIATE ) {
-			ch->startSample = s_paintedtime;
+			JarAudioStartChannel(*ch,s_paintedtime,jarVoiceEnd);
 			newSamples = qtrue;
 			continue;
 		}
 
 		// if it is completely finished by now, clear it
-		if ( ch->startSample + ch->thesfx->iSoundLengthInSamples <= s_paintedtime ) {
+		if ( ch->startSample + (ch->jarMaxSamples?std::min(ch->jarMaxSamples,ch->thesfx->iSoundLengthInSamples):ch->thesfx->iSoundLengthInSamples) <= s_paintedtime ) {
 			ch->thesfx = NULL;
 			continue;
 		}
@@ -2679,6 +2641,9 @@ void S_DoLipSynchs( const int s_oldpaintedtime )
 			}
 		}
 	}
+
+	for(int entity=0;entity<MAX_GENTITIES;++entity)
+        if(jarVoiceEnd[entity]>s_paintedtime && !s_entityWavVol[entity])s_entityWavVol[entity]=-1;
 
 	if (next_amplitude < s_soundtime)	{
 		next_amplitude = s_soundtime + 800;
@@ -3252,6 +3217,9 @@ void UpdateLoopingSounds()
 	channel_t *ch;
 	loopSound_t	*loop;
 	float pos[3];
+	ALuint soundscapeSources[MAX_LOOP_SOUNDS];
+	channel_t* soundscapeChannels[MAX_LOOP_SOUNDS];
+	int soundscapeCount=0;
 
 	// First check to see if any of the looping sounds are already playing at the correct positions
 	ch = s_channels + 1;
@@ -3267,6 +3235,14 @@ void UpdateLoopingSounds()
 				// as processed
 				if ((loop->bProcessed == false) && (ch->thesfx == loop->sfx) )
 				{
+					if(loop->pan!=loopSound_t::Pan::World){
+						if(ch->master_vol!=loop->volume){
+							ch->master_vol=loop->volume;
+							alSourcef(ch->alSource,AL_GAIN,float(ch->master_vol)*s_volume->value/255.f);
+						}
+						ch->bProcessed=loop->bProcessed=qtrue;
+						break;
+					}
 					if ( (loop->origin[0] == listener_pos[0]) && (loop->origin[1] == -listener_pos[2])
 						&& (loop->origin[2] == listener_pos[1]) )
 					{
@@ -3375,6 +3351,7 @@ void UpdateLoopingSounds()
 		if (!loop->bProcessed)
 		{
 			ch = S_PickChannel(0,0);
+			if(!ch)break;
 
 			ch->master_vol = loop->volume;
 			ch->entnum = loop->entnum;
@@ -3382,8 +3359,12 @@ void UpdateLoopingSounds()
 			ch->thesfx = loop->sfx;
 			ch->bLooping = true;
 
+			if(loop->pan!=loopSound_t::Pan::World){
+				loop->bRelative=qtrue;
+				VectorSet(ch->origin,jar::soundscape::RelativeX(loop->pan),0,0);
+			}
 			// Check if the Source is positioned at exactly the same location as the listener
-			if ( (loop->origin[0] == listener_pos[0]) && (loop->origin[1] == -listener_pos[2])
+			else if ( (loop->origin[0] == listener_pos[0]) && (loop->origin[1] == -listener_pos[2])
 						&& (loop->origin[2] == listener_pos[1]) )
 			{
 				// Assume that this sound is head relative
@@ -3422,10 +3403,27 @@ void UpdateLoopingSounds()
 			if (s_bEALFileLoaded)
 				UpdateEAXBuffer(ch);
 
+			if(loop->pan!=loopSound_t::Pan::World){
+				soundscapeSources[soundscapeCount]=ch->alSource;
+				soundscapeChannels[soundscapeCount++]=ch;
+				ch->bPlaying=true;
+				continue;
+			}
 			alGetError();
 			alSourcePlay(s_channels[source].alSource);
 			if (alGetError() == AL_NO_ERROR)
 				s_channels[source].bPlaying = true;
+		}
+	}
+	// Start the two mono stems of a stereo loop together.
+	if(soundscapeCount){
+		alGetError();
+		alSourcePlayv(soundscapeCount,soundscapeSources);
+		if(alGetError()!=AL_NO_ERROR){
+			for(int i=0;i<soundscapeCount;++i){
+				soundscapeChannels[i]->thesfx=nullptr;
+				soundscapeChannels[i]->bPlaying=false;
+			}
 		}
 	}
 }
@@ -4539,6 +4537,8 @@ void S_StartBackgroundTrack( const char *intro, const char *loop, qboolean bCall
 		Q_strncpyz( gsLoopMusic, loop, sizeof(gsLoopMusic) );
 	}
 
+    if(S_JAR_StartMusic(intro,bCalledByCGameStart!=0))return;
+
 	char sNameIntro[MAX_QPATH];
 	char sNameLoop [MAX_QPATH];
 	Q_strncpyz(sNameIntro,	intro,	sizeof(sNameIntro));
@@ -4647,6 +4647,7 @@ void S_StartBackgroundTrack( const char *intro, const char *loop, qboolean bCall
 
 void S_StopBackgroundTrack( void )
 {
+    jarAudioMusic=nullptr;jarAudioMusicPosition=0;
 	for (int i=0; i<eBGRNDTRACK_NUMBEROF; i++)
 	{
 		S_StopBackgroundTrack_Actual( &tMusic_Info[i] );
@@ -4918,6 +4919,7 @@ static void S_CheckDynamicMusicState(void)
 
 static void S_UpdateBackgroundTrack( void )
 {
+    if(jarAudioMusic){const char *state=S_Music_GetRequestedState();S_JAR_UpdateMusic(state && !Q_stricmp(state,"silence"));return;}
 	if (bMusic_IsDynamic)
 	{
 		if (s_debugdynamic->integer == 2)
@@ -5181,6 +5183,7 @@ void SND_TouchSFX(sfx_t *sfx)
 //
 void S_FreeAllSFXMem(void)
 {
+    S_JAR_FreeAudioCache();
 	for (int i=1 ; i < s_numSfx ; i++)	// start @ 1 to skip freeing default sound
 	{
 		SND_FreeSFXMem(&s_knownSfx[i]);

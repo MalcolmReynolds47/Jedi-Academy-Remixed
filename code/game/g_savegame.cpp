@@ -23,9 +23,18 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // Filename:-	g_savegame.cpp
 
 #include "../icarus/IcarusInterface.h"
+#include "g_target_music.h"
+#include "g_skyportal.h"
+#include "g_shipboundary.h"
 #include "../cgame/cg_local.h"
 #include "Q3_Interface.h"
 #include "g_local.h"
+#include "g_workshop.h"
+#include "g_subbsp_ownership.h"
+#include "qcommon/jar_savegame.h"
+#include "qcommon/jar_npc_order.h"
+#include "g_savegame_fields.h"
+#include "g_randomizer.h"
 #include "fields.h"
 #include "objectives.h"
 #include "../cgame/cg_camera.h"
@@ -40,52 +49,6 @@ extern void G_ReloadSaberData( gentity_t *ent );
 extern void FX_Read( void );
 extern void FX_Write( void );
 
-
-static const save_field_t savefields_gEntity[] =
-{
-	{strFOFS(client),			F_GCLIENT},
-	{strFOFS(owner),			F_GENTITY},
-	{strFOFS(classname),		F_STRING},
-	{strFOFS(model),			F_STRING},
-	{strFOFS(model2),			F_STRING},
-//	{strFOFS(model3),			F_STRING}, - MCG
-	{strFOFS(nextTrain),		F_GENTITY},
-	{strFOFS(prevTrain),		F_GENTITY},
-	{strFOFS(message),			F_STRING},
-	{strFOFS(target),			F_STRING},
-	{strFOFS(target2),			F_STRING},
-	{strFOFS(target3),			F_STRING},
-	{strFOFS(target4),			F_STRING},
-	{strFOFS(targetJump),		F_STRING},
-	{strFOFS(targetname),		F_STRING},
-	{strFOFS(team),				F_STRING},
-	{strFOFS(roff),				F_STRING},
-//	{strFOFS(target_ent),		F_GENTITY}, - MCG
-	{strFOFS(chain),			F_GENTITY},
-	{strFOFS(enemy),			F_GENTITY},
-	{strFOFS(activator),		F_GENTITY},
-	{strFOFS(teamchain),		F_GENTITY},
-	{strFOFS(teammaster),		F_GENTITY},
-	{strFOFS(item),				F_ITEM},
-	{strFOFS(NPC_type),			F_STRING},
-	{strFOFS(closetarget),		F_STRING},
-	{strFOFS(opentarget),		F_STRING},
-	{strFOFS(paintarget),		F_STRING},
-	{strFOFS(NPC_targetname),	F_STRING},
-	{strFOFS(NPC_target),		F_STRING},
-	{strFOFS(ownername),		F_STRING},
-	{strFOFS(lastEnemy),		F_GENTITY},
-	{strFOFS(behaviorSet),		F_BEHAVIORSET},
-	{strFOFS(script_targetname),F_STRING},
-	{strFOFS(m_iIcarusID),		F_NULL},
-	{strFOFS(NPC),				F_BOOLPTR},
-	{strFOFS(soundSet),			F_STRING},
-	{strFOFS(cameraGroup),		F_STRING},
-	{strFOFS(parms),			F_BOOLPTR},
-	{strFOFS(m_pVehicle),		F_BOOLPTR},
-
-	{NULL, 0, F_IGNORE}
-};
 
 static const save_field_t savefields_gNPC[] =
 {
@@ -367,6 +330,12 @@ static gitem_t *GetGItemPtr(int iItem)
 /////////// vehicleInfo_t * //////////
 //
 //
+// Vehicle definitions are allocated on demand. A dynamically spawned mount may
+// never be registered by the BSP on reload, and registration order can differ.
+// V2 records the table names separately; native entity layouts remain unchanged.
+#include "g_vehicle_registry.inc"
+#include "g_bsp_registry.inc"
+
 static int GetVehicleInfoNum(vehicleInfo_t *pVehicleInfo)
 {
 	assert(pVehicleInfo != (vehicleInfo_t*) 0xcdcdcdcd);
@@ -386,6 +355,11 @@ static vehicleInfo_t *GetVehicleInfoPtr(int iVehicleIndex)
 		return NULL;
 	}
 
+    if (jarRestoringVehicles) {
+        if (iVehicleIndex <= 0 || iVehicleIndex > jarRestoredVehicleCount)
+            gi.Error(ERR_DROP, "Invalid JA:R saved vehicle reference");
+        iVehicleIndex = jarRestoredVehicles[iVehicleIndex];
+    }
 	assert(iVehicleIndex > 0);
 	assert(iVehicleIndex < numVehicles);
 	return &g_vehicleInfo[iVehicleIndex];
@@ -397,6 +371,7 @@ static vehicleInfo_t *GetVehicleInfoPtr(int iVehicleIndex)
 
 static void EnumerateField(const save_field_t *pField, const byte *pbBase)
 {
+	if (G_ClearTransientSaveField(pField,const_cast<byte *>(pbBase))) return;
 	void *pv = (void *)(pbBase + pField->iOffset);
 
 	switch (pField->eFieldType)
@@ -494,8 +469,8 @@ static void EnumerateField(const save_field_t *pField, const byte *pbBase)
 		break;
 
 	// These are pointers that are always recreated
-	case F_NULL:
-		*(void **)pv = NULL;
+	case F_INTZERO:
+	case F_NULL: // Handled by the typed transient-field helper above.
 		break;
 
 	case F_IGNORE:
@@ -649,6 +624,7 @@ static void EvaluateField(const save_field_t *pField, byte *pbBase, byte *pbOrig
 		break;
 //	// These fields are patched in when their relevant owners are loaded
 	case F_BOOLPTR:
+	case F_INTZERO:
 	case F_NULL:
 		break;
 
@@ -869,22 +845,18 @@ ReadLevelLocals
 All pointer variables (except function pointers) must be handled specially.
 ==============
 */
-static void ReadLevelLocals ()
+static void ReadLevelLocals()
 {
-	// preserve client ptr either side of the load, because clients are already saved/loaded through Read/Writegame...
-	//
-	gclient_t *pClients = level.clients;	// save clients
-
+	gclient_t* clients=level.clients;
 	level_locals_t *temp = (level_locals_t *)gi.Malloc(sizeof(level_locals_t), TAG_TEMP_WORKSPACE, qfalse);
 	*temp = level;	// struct copy
 	EvaluateFields(savefields_LevelLocals, temp, (byte *)&level, INT_ID('L','V','L','C'));
-	level = *temp;					// struct copy
-
-	level.clients = pClients;				// restore clients
+	level = *temp;
+	level.clients=clients;
 	gi.Free(temp);
 }
 
-static void WriteGEntities(qboolean qbAutosave)
+static void WriteGEntities(qboolean qbAutosave, int jarSaveVersion)
 {
 	int iCount = 0;
 	int i;
@@ -935,6 +907,16 @@ static void WriteGEntities(qboolean qbAutosave)
 				gNPC_t npc = *ent->NPC;	// NOT *tempEnt.NPC; !! :-)
 
 				EnumerateFields(savefields_gNPC, &npc, INT_ID('G','N','P','C'));
+				if (jarSaveVersion >= jar::workshopSaveV56)
+				{
+					const jar::npcOrder::Destination goal{npc.workshopGoalOwner,npc.workshopGoalSlot};
+					saved_game.write_chunk(INT_ID('G','N','A','V'), goal);
+				}
+				if (jarSaveVersion >= jar::workshopSaveV57)
+				{
+					const jar::npcOrder::Destination patrol{npc.workshopPatrolOwner,npc.workshopPatrolSlot};
+					saved_game.write_chunk(INT_ID('G','P','A','T'), patrol);
+				}
 			}
 
 			if (tempEnt.client == (gclient_t *)-2)	// I know, I know...
@@ -987,7 +969,7 @@ static void WriteGEntities(qboolean qbAutosave)
 	}
 }
 
-static void ReadGEntities(qboolean qbAutosave)
+static void ReadGEntities(qboolean qbAutosave, int jarSaveVersion)
 {
 	int		iCount = 0;
 	int		i;
@@ -999,6 +981,8 @@ static void ReadGEntities(qboolean qbAutosave)
 		INT_ID('N', 'M', 'E', 'D'),
 		iCount);
 
+	if (iCount < 0 || iCount > ENTITYNUM_WORLD)
+		G_Error("JA:R: invalid saved entity count %d", iCount);
 	int iPreviousEntRead = -1;
 	for (i=0; i<iCount; i++)
 	{
@@ -1007,6 +991,9 @@ static void ReadGEntities(qboolean qbAutosave)
 		saved_game.read_chunk<int32_t>(
 			INT_ID('E', 'D', 'N', 'M'),
 			iEntIndex);
+
+		if (iEntIndex <= iPreviousEntRead || iEntIndex < 0 || iEntIndex >= ENTITYNUM_WORLD)
+			G_Error("JA:R: invalid saved entity index %d", iEntIndex);
 
 		if (iEntIndex >= globals.num_entities)
 		{
@@ -1048,9 +1035,27 @@ static void ReadGEntities(qboolean qbAutosave)
 		//
 		if (pEnt->NPC)	// will be qtrue/qfalse
 		{
-			gNPC_t tempNPC;
+			gNPC_t tempNPC{};
 
 			EvaluateFields(savefields_gNPC, &tempNPC,(byte *)pEntOriginal->NPC, INT_ID('G','N','P','C'));
+			if (jarSaveVersion >= jar::workshopSaveV56)
+			{
+				jar::npcOrder::Destination goal;
+				saved_game.read_chunk(INT_ID('G','N','A','V'), goal);
+				if (!jar::npcOrder::ValidDestination(goal,ENTITYNUM_WORLD))
+					G_Error("Invalid saved Sandbox NPC navigation link");
+				tempNPC.workshopGoalOwner = goal.owner;
+				tempNPC.workshopGoalSlot = goal.slot;
+			}
+			if (jarSaveVersion >= jar::workshopSaveV57)
+			{
+				jar::npcOrder::Destination patrol;
+				saved_game.read_chunk(INT_ID('G','P','A','T'), patrol);
+				if (!jar::npcOrder::ValidDestination(patrol,ENTITYNUM_WORLD))
+					G_Error("Invalid saved Sandbox NPC patrol progress");
+				tempNPC.workshopPatrolOwner = patrol.owner;
+				tempNPC.workshopPatrolSlot = patrol.slot;
+			}
 
 			// so can we pinch the original's one or do we have to alloc a new one?...
 			//
@@ -1206,12 +1211,7 @@ static void ReadGEntities(qboolean qbAutosave)
 		// NPCs and other ents store waypoints that aren't valid after a load
 		pEnt->waypoint = 0;
 
-		qboolean qbLinked = pEnt->linked;
-		pEnt->linked = qfalse;
-		if (qbLinked)
-		{
-			gi.linkentity (pEnt);
-		}
+		JarLinkRestoredEntity(pEnt);
 	}
 
 	//Read in all the entity timers
@@ -1250,7 +1250,7 @@ static void ReadGEntities(qboolean qbAutosave)
 }
 
 
-void WriteLevel(qboolean qbAutosave)
+void WriteLevel(qboolean qbAutosave, int jarSaveVersion)
 {
 	if (!qbAutosave) //-always save the client
 	{
@@ -1266,13 +1266,16 @@ void WriteLevel(qboolean qbAutosave)
 	FX_Write();
 
 	/////////////
-	WriteGEntities(qbAutosave);
+	JarWriteVehicleRegistry(jarSaveVersion);
+	JarWriteBSPRegistry(qbAutosave!=qfalse,jarSaveVersion);
+	WriteGEntities(qbAutosave, jarSaveVersion);
 	Quake3Game()->VariableSave();
 	G_LoadSave_WriteMiscData();
 
 	extern void CG_WriteTheEvilCGHackStuff(void);
 	CG_WriteTheEvilCGHackStuff();
 
+	G_JAR_WorkshopWrite(qbAutosave!=qfalse,jarSaveVersion);
 	// (Do NOT put any write-code below this line)
 	//
 	// put out an end-marker so that the load code can check everything was read in...
@@ -1287,66 +1290,53 @@ void WriteLevel(qboolean qbAutosave)
 		iDONE);
 }
 
-void ReadLevel(qboolean qbAutosave, qboolean qbLoadTransition)
+void ReadLevel(qboolean qbAutosave, qboolean qbLoadTransition, int jarSaveVersion)
 {
+	JarResetBSPRestore();
+	if(!qbAutosave)G_SubBSPOwnershipReset(); // Teardown must not free entities already restored earlier in slot order.
+	G_ShipBoundaryReset();
+	G_MusicReset();G_SkyPortalReset(); // Discard old ownership before entity teardown; saved configstrings are already restored.
+	JarActorRecoverySuspension jarRecoveryLoading;
+	jarRestoringVehicles = false;
+	jarRestoredVehicleCount = 0;
+	if (!qbAutosave) {
+		// The server has restored saved configstrings before calling ReadLevel.
+		RestoreRegisteredItems();
+	}
 	ojk::SavedGameHelper saved_game(
 		::gi.saved_game);
 
-	if ( qbLoadTransition )
+	if (!qbAutosave)
 	{
-		// I STRONGLY SUSPECT THAT THIS WILL JUST ERR_DROP BECAUSE OF THE LOAD SWAPPING OF THE CHUNK-ORDER
-		//	BELOW BETWEEN OBJECTIVES AND LEVEL_LOCALS, SO I'M GUESSING THIS IS SOME OLD EF1 JUNK?
-		// IN ANY CASE, LET'S MAKE SURE...   // -ste (no idea who wrote the comment stuff below, did it ever work?)
-		//
-		assert(0);
-		//
-		//loadtransitions do not need to read the objectives and client data from the level they're going to
-		//In a loadtransition, client data is carried over on the server and will be stomped later anyway.
-		//The objective info (in client->sess data), however, is read in from G_ReadSessionData which is called before this func,
-		//we do NOT want to stomp that session data when doing a load transition
-
-		//However, we should still save this info out because these savegames may need to be
-		//loaded normally later- perhaps if you die and need to respawn, perhaps as some kind
-		//of emergency savegame for resuming, etc.
-
-		//SO: We read it in, but throw it away.
-
-		//Read & throw away gclient info
-		gclient_t junkClient;
-		EvaluateFields(savefields_gClient, &junkClient, (byte *)&level.clients[0], INT_ID('G','C','L','I'));
-
-		ReadLevelLocals();	// level_locals_t level
-
-		//Read & throw away objective info
-		saved_game.read_chunk(
-			INT_ID('O', 'B', 'J', 'T'));
+		assert(level.maxclients == 1);
+		gclient_t restoredClient;
+		EvaluateFields(savefields_gClient, &restoredClient, (byte *)&level.clients[0], INT_ID('G','C','L','I'));
+		level.clients[0] = restoredClient;
+		ReadLevelLocals();
 	}
-	else
-	{
-		if (!qbAutosave )//always load the client unless it's an autosave
-		{
-			assert(level.maxclients == 1);	// I'll need to know if this changes, otherwise I'll need to change the way things work
 
-			gclient_t GClient;
-			EvaluateFields(savefields_gClient, &GClient, (byte *)&level.clients[0], INT_ID('G','C','L','I'));
-			level.clients[0] = GClient;	// struct copy
-			ReadLevelLocals();	// level_locals_t level
-		}
-
-		OBJ_LoadObjectiveData();//loads mission objectives AND tactical info
-	}
+	OBJ_LoadObjectiveData();
 
 	FX_Read();
 
 	/////////////
 
-	ReadGEntities(qbAutosave);
+	JarReadVehicleRegistry(jarSaveVersion);
+	JarReadBSPRegistry(qbAutosave!=qfalse,jarSaveVersion);
+	ReadGEntities(qbAutosave, jarSaveVersion);
+	JarResetBSPRestore();
+	jarRestoringVehicles = false;
 	Quake3Game()->VariableLoad();
 	G_LoadSave_ReadMiscData();
 
 	extern void CG_ReadTheEvilCGHackStuff(void);
 	CG_ReadTheEvilCGHackStuff();
+	G_JAR_RefreshShotResources();
+	G_JAR_RestoreActorRecovery();
 
+	G_JAR_WorkshopRead(qbAutosave!=qfalse,jarSaveVersion,qbLoadTransition!=qfalse);
+	extern void G_SiegeRestore();
+	G_SiegeRestore();
 	// (Do NOT put any read-code below this line)
 	//
 	// check that the whole file content was loaded by specifically requesting an end-marker...

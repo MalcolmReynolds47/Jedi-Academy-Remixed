@@ -27,7 +27,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "cm_public.h"
 #include "qcommon/qcommon.h"
 
-#define	MAX_SUBMODELS			512
+#define	MAX_SUBMODELS			(CM_MAX_INLINE_MODEL_COUNT + 2)
 #define	BOX_MODEL_HANDLE		(MAX_SUBMODELS-1)
 #define CAPSULE_MODEL_HANDLE	(MAX_SUBMODELS-2)
 
@@ -101,6 +101,7 @@ typedef struct cArea_s {
 
 typedef struct clipMap_s {
 	char		name[MAX_QPATH];
+	unsigned	checksum; // Source identity belongs to this map, including cached loads.
 
 	int			numShaders;
 	CCMShader	*shaders;
@@ -215,6 +216,7 @@ void CM_StoreBrushes( leafList_t *ll, int nodenum );
 void CM_BoxLeafnums_r( leafList_t *ll, int nodenum );
 
 cmodel_t	*CM_ClipHandleToModel( clipHandle_t handle, clipMap_t **clipMap = 0 );
+int CM_FindSubBSP(int modelIndex);
 
 // cm_patch.c
 

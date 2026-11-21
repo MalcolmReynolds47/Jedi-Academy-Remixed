@@ -142,6 +142,7 @@ typedef struct {
 	int			touchents[MAXTOUCH];
 
 	int			useEvent;
+	qboolean	moverRemoved;		// Native impact callbacks invalidated the moving actor.
 
 	vec3_t		mins, maxs;			// bounding box size
 
@@ -245,7 +246,7 @@ typedef enum {
 	PW_NONE,
 	PW_QUAD,// This can go away
 	PW_BATTLESUIT,
-	PW_HASTE,// This can go away
+	PW_FORCE_ENLIGHTENMENT, // Reuses the unused PW_HASTE timer.
 	PW_CLOAKED,
 	PW_UNCLOAKING,
 	PW_DISRUPTION,
@@ -258,11 +259,13 @@ typedef enum {
 	PW_INVINCIBLE,
 	PW_FORCE_PUSH,
 	PW_FORCE_PUSH_RHAND,
+	PW_FORCE_BOON,
 
 	PW_NUM_POWERUPS
 } powerup_t;
 
-#define PW_REMOVE_AT_DEATH ((1<<PW_QUAD)|(1<<PW_BATTLESUIT)|(1<<PW_HASTE)|(1<<PW_CLOAKED)|(1<<PW_UNCLOAKING)|(1<<PW_UNCLOAKING)|(1<<PW_GALAK_SHIELD)|(1<<PW_DISINT_2)|(1<<PW_INVINCIBLE)|(1<<PW_SEEKER))
+static_assert(PW_NUM_POWERUPS<=MAX_POWERUPS,"Keep the single-player powerup save layout");
+#define PW_REMOVE_AT_DEATH ((1<<PW_QUAD)|(1<<PW_BATTLESUIT)|(1<<PW_FORCE_ENLIGHTENMENT)|(1<<PW_CLOAKED)|(1<<PW_UNCLOAKING)|(1<<PW_UNCLOAKING)|(1<<PW_GALAK_SHIELD)|(1<<PW_DISINT_2)|(1<<PW_INVINCIBLE)|(1<<PW_SEEKER)|(1<<PW_FORCE_BOON))
 // entityState_t->event values
 // entity events are for effects that take place relative
 // to an existing entities origin.  Very network efficient.
@@ -653,6 +656,7 @@ typedef enum
 	IT_HOLDABLE,
 	IT_BATTERY,
 	IT_HOLOCRON,
+	IT_POWERUP,
 
 } itemType_t;
 

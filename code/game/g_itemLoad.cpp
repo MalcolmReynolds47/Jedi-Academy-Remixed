@@ -25,6 +25,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "g_local.h"
 #include "g_items.h"
+#include "qcommon/jar_force_boon.h"
+#include "qcommon/jar_force_enlightenment.h"
 
 #define PICKUPSOUND "sound/weapons/w_pkup.wav"
 
@@ -438,7 +440,7 @@ static void IT_Tag(const char **holdBuf)
 	}
 	else if (!Q_stricmp(tokenStr,"ITM_SHIELD_PICKUP"))
 	{
-		tag = ITM_SHIELD_PICKUP;
+		tag = INV_PORTABLE_SHIELD;
 	}
 	else if (!Q_stricmp(tokenStr,"INV_BACTA_CANISTER"))
 	{
@@ -446,7 +448,7 @@ static void IT_Tag(const char **holdBuf)
 	}
 	else if (!Q_stricmp(tokenStr,"ITM_DATAPAD_PICKUP"))
 	{
-		tag = ITM_DATAPAD_PICKUP;
+		tag = INV_DATAPAD;
 	}
 	else if (!Q_stricmp(tokenStr,"INV_ELECTROBINOCULARS"))
 	{
@@ -690,6 +692,8 @@ static void IT_ParseParms(const char *buffer)
 }
 
 
+#include "g_item_resources.inc"
+
 void IT_LoadItemParms (void)
 {
 	char *buffer;
@@ -697,6 +701,24 @@ void IT_LoadItemParms (void)
 	gi.FS_ReadFile("ext_data/items.dat",(void **) &buffer);
 
 	IT_ParseParms(buffer);
+    JAR_RepairItemResources();
+    bg_itemlist[ITM_JAR_PHYSGUN]=bg_itemlist[ITM_CONCUSSION_RIFLE_PICKUP];
+    bg_itemlist[ITM_JAR_TOOLGUN]=bg_itemlist[ITM_BLASTER_PISTOL_PICKUP];
+    for(int index=ITM_JAR_PHYSGUN;index<=ITM_JAR_TOOLGUN;++index){auto& item=bg_itemlist[index];
+        const bool physics=index==ITM_JAR_PHYSGUN;
+        item.classname=physics?"weapon_jar_physgun":"weapon_jar_toolgun";
+        item.icon=physics?"jar/icons/physgun":"jar/icons/toolgun";
+        item.giTag=physics?WP_PHYSGUN:WP_TOOLGUN;item.quantity=0;
+    }
+    using namespace jar::forceBoon;
+    bg_itemlist[ITM_JAR_FORCE_BOON]={classname,sound,model,icon,seconds,IT_POWERUP,PW_FORCE_BOON,
+        nullptr,nullptr,{-16,-16,-2},{16,16,16}};
+    for (unsigned i=0;i<ARRAY_LEN(jar::enlightenment::pickups);++i) {
+        const auto& pickup=jar::enlightenment::pickups[i];
+        bg_itemlist[ITM_JAR_LIGHT_ENLIGHTENMENT+i]={pickup.classname,jar::enlightenment::sound,
+            pickup.model,pickup.icon,jar::enlightenment::seconds,IT_POWERUP,pickup.tag,
+            nullptr,nullptr,{-16,-16,-2},{16,16,16}};
+    }
 
 	gi.FS_FreeFile( buffer );	//let go of the buffer
 }

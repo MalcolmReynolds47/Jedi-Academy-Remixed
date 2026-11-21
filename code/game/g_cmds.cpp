@@ -1,3 +1,4 @@
+#include <cmath>
 /*
 ===========================================================================
 Copyright (C) 1999 - 2005, Id Software, Inc.
@@ -22,6 +23,10 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "g_local.h"
+#include "g_workshop.h"
+#include "g_spawn_transaction.h"
+#include "g_subbsp_ownership.h"
+#include "g_target_music.h"
 #include "objectives.h"
 #include "wp_saber.h"
 #include "g_vehicles.h"
@@ -219,7 +224,7 @@ void G_Give( gentity_t *ent, const char *name, const char *args, int argc )
 
 	if ( !give_all && !Q_stricmp( name, "eweaps" ) )	//for developing, gives you all the weapons, including enemy
 	{
-		ent->client->ps.stats[STAT_WEAPONS] = (unsigned)(1 << WP_NUM_WEAPONS) - ( 1 << WP_NONE ); // NOTE: this wasn't giving the last weapon in the list
+		ent->client->ps.stats[STAT_WEAPONS] = (unsigned)(1u << WP_NATIVE_WEAPON_COUNT) - ( 1 << WP_NONE ); // NOTE: this wasn't giving the last weapon in the list
 		return;
 	}
 
@@ -258,7 +263,8 @@ void G_Give( gentity_t *ent, const char *name, const char *args, int argc )
 			}
 		}
 
-		it_ent = G_Spawn();
+		it_ent = G_TrySpawn();
+		if (!it_ent) return;
 		VectorCopy( ent->currentOrigin, it_ent->s.origin );
 		it_ent->classname = G_NewString(it->classname);
 		G_SpawnItem (it_ent, it);
@@ -296,7 +302,8 @@ void Cmd_Fx( gentity_t *ent )
 				G_FreeEntity( fx_ent );
 			}
 
-			fx_ent = G_Spawn();
+			fx_ent = G_TrySpawn();
+			if (!fx_ent) return;
 
 			fx_ent->fxFile = gi.argv( 2 );
 
@@ -614,35 +621,34 @@ extern qboolean G_CallSpawn( gentity_t *ent );
 
 void UserSpawn( gentity_t *ent, const char *name )
 {
-	vec3_t		origin;
-	vec3_t		vf;
-	vec3_t		angles;
-	gentity_t	*ent2;
+	G_SpawnTransaction transaction;
+	try {
+		gentity_t* spawned = G_TrySpawn();
+		if (!spawned) return;
+		spawned->classname = G_NewString(name);
 
-	//Spawn the ent
-	ent2 = G_Spawn();
-	ent2->classname = G_NewString( name );
+		vec3_t origin, forward;
+		const vec3_t angles = {0, ent->s.apos.trBase[YAW], 0};
+		AngleVectors(angles, forward, nullptr, nullptr);
+		VectorMA(ent->s.pos.trBase, 96, forward, origin);
+		origin[2] += 8;
+		VectorCopy(origin, spawned->s.pos.trBase);
+		VectorCopy(origin, spawned->s.origin);
+		VectorCopy(ent->s.apos.trBase, spawned->s.angles);
+		gi.linkentity(spawned);
 
-	//TODO: This should ultimately make sure this is a safe spawn!
-
-	//Spawn the entity and place it there
-	VectorSet( angles, 0, ent->s.apos.trBase[YAW], 0 );
-	AngleVectors( angles, vf, NULL, NULL );
-	VectorMA( ent->s.pos.trBase, 96, vf, origin );	//FIXME: Find the radius size of the object, and push out 32 + radius
-
-	origin[2] += 8;
-	VectorCopy( origin, ent2->s.pos.trBase );
-	VectorCopy( origin, ent2->s.origin );
-	VectorCopy( ent->s.apos.trBase, ent2->s.angles );
-
-	gi.linkentity( ent2 );
-
-	//Find a valid spawning spot
-	if ( G_CallSpawn( ent2 ) == qfalse )
-	{
-		gi.SendServerCommand( ent-g_entities, "print \"Failed to spawn '%s'\n\"", name );
-		G_FreeEntity( ent2 );
-		return;
+		const auto lifetime = G_EntityLifetime(spawned);
+		G_JAR_WorkshopTrackConsole(spawned);
+		if (!G_CallSpawn(spawned)) {
+			gi.SendServerCommand(ent-g_entities, "print \"Failed to spawn '%s'\n\"", name);
+			return;
+		}
+		if (transaction.Commit()) {
+			if (G_EntityLifetime(spawned) == lifetime)
+				transaction.ForEachLiveAllocation(G_JAR_WorkshopTrackConsoleChild, spawned);
+		} else gi.Printf("Entity capacity reached. Console spawn rolled back.\n");
+	} catch (const G_SpawnCapacity&) {
+		gi.Printf("Entity capacity reached. Console spawn rolled back.\n");
 	}
 }
 
@@ -676,8 +682,8 @@ void Cmd_SetViewpos_f( gentity_t *ent ) {
 		gi.SendServerCommand( ent-g_entities, va("print \"Cheats are not enabled on this server.\n\""));
 		return;
 	}
-	if ( gi.argc() != 5 ) {
-		gi.SendServerCommand( ent-g_entities, va("print \"usage: setviewpos x y z yaw\n\""));
+	if ( gi.argc() != 5 && gi.argc() != 6 ) {
+		gi.SendServerCommand( ent-g_entities, va("print \"usage: setviewpos x y z yaw [pitch]\n\""));
 		return;
 	}
 
@@ -688,6 +694,9 @@ void Cmd_SetViewpos_f( gentity_t *ent ) {
 	origin[2] -= 25;	//acount for eye height from viewpos cmd
 
 	angles[YAW] = atof( gi.argv( 4 ) );
+ // Optional pitch supports exact local Sandbox aim fixtures. The existing
+ // single-player cheat gate above is unchanged; four-argument behavior stays flat.
+ if(gi.argc()==6){angles[PITCH]=atof(gi.argv(5));if(!std::isfinite(angles[PITCH]) || angles[PITCH]<-89 || angles[PITCH]>89)return;}
 
 	TeleportPlayer( ent, origin, angles );
 }
@@ -864,7 +873,7 @@ void Cmd_UseSeeker_f( gentity_t *ent )
 	// don't use them if we don't have any...also don't use them if one is already going
 	if ( ent->client && ent->client->ps.inventory[INV_SEEKER] > 0 && level.time > ent->client->ps.powerups[PW_SEEKER] )
 	{
-		gentity_t	*tent = G_Spawn();
+		gentity_t	*tent = G_TrySpawn();
 
 		if ( tent )
 		{
@@ -947,6 +956,8 @@ void Cmd_UseSentry_f(gentity_t *ent)
 Cmd_UseInventory_f
 ================
 */
+#include "g_portable_shield.h"
+#include "g_datapad.inc"
 void Cmd_UseInventory_f(gentity_t *ent)
 {
 	switch (cg.inventorySelect)
@@ -966,6 +977,12 @@ void Cmd_UseInventory_f(gentity_t *ent)
 			return;
 		case INV_SENTRY :
 			Cmd_UseSentry_f(ent);
+			return;
+		case INV_PORTABLE_SHIELD :
+			if (!G_UsePortableShield(ent)) gi.cvar_set("jar_workshopStatus","Shield needs clear space ahead and a nearby solid world floor; charge retained.");
+			return;
+		case INV_DATAPAD :
+			G_UseDatapad(ent);
 			return;
 		default :
 			return;
@@ -1587,7 +1604,7 @@ void ClientCommand( int clientNum ) {
 		const char *cmd2 = gi.argv(1);
 		if ( cmd2 )
 		{
-			gi.SetConfigstring( CS_MUSIC, cmd2 );
+			G_SetMusic(cmd2);
 		}
 	}
 	else if (Q_stricmp (cmd, "flushcam") == 0)

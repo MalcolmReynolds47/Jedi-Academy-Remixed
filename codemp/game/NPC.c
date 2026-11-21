@@ -24,6 +24,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // NPC.cpp - generic functions
 //
 #include "b_local.h"
+#include "g_jar_sandbox.h"
 #include "anims.h"
 #include "say.h"
 #include "icarus/Q3_Interface.h"
@@ -1319,6 +1320,7 @@ extern qboolean NPC_CheckSurrender( void );
 extern void Boba_FlyStop( gentity_t *self );
 extern void NPC_BSWampa_Default( void );
 extern qboolean Jedi_CultistDestroyer( gentity_t *self );
+#include "g_jar_npc_tactics.inc"
 void NPC_RunBehavior( int team, int bState )
 {
 	if (NPCS.NPC->s.NPC_class == CLASS_VEHICLE &&
@@ -1326,6 +1328,9 @@ void NPC_RunBehavior( int team, int bState )
 	{ //vehicles don't do AI!
 		return;
 	}
+
+	if (bState == BS_DEFAULT && NPC_SandboxTactics())
+		return;
 
 	if ( bState == BS_CINEMATIC )
 	{
@@ -1645,7 +1650,7 @@ void NPC_ExecuteBState ( gentity_t *self)//, int msec )
 
 	// run the bot through the server like it was a real client
 //=== Save the ucmd for the second no-think Pmove ============================
-	NPCS.ucmd.serverTime = level.time - 50;
+	NPCS.ucmd.serverTime = level.time - JAR_NPC_COMMAND_TIME_OFFSET;
 	memcpy( &NPCS.NPCInfo->last_ucmd, &NPCS.ucmd, sizeof( usercmd_t ) );
 	if ( !NPCS.NPCInfo->attackHoldTime )
 	{
@@ -1770,6 +1775,7 @@ void NPC_Think ( gentity_t *self)//, int msec )
 	gentity_t *player;
 
 	self->nextthink = level.time + FRAMETIME;
+	if (JAR_MP_ActorThink(self, NULL)) return;
 
 	SetNPCGlobals( self );
 
@@ -1783,6 +1789,17 @@ void NPC_Think ( gentity_t *self)//, int msec )
 
 	if(!self || !self->NPC || !self->client)
 	{
+		return;
+	}
+
+	if (JAR_MP_NPCThrowCommand(self, &NPCS.ucmd))
+	{
+		// Use the ordinary Pmove, impacts and triggers with no AI steering
+		// until the release momentum carries the NPC back to the ground.
+		if (NPCS.ucmd.serverTime > self->client->ps.commandTime)
+			ClientThink(self->s.number, &NPCS.ucmd);
+		if (self->inuse)
+			trap->ICARUS_MaintainTaskManager(self->s.number);
 		return;
 	}
 
@@ -1826,7 +1843,7 @@ void NPC_Think ( gentity_t *self)//, int msec )
 				//FIXME: might want to at least make sounds or something?
 				//NPC_UpdateAngles(qtrue, qtrue);
 				//Which ucmd should we send?  Does it matter, since it gets overridden anyway?
-				NPCS.NPCInfo->last_ucmd.serverTime = level.time - 50;
+				NPCS.NPCInfo->last_ucmd.serverTime = level.time - JAR_NPC_COMMAND_TIME_OFFSET;
 				ClientThink( NPCS.NPC->s.number, &NPCS.ucmd );
 				//VectorCopy(self->s.origin, self->s.origin2 );
 				VectorCopy(self->r.currentOrigin, self->client->ps.origin);
@@ -1899,7 +1916,7 @@ void NPC_Think ( gentity_t *self)//, int msec )
 	{
 		VectorCopy( oldMoveDir, self->client->ps.moveDir );
 		//or use client->pers.lastCommand?
-		NPCS.NPCInfo->last_ucmd.serverTime = level.time - 50;
+		NPCS.NPCInfo->last_ucmd.serverTime = level.time - JAR_NPC_COMMAND_TIME_OFFSET;
 		if ( !NPCS.NPC->next_roff_time || NPCS.NPC->next_roff_time < level.time )
 		{//If we were following a roff, we don't do normal pmoves.
 			//FIXME: firing angles (no aim offset) or regular angles?

@@ -24,6 +24,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 // cg_main.c -- initialization and primary entry point for cgame
 #include "cg_local.h"
+#include "../../shared/qcommon/jar_logic_marker.h"
+#include "../game/jar_mp_music.h"
 
 #include "ui/ui_shared.h"
 
@@ -647,7 +649,6 @@ static void CG_RegisterSounds( void ) {
 
 	cgs.media.rivetMarkShader			= trap->R_RegisterShader( "gfx/damage/rivetmark" );
 
-	trap->R_RegisterShader( "gfx/effects/saberFlare" );
 
 	trap->R_RegisterShader( "powerups/ysalimarishell" );
 
@@ -1053,9 +1054,13 @@ CG_RegisterGraphics
 This function may execute for a couple of minutes with a slow disk.
 =================
 */
+#define JAR_BSP_CALL(name) trap->name
+#include "../../shared/qcommon/jar_bsp_client.inc"
+#undef JAR_BSP_CALL
+
 static void CG_RegisterGraphics( void ) {
 	int			i;
-	int			breakPoint;
+
 	char		items[MAX_ITEMS+1];
 
 	static char		*sb_nums[11] = {
@@ -1334,6 +1339,7 @@ static void CG_RegisterGraphics( void ) {
 Ghoul2 Insert Start
 */
 	CG_InitItems();
+	CG_JAR_Init();
 /*
 Ghoul2 Insert End
 */
@@ -1375,7 +1381,9 @@ Ghoul2 Insert End
 	cgs.media.viewPainShader_ShieldsAndHealth	= trap->R_RegisterShader( "gfx/mp/dmgshader_shieldsandhealth" );
 
 	// register the inline models
-	breakPoint = cgs.numInlineModels = trap->CM_NumInlineModels();
+	CG_ResetBSPModels();
+	cgs.numInlineModels = trap->CM_NumInlineModels();
+	if(cgs.numInlineModels<1 || cgs.numInlineModels>(int)ARRAY_LEN(cgs.inlineDrawModel))CG_Error("BSP inline model capacity exceeded");
 	for ( i = 1 ; i < cgs.numInlineModels ; i++ ) {
 		char	name[10];
 		vec3_t			mins, maxs;
@@ -1385,7 +1393,6 @@ Ghoul2 Insert End
 		cgs.inlineDrawModel[i] = trap->R_RegisterModel( name );
 		if (!cgs.inlineDrawModel[i])
 		{
-			breakPoint = i;
 			break;
 		}
 
@@ -1431,44 +1438,8 @@ Ghoul2 Insert Start
 
 //	CG_LoadingString( "BSP instances" );
 
-	for(i = 1; i < MAX_SUB_BSP; i++)
-	{
-		const char		*bspName = 0;
-		vec3_t			mins, maxs;
-		int				j;
-		int				sub = 0;
-		char			temp[MAX_QPATH];
+	CG_RegisterBSPModels();
 
-		bspName = CG_ConfigString( CS_BSP_MODELS+i );
-		if ( !bspName[0] )
-		{
-			break;
-		}
-
-		trap->CM_LoadMap( bspName, qtrue );
-		cgs.inlineDrawModel[breakPoint] = trap->R_RegisterModel( bspName );
-		trap->R_ModelBounds( cgs.inlineDrawModel[breakPoint], mins, maxs );
-		for ( j = 0 ; j < 3 ; j++ )
-		{
-			cgs.inlineModelMidpoints[breakPoint][j] = mins[j] + 0.5 * ( maxs[j] - mins[j] );
-		}
-		breakPoint++;
-		for(sub=1;sub<MAX_MODELS;sub++)
-		{
-			Com_sprintf(temp, MAX_QPATH, "*%d-%d", i, sub);
-			cgs.inlineDrawModel[breakPoint] = trap->R_RegisterModel( temp );
-			if (!cgs.inlineDrawModel[breakPoint])
-			{
-				break;
-			}
-			trap->R_ModelBounds( cgs.inlineDrawModel[breakPoint], mins, maxs );
-			for ( j = 0 ; j < 3 ; j++ )
-			{
-				cgs.inlineModelMidpoints[breakPoint][j] = mins[j] + 0.5 * ( maxs[j] - mins[j] );
-			}
-			breakPoint++;
-		}
-	}
 
 	/*
 	CG_LoadingString("skins");
@@ -1649,7 +1620,8 @@ void CG_StartMusic( qboolean bForceStart ) {
 	Q_strncpyz( parm1, COM_Parse( (const char **)&s ), sizeof( parm1 ) );
 	Q_strncpyz( parm2, COM_Parse( (const char **)&s ), sizeof( parm2 ) );
 
-	trap->S_StartBackgroundTrack( parm1, parm2, !bForceStart );
+	const qboolean portable = !strcmp(COM_Parse((const char **)&s), JAR_MUSIC_CUE_TAG);
+	trap->S_StartBackgroundTrack(parm1, parm2, !bForceStart && !portable);
 }
 
 char *CG_GetMenuBuffer(const char *filename) {
@@ -2465,6 +2437,7 @@ Ghoul2 Insert End
 	// load a few needed things before we do any screen updates
 	cgs.media.charsetShader		= trap->R_RegisterShaderNoMip( "gfx/2d/charsgrid_med" );
 	cgs.media.whiteShader		= trap->R_RegisterShader( "white" );
+	cgs.media.jarLogicMarkerShader = trap->R_RegisterShader(JAR_LOGIC_MARKER_SHADER);
 
 	cgs.media.loadBarLED		= trap->R_RegisterShaderNoMip( "gfx/hud/load_tick" );
 	cgs.media.loadBarLEDCap		= trap->R_RegisterShaderNoMip( "gfx/hud/load_tick_cap" );
@@ -2694,6 +2667,7 @@ Called before every level change or subsystem restart
 */
 void CG_Shutdown( void )
 {
+	CG_JAR_Shutdown();
 	BG_ClearAnimsets(); //free all dynamic allocations made through the engine
 
     CG_DestroyAllGhoul2();

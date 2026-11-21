@@ -1,3 +1,4 @@
+#include "qcommon/jar_diagnostics.h"
 /*
 ===========================================================================
 Copyright (C) 1999 - 2005, Id Software, Inc.
@@ -28,6 +29,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "client.h"
 #include "client_ui.h"
+#include "ui/ui_jar.h"
 #include <limits.h>
 #include "../ghoul2/G2.h"
 #include "qcommon/stringed_ingame.h"
@@ -353,6 +355,7 @@ CL_Disconnect_f
 ==================
 */
 void CL_Disconnect_f( void ) {
+	Cvar_Set("jar_inventoryTransferCount","0");
 	SCR_StopCinematic();
 
 	//FIXME:
@@ -374,11 +377,13 @@ Restart the video subsystem
 =================
 */
 void CL_Vid_Restart_f( void ) {
+	JAR_DiagnosticsSnapshot("vid_restart_begin");
 	S_StopAllSounds();		// don't let them loop during the restart
 	S_BeginRegistration();	// all sound handles are now invalid
-	CL_ShutdownRef(qtrue);
+	// Client-game shutdown clears reflection probes and weather through the renderer.
 	CL_ShutdownUI();
 	CL_ShutdownCGame();
+	CL_ShutdownRef(qtrue);
 
 	//rww - sof2mp does this here, but it seems to cause problems in this codebase.
 //	CM_ClearMap();
@@ -391,6 +396,7 @@ void CL_Vid_Restart_f( void ) {
 	CL_InitRef();
 
 	CL_StartHunkUsers();
+	JAR_DiagnosticsSnapshot("vid_restart_end");
 
 	// unpause so the cgame definately gets a snapshot and renders a frame
 	Cvar_Set( "cl_paused", "0" );
@@ -761,12 +767,16 @@ CL_Frame
 extern cvar_t	*cl_newClock;
 static unsigned int frameCount;
 float avgFrametime=0.0;
+#include "qcommon/jar_workshop_state.h"
+#include "cl_jar_workshop.inc"
 void CL_Frame ( int msec,float fractionMsec ) {
 
 	if ( !com_cl_running->integer ) {
 		return;
 	}
 
+	CL_JAR_WorkshopBinding();
+	if(cls.state!=CA_ACTIVE || CL_IsRunningInGameCinematic())UI_JAR_OverlayClose();
 	// load the ref / cgame if needed
 	CL_StartHunkUsers();
 
@@ -892,6 +902,7 @@ CL_ShutdownRef
 ============
 */
 static void CL_ShutdownRef( qboolean restarting ) {
+	JAR_Log(1,"renderer","unload_begin","restart=%d module=%p",restarting,rendererLib);
 	if ( re.Shutdown ) {
 		re.Shutdown( qtrue, restarting );
 	}
@@ -901,6 +912,7 @@ static void CL_ShutdownRef( qboolean restarting ) {
 	if ( rendererLib != NULL ) {
 		Sys_UnloadDll (rendererLib);
 		rendererLib = NULL;
+		JAR_Log(1,"renderer","unload_end","restart=%d",restarting);
 	}
 }
 
@@ -932,6 +944,7 @@ CL_InitRenderer
 void CL_InitRenderer( void ) {
 	// this sets up the renderer and calls R_Init
 	re.BeginRegistration( &cls.glconfig );
+	JAR_Log(1,"renderer","gpu","vendor=%s renderer=%s version=%s width=%d height=%d",cls.glconfig.vendor_string,cls.glconfig.renderer_string,cls.glconfig.version_string,cls.glconfig.vidWidth,cls.glconfig.vidHeight);
 
 	// load character sets
 	cls.charSetShader = re.RegisterShaderNoMip("gfx/2d/charsgrid_med");
@@ -1055,11 +1068,6 @@ int get_com_frameTime( void )
 	return com_frameTime;
 }
 
-void *CL_Malloc(int iSize, memtag_t eTag, qboolean bZeroit, int iAlign)
-{
-    return Z_Malloc(iSize, eTag, bZeroit);
-}
-
 /*
 ============
 CL_InitRef
@@ -1078,7 +1086,7 @@ static CMiniHeap *GetG2VertSpaceServer( void ) {
 #ifdef JK2_MODE
 #define DEFAULT_RENDER_LIBRARY	"rdjosp-vanilla"
 #else
-#define DEFAULT_RENDER_LIBRARY	"rdsp-vanilla"
+#define DEFAULT_RENDER_LIBRARY	"rdjar-vanilla"
 #endif
 
 void CL_InitRef( void ) {
@@ -1153,7 +1161,7 @@ void CL_InitRef( void ) {
 	RIT(SV_Trace);
 	RIT(S_RestartMusic);
 	RIT(Z_Free);
-	rit.Malloc=CL_Malloc;
+	RIT(Z_Malloc);
 	RIT(Z_MemSize);
 	RIT(Z_MorphMallocTag);
 
@@ -1175,6 +1183,7 @@ void CL_InitRef( void ) {
 	rit.LowPhysicalMemory = Sys_LowPhysicalMemory;
 	rit.Milliseconds = Sys_Milliseconds2;
 	rit.Printf = CL_RefPrintf;
+	rit.JAR_Log = JAR_Log;
 	rit.SE_GetString = String_GetStringValue;
 
 	rit.SV_Trace = SV_Trace;
@@ -1196,6 +1205,7 @@ void CL_InitRef( void ) {
 	}
 
 	re = *ret;
+	JAR_Log(1,"renderer","loaded","name=%s module=%p api=%d",dllName,rendererLib,REF_API_VERSION);
 
 	Com_Printf( "-------------------------------\n");
 
@@ -1314,6 +1324,10 @@ void CL_Init( void ) {
 	Cmd_SetCommandCompletionFunc( "cinematic", CL_CompleteCinematic );
 	Cmd_AddCommand ("ingamecinematic", CL_PlayInGameCinematic_f);
 	Cmd_AddCommand ("uimenu", CL_GenericMenu_f);
+    Cmd_AddCommand("+jar_spawnmenu", [](){if(cls.state==CA_ACTIVE && !Key_GetCatcher() && !CL_IsRunningInGameCinematic())UI_JAR_OverlayHeld(true);});
+    Cmd_AddCommand("-jar_spawnmenu", [](){UI_JAR_OverlayHeld(false);});
+    Cmd_AddCommand("+jar_contextmenu", [](){if(cls.state==CA_ACTIVE && !Key_GetCatcher() && !CL_IsRunningInGameCinematic())UI_JAR_ContextHeld(true);});
+    Cmd_AddCommand("-jar_contextmenu", [](){UI_JAR_ContextHeld(false);});
 	Cmd_AddCommand ("datapad", CL_DataPad_f);
 	Cmd_AddCommand ("endscreendissolve", CL_EndScreenDissolve_f);
 

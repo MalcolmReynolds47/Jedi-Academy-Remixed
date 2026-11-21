@@ -1,0 +1,5 @@
+These gameplay definitions are original JA:R work, GPL-2.0-only.
+They refer to installed Jedi Academy retail model paths and native animations,
+sounds and blade rendering. No model, animation, texture or JA+ code is copied
+into this directory. Retail assets remain subject to their original licenses;
+these definitions confer no redistribution permission for retail assets.

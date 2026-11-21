@@ -23,6 +23,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "g_local.h"
+#include "g_jar_sandbox.h"
 #include "bg_saga.h"
 
 extern void Jedi_Cloak( gentity_t *self );
@@ -957,7 +958,8 @@ void ClientEvents( gentity_t *ent, int oldEventSequence ) {
 					break;
 				}
 
-				if ( ent->s.eType != ET_PLAYER )
+				const qboolean groundNPC = ent->s.eType == ET_NPC && ent->NPC && !ent->m_pVehicle;
+				if ( ent->s.eType != ET_PLAYER && !groundNPC )
 				{
 					break;		// not in the player model
 				}
@@ -993,6 +995,12 @@ void ClientEvents( gentity_t *ent, int oldEventSequence ) {
 						delta > 60)
 					{ //longer falls hurt more
 						damage = delta*1; //good enough for now, I guess
+					}
+					else if (groundNPC)
+					{
+						// Scale damage above the safe landing threshold. Hard enough
+						// impacts can kill a healthy NPC, even outside Siege.
+						damage = (delta - 44 + 1) / 2;
 					}
 					else
 					{
@@ -1887,6 +1895,8 @@ void ClientThink_real( gentity_t *ent ) {
 		return;
 	}
 
+	if (JAR_MP_ActorThink(ent, &client->pers.cmd)) return;
+
 	// This code was moved here from clientThink to fix a problem with g_synchronousClients
 	// being set to 1 when in vehicles.
 	if ( ent->s.number < MAX_CLIENTS && ent->client->ps.m_iVehicleNum )
@@ -2379,10 +2389,11 @@ void ClientThink_real( gentity_t *ent ) {
 		}
 		else
 		{
-			if (ent->client->inSpaceIndex && ent->client->inSpaceIndex != ENTITYNUM_NONE)
+			const int spaceGravity = JAR_MP_SpaceGravity(ent);
+			if (spaceGravity >= 0)
 			{ //in space, so no gravity...
-				client->ps.gravity = 1.0f;
-				if (ent->s.number < MAX_CLIENTS)
+				client->ps.gravity = spaceGravity;
+				if (spaceGravity && ent->s.number < MAX_CLIENTS)
 				{
 					VectorScale(client->ps.velocity, 0.8f, client->ps.velocity);
 				}
@@ -2396,7 +2407,7 @@ void ClientThink_real( gentity_t *ent ) {
 				}
 				else
 				{
-					client->ps.gravity = g_gravity.value;
+					JAR_MP_ApplyMovementGravity(ent);
 				}
 			}
 		}
@@ -2887,6 +2898,7 @@ void ClientThink_real( gentity_t *ent ) {
 
 	pmove.gametype = level.gametype;
 	pmove.debugMelee = g_debugMelee.integer;
+	pmove.jarContinuousFists = client->pers.jarContinuousFists;
 	pmove.stepSlideFix = g_stepSlideFix.integer;
 
 	pmove.noSpecMove = g_noSpecMove.integer;
@@ -2894,6 +2906,7 @@ void ClientThink_real( gentity_t *ent ) {
 	pmove.nonHumanoid = (ent->localAnimIndex > 0);
 
 	VectorCopy( client->ps.origin, client->oldOrigin );
+	const int directionalTeleportBit = client->ps.eFlags & EF_TELEPORT_BIT;
 
 	/*
 	if (level.intermissionQueued != 0 && g_singlePlayer.integer) {
@@ -3374,6 +3387,7 @@ void ClientThink_real( gentity_t *ent ) {
 	// link entity now, after any personal teleporters have been used
 	trap->LinkEntity ((sharedEntity_t *)ent);
 	if ( !ent->client->noclip ) {
+		JAR_MP_DirectionalCrossings(ent, directionalTeleportBit);
 		G_TouchTriggers( ent );
 	}
 
@@ -3564,6 +3578,7 @@ void ClientThink( int clientNum, usercmd_t *ucmd ) {
 	{
 		ent->client->pers.cmd = *ucmd;
 	}
+	JAR_MP_ReceivePhysgunInput(ent,&ent->client->pers.cmd,qtrue);
 
 /* 	This was moved to clientthink_real, but since its sort of a risky change i left it here for
     now as a more concrete reference - BSD
@@ -3625,6 +3640,7 @@ void G_RunClient( gentity_t *ent ) {
 	// force client updates if they're not sending packets at roughly 4hz
 	if ( !(ent->r.svFlags & SVF_BOT) && g_forceClientUpdateRate.integer && ent->client->lastCmdTime < level.time - g_forceClientUpdateRate.integer ) {
 		trap->GetUsercmd( ent-g_entities, &ent->client->pers.cmd );
+		JAR_MP_ReceivePhysgunInput(ent,&ent->client->pers.cmd,qfalse);
 
 		ent->client->lastCmdTime = level.time;
 

@@ -986,7 +986,7 @@ locationData_t *Team_GetLocation(gentity_t *ent)
 		best = loc;
 	}
 
-	return best;
+	return JAR_MP_Location(ent, best, bestlen);
 }
 
 

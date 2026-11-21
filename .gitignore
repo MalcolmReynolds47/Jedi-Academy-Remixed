@@ -194,3 +194,10 @@ compile_commands.json
 #############
 [Bb]uild*/
 cmake-build-*
+
+# Local game data, release packages, and development handoffs
+/GameData/
+*.pk3
+JediAcademyRemixed-*-win64.zip
+/CODEX-*
+/START-HERE-CODEX-*

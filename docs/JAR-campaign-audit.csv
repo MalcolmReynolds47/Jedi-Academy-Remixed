@@ -1,0 +1,35 @@
+map,source,npc_spawners,named_actors,spawners_with_nonordinary_metadata,referenced_scripts,potential_lifecycle_operations,music
+academy1,assets0.pk3:maps/academy1.bsp,21,21,21,10,9,music/yavin2_old/yavtemp_explore.mp3
+academy2,assets0.pk3:maps/academy2.bsp,17,17,17,9,0,music/yavin2_old/yavtemp_explore.mp3
+academy3,assets0.pk3:maps/academy3.bsp,3,3,3,3,0,music/yavin2_old/yavtemp_explore.mp3
+academy4,assets0.pk3:maps/academy4.bsp,16,16,16,7,0,music/yavin2_old/yavtemp_explore.mp3
+academy5,assets0.pk3:maps/academy5.bsp,3,3,3,3,0,music/yavin2_old/yavtemp_explore.mp3
+academy6,assets0.pk3:maps/academy6.bsp,17,6,17,8,0,music/yavin2_old/yavtemp_explore.mp3
+hoth2,assets0.pk3:maps/hoth2.bsp,106,38,74,48,16,native map default
+hoth3,assets0.pk3:maps/hoth3.bsp,74,26,54,23,3,native map default
+kor1,assets0.pk3:maps/kor1.bsp,83,44,46,63,22,native map default
+kor2,assets0.pk3:maps/kor2.bsp,98,89,98,46,136,native map default
+t1_danger,assets0.pk3:maps/t1_danger.bsp,136,6,136,9,10,native map default
+t1_fatal,assets0.pk3:maps/t1_fatal.bsp,97,18,63,47,11,native map default
+t1_inter,assets0.pk3:maps/t1_inter.bsp,8,8,8,2,0,native map default
+t1_rail,assets0.pk3:maps/t1_rail.bsp,50,21,26,36,31,music/t1_rail/rail_nowhere.mp3
+t1_sour,assets0.pk3:maps/t1_sour.bsp,89,49,68,50,51,native map default
+t1_surprise,assets0.pk3:maps/t1_surprise.bsp,122,69,89,68,65,native map default
+t2_dpred,assets0.pk3:maps/t2_dpred.bsp,72,38,39,54,34,native map default
+t2_rancor,assets0.pk3:maps/t2_rancor.bsp,75,36,59,67,19,native map default
+t2_rogue,assets0.pk3:maps/t2_rogue.bsp,54,8,21,19,5,native map default
+t2_trip,assets0.pk3:maps/t2_trip.bsp,53,50,51,11,13,music/t1_rail/rail_nowhere.mp3
+t2_wedge,assets0.pk3:maps/t2_wedge.bsp,70,9,57,21,39,native map default
+t3_bounty,assets0.pk3:maps/t3_bounty.bsp,6,6,6,7,8,native map default
+t3_byss,assets0.pk3:maps/t3_byss.bsp,101,15,19,33,13,native map default
+t3_hevil,assets0.pk3:maps/t3_hevil.bsp,76,44,61,73,17,native map default
+t3_rift,assets0.pk3:maps/t3_rift.bsp,40,8,14,26,1,native map default
+t3_stamp,assets0.pk3:maps/t3_stamp.bsp,30,30,30,32,41,music/t1_rail/rail_nowhere.mp3
+taspir1,assets0.pk3:maps/taspir1.bsp,125,17,20,26,5,native map default
+taspir2,assets0.pk3:maps/taspir2.bsp,68,50,53,51,68,native map default
+vjun1,assets0.pk3:maps/vjun1.bsp,77,13,66,33,8,native map default
+vjun2,assets0.pk3:maps/vjun2.bsp,57,20,33,53,21,native map default
+vjun3,assets0.pk3:maps/vjun3.bsp,69,27,54,40,16,native map default
+yavin1,assets0.pk3:maps/yavin1.bsp,17,17,17,32,31,native map default
+yavin1b,assets0.pk3:maps/yavin1b.bsp,36,32,36,29,31,native map default
+yavin2,assets0.pk3:maps/yavin2.bsp,20,13,20,36,10,native map default

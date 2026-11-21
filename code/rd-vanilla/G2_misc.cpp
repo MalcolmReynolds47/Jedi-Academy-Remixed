@@ -427,7 +427,6 @@ void R_TransformEachSurface( const mdxmSurface_t *surface, vec3_t scale, CMiniHe
 	TransformedVertsArray[surface->thisSurfaceIndex] = (intptr_t)TransformedVerts;
 	if (!TransformedVerts)
 	{
-		assert(TransformedVerts);
 		Com_Error(ERR_DROP, "Ran out of transform space for Ghoul2 Models. Adjust G2_MINIHEAP_SIZE in sv_init.cpp.\n");
 	}
 

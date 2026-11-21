@@ -23,6 +23,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "cm_local.h"
 
+
 /*
 ==================
 CM_PointLeafnum_r
@@ -53,6 +54,8 @@ int CM_PointLeafnum_r( const vec3_t p, int num, clipMap_t *local ) {
 
 	return -1 - num;
 }
+
+#include "cm_jar_hoth_sky.inc"
 
 int CM_PointLeafnum( const vec3_t p ) {
 	if ( !cmg.numNodes ) {	// map not loaded

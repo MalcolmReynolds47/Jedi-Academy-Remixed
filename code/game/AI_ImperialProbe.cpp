@@ -318,6 +318,7 @@ void ImperialProbe_FireBlaster(void)
 	}
 
 	missile = CreateMissile( muzzle1, forward, 1600, 10000, NPC );
+	if (!missile) return;
 
 	missile->classname = "bryar_proj";
 	missile->s.weapon = WP_BRYAR_PISTOL;

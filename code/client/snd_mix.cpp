@@ -1,3 +1,5 @@
+#include "qcommon/jar_diagnostics.h"
+#include "qcommon/jar_sound_randomizer.h"
 /*
 ===========================================================================
 Copyright (C) 1999 - 2005, Id Software, Inc.
@@ -28,13 +30,74 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "snd_local.h"
 
 portable_samplepair_t paintbuffer[PAINTBUFFER_SIZE];
-int 	*snd_p, snd_linear_count, snd_vol;
+int64_t *snd_p;
+int snd_linear_count, snd_vol;
 short	*snd_out;
+
+// Optional bounded capture of this game's mixed PCM, never system/other-app
+// audio. Native console command: jar_audio_capture <simple-name> <1-20 seconds>.
+extern int s_soundStarted;
+extern qboolean s_soundMuted;
+#ifdef USE_OPENAL
+extern int s_UseOpenAL;
+#endif
+static fileHandle_t jarCaptureFile;
+static unsigned jarCaptureFrames, jarCaptureRemaining;
+static void CaptureWord(unsigned value) {
+    const byte data[4] = {byte(value),byte(value>>8),byte(value>>16),byte(value>>24)};
+    FS_Write(data,sizeof(data),jarCaptureFile);
+}
+void S_JAR_CaptureStop() {
+    if (!jarCaptureFile) return;
+    FS_Seek(jarCaptureFile,4,FS_SEEK_SET); CaptureWord(36+jarCaptureFrames*4);
+    FS_Seek(jarCaptureFile,40,FS_SEEK_SET); CaptureWord(jarCaptureFrames*4);
+    FS_FCloseFile(jarCaptureFile); jarCaptureFile=0; jarCaptureRemaining=0;
+    JAR_Log(1,"sound","capture_complete","frames=%u rate=%d",jarCaptureFrames,dma.speed);
+}
+void S_JAR_Capture_f() {
+    bool openAL = false;
+#ifdef USE_OPENAL
+    openAL = s_UseOpenAL != 0;
+#endif
+    if (!jar::CanCaptureAudio(s_soundStarted != 0,s_soundMuted != 0,openAL,dma.buffer != nullptr,dma.speed)) {
+        Com_Printf("Audio capture requires an active, unmuted software mixer.\n"); return;
+    }
+    uint32_t seconds;
+    if (Cmd_Argc()!=3 || !jar::ParsePickupSeed(Cmd_Argv(2),seconds) || seconds<1 || seconds>20 || dma.speed<8000 || dma.speed>96000) {
+        Com_Printf("Usage: jar_audio_capture <name> <1-20 seconds> (active software mixer)\n"); return;
+    }
+    const char *name=Cmd_Argv(1);
+    if (!*name || std::strlen(name)>48) return;
+    for (const char *p=name; *p; ++p)
+        if (!((*p>='a' && *p<='z') || (*p>='A' && *p<='Z') || (*p>='0' && *p<='9') || *p=='_' || *p=='-')) return;
+    char path[MAX_QPATH]; Com_sprintf(path,sizeof(path),"jar-audio/%s.wav",name);
+    if (FS_FileExists(path)) { Com_Printf("Capture already exists: %s\n",path); return; }
+    S_JAR_CaptureStop();
+    jarCaptureFile=FS_FOpenFileWrite(path); if (!jarCaptureFile) return;
+    jarCaptureFrames=0; jarCaptureRemaining=seconds*dma.speed;
+    FS_Write("RIFF",4,jarCaptureFile);CaptureWord(36);FS_Write("WAVEfmt ",8,jarCaptureFile);CaptureWord(16);
+    const byte format[4]={1,0,2,0};FS_Write(format,4,jarCaptureFile);CaptureWord(dma.speed);CaptureWord(dma.speed*4);
+    const byte alignment[4]={4,0,16,0};FS_Write(alignment,4,jarCaptureFile);FS_Write("data",4,jarCaptureFile);CaptureWord(0);
+    JAR_Log(1,"sound","capture_begin","file=%s seconds=%u rate=%d",path,seconds,dma.speed);
+}
+static void S_JAR_CapturePaint(int frames) {
+    if (!jarCaptureFile || frames<=0 || frames>PAINTBUFFER_SIZE) return;
+    if (unsigned(frames)>jarCaptureRemaining) frames=jarCaptureRemaining;
+    byte data[PAINTBUFFER_SIZE*4];
+    for (int i=0; i<frames; ++i) for (int channel=0; channel<2; ++channel) {
+        int64_t value=(channel ? paintbuffer[i].right : paintbuffer[i].left)>>8;
+        if (value>32767) value=32767; if (value<-32768) value=-32768;
+        const unsigned sample=unsigned(value)&65535u; const int offset=i*4+channel*2;
+        data[offset]=byte(sample);data[offset+1]=byte(sample>>8);
+    }
+    FS_Write(data,frames*4,jarCaptureFile);jarCaptureFrames+=frames;jarCaptureRemaining-=frames;
+    if (!jarCaptureRemaining) S_JAR_CaptureStop();
+}
 
 void S_WriteLinearBlastStereo16 (void)
 {
 	int		i;
-	int		val;
+	int64_t val;
 
 	for (i=0 ; i<snd_linear_count ; i+=2)
 	{
@@ -61,7 +124,7 @@ void S_TransferStereo16 (unsigned long *pbuf, int endtime)
 	int		lpos;
 	int		ls_paintedtime;
 
-	snd_p = (int *) paintbuffer;
+	snd_p = (int64_t *) paintbuffer;
 	ls_paintedtime = s_paintedtime;
 
 	while (ls_paintedtime < endtime)
@@ -96,9 +159,9 @@ void S_TransferPaintBuffer(int endtime)
 	int 	out_idx;
 	int 	count;
 	int 	out_mask;
-	int 	*p;
+	int64_t *p;
 	int 	step;
-	int		val;
+	int64_t val;
 	unsigned long *pbuf;
 
 	pbuf = (unsigned long *)dma.buffer;
@@ -115,13 +178,14 @@ void S_TransferPaintBuffer(int endtime)
 	}
 
 
+    S_JAR_CapturePaint(endtime-s_paintedtime);
 	if (dma.samplebits == 16 && dma.channels == 2)
 	{	// optimized case
 		S_TransferStereo16 (pbuf, endtime);
 	}
 	else
 	{	// general case
-		p = (int *) paintbuffer;
+		p = (int64_t *) paintbuffer;
 		count = (endtime - s_paintedtime) * dma.channels;
 		out_mask = dma.samples - 1;
 		out_idx = s_paintedtime * dma.channels & out_mask;
@@ -183,8 +247,8 @@ static void S_PaintChannelFrom16( channel_t *ch, const sfx_t *sfx, int count, in
 	{
 		iData = sfx->pSoundData[ sampleOffset++ ];
 
-		pSamplesDest[i].left  += (iData * iLeftVol )>>8;
-		pSamplesDest[i].right += (iData * iRightVol)>>8;
+		pSamplesDest[i].left  += (int64_t(iData) * iLeftVol )>>8;
+		pSamplesDest[i].right += (int64_t(iData) * iRightVol)>>8;
 	}
 }
 
@@ -209,8 +273,8 @@ void S_PaintChannelFromMP3( channel_t *ch, const sfx_t *sc, int count, int sampl
 
 	while ( count & 3 ) {
 		data = *sfx;
-		samp->left += (data * leftvol)>>8;
-		samp->right += (data * rightvol)>>8;
+		samp->left += (int64_t(data) * leftvol)>>8;
+		samp->right += (int64_t(data) * rightvol)>>8;
 
 		sfx++;
 		samp++;
@@ -219,20 +283,20 @@ void S_PaintChannelFromMP3( channel_t *ch, const sfx_t *sc, int count, int sampl
 
 	for ( i=0 ; i<count ; i += 4 ) {
 		data = sfx[i];
-		samp[i].left += (data * leftvol)>>8;
-		samp[i].right += (data * rightvol)>>8;
+		samp[i].left += (int64_t(data) * leftvol)>>8;
+		samp[i].right += (int64_t(data) * rightvol)>>8;
 
 		data = sfx[i+1];
-		samp[i+1].left += (data * leftvol)>>8;
-		samp[i+1].right += (data * rightvol)>>8;
+		samp[i+1].left += (int64_t(data) * leftvol)>>8;
+		samp[i+1].right += (int64_t(data) * rightvol)>>8;
 
 		data = sfx[i+2];
-		samp[i+2].left += (data * leftvol)>>8;
-		samp[i+2].right += (data * rightvol)>>8;
+		samp[i+2].left += (int64_t(data) * leftvol)>>8;
+		samp[i+2].right += (int64_t(data) * rightvol)>>8;
 
 		data = sfx[i+3];
-		samp[i+3].left += (data * leftvol)>>8;
-		samp[i+3].right += (data * rightvol)>>8;
+		samp[i+3].left += (int64_t(data) * leftvol)>>8;
+		samp[i+3].right += (int64_t(data) * rightvol)>>8;
 	}
 }
 
@@ -338,6 +402,7 @@ void S_PaintChannels( int endtime ) {
 				}
 
 				count = end - ltime;
+                if(ch->jarMaxSamples && !ch->loopSound) count=std::min(count,ch->jarMaxSamples-sampleOffset);
 				if ( sampleOffset + count > sc->iSoundLengthInSamples ) {
 					count = sc->iSoundLengthInSamples - sampleOffset;
 				}
@@ -371,6 +436,7 @@ void S_PaintChannels( int endtime ) {
 					sampleOffset = (ltime % sc->soundLength);
 
 					count = end - ltime;
+                if(ch->jarMaxSamples && !ch->loopSound) count=std::min(count,ch->jarMaxSamples-sampleOffset);
 					if ( sampleOffset + count > sc->soundLength ) {
 						count = sc->soundLength - sampleOffset;
 					}

@@ -28,6 +28,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "bg_public.h"
 #include "bg_local.h"
 #include "ghoul2/G2.h"
+#include "../../shared/game/jar_ladder_clearance.h"
+#include "bg_jar_movement.h"
 
 #ifdef _GAME
 	#include "g_local.h"
@@ -922,41 +924,7 @@ PM_ClipVelocity
 Slide off of the impacting surface
 ==================
 */
-void PM_ClipVelocity( vec3_t in, vec3_t normal, vec3_t out, float overbounce ) {
-	float	backoff;
-	float	change;
-	float	oldInZ;
-	int		i;
-
-	if ( (pm->ps->pm_flags&PMF_STUCK_TO_WALL) )
-	{//no sliding!
-		VectorCopy( in, out );
-		return;
-	}
-	oldInZ = in[2];
-
-	backoff = DotProduct (in, normal);
-
-	if ( backoff < 0 ) {
-		backoff *= overbounce;
-	} else {
-		backoff /= overbounce;
-	}
-
-	for ( i=0 ; i<3 ; i++ ) {
-		change = normal[i]*backoff;
-		out[i] = in[i] - change;
-	}
-	if ( pm->stepSlideFix )
-	{
-		if ( pm->ps->clientNum < MAX_CLIENTS//normal player
-			&& pm->ps->groundEntityNum != ENTITYNUM_NONE//on the ground
-			&& normal[2] < MIN_WALK_NORMAL )//sliding against a steep slope
-		{//if walking on the ground, don't slide up slopes that are too steep to walk on
-			out[2] = oldInZ;
-		}
-	}
-}
+#include "bg_jar_native_clip.inc"
 
 
 /*
@@ -1044,7 +1012,8 @@ static void PM_Friction( void ) {
 				// if getting knocked back, no friction
 				if ( ! (pm->ps->pm_flags & PMF_TIME_KNOCKBACK) ) {
 					control = speed < pm_stopspeed ? pm_stopspeed : speed;
-					drop += control*pm_friction*pml.frametime;
+					const int setting = JAR_ActorMovementValue(pm->ps, STAT_JAR_ACTOR_FRICTION, JAR_MP_ACTOR_MOVEMENT_MAX);
+					drop += control*(setting >= 0 ? setting : pm_friction)*pml.frametime;
 				}
 			}
 		}
@@ -2814,10 +2783,36 @@ static void PM_WaterJumpMove( void ) {
 
 /*
 ===================
-PM_WaterMove
+PM_LadderMove
 
 ===================
 */
+static void PM_LadderMove(void) {
+	const int forward = pm->cmd.forwardmove;
+	const int right = pm->cmd.rightmove;
+	const int up = pm->cmd.upmove;
+	JAR_LadderCrouch(pm, pml.forward, pml.right, pm->ps->crouchheight);
+	const float strength = fmaxf(abs(forward), fmaxf(abs(right), abs(up)));
+	const float speed = VectorLength(pm->ps->velocity);
+	if (speed > 0) {
+		const float drop = fmaxf(speed, pm_stopspeed) * pm_friction * pml.frametime;
+		VectorScale(pm->ps->velocity, fmaxf(0.f, speed - drop) / speed, pm->ps->velocity);
+	}
+	if (strength) {
+		vec3_t wishdir;
+		VectorScale(pml.forward, forward, wishdir);
+		VectorMA(wishdir, right, pml.right, wishdir);
+		wishdir[2] += up;
+		const float magnitude = sqrtf(forward * forward + right * right + up * up);
+		const float scale = pm->ps->speed * strength / (127.f * magnitude);
+		const float wishspeed = VectorNormalize(wishdir) * scale;
+		PM_Accelerate(wishdir, fminf(wishspeed, pm->ps->speed * .7f), pm_flyaccelerate);
+	}
+	pm->ps->fd.forceJumpZStart = 0;
+	pm->ps->inAirAnim = qfalse;
+	PM_SlideMove(qfalse);
+}
+
 static void PM_WaterMove( void ) {
 	int		i;
 	vec3_t	wishvel;
@@ -3702,7 +3697,6 @@ static void PM_CrashLand( void ) {
 	float		delta;
 	float		dist;
 	float		vel, acc;
-	float		t;
 	float		a, b, c, den;
 	qboolean	didRoll = qfalse;
 
@@ -3720,10 +3714,9 @@ static void PM_CrashLand( void ) {
 		pm->ps->inAirAnim = qfalse;
 		return;
 	}
-	t = (-b - sqrt( den ) ) / ( 2 * a );
-
-	delta = vel + t * acc;
-	delta = delta*delta * 0.0001;
+	// The discriminant is the squared impact speed. This also handles
+	// externally imparted downward velocity when gravity is zero.
+	delta = den * 0.0001f;
 
 #ifdef _GAME
 	PM_CrashLandEffect();
@@ -4287,6 +4280,22 @@ static void PM_SetWaterLevel( void ) {
 
 }
 
+// Ladder sampling stays separate from the water level used for swimming and drowning.
+static int PM_LadderLevel(void) {
+	if (pm->ps->pm_type != PM_NORMAL || pm->ps->m_iVehicleNum || pm->ps->emplacedIndex ||
+		pm_flying != FLY_NONE || PM_InKnockDown(pm->ps) || BG_InRoll(pm->ps, pm->ps->legsAnim)) {
+		return 0;
+	}
+	vec3_t point;
+	VectorCopy(pm->ps->origin, point);
+	point[2] += MINS_Z + 1;
+	if (!(pm->pointcontents(point, pm->ps->clientNum) & CONTENTS_LADDER)) {
+		return 0;
+	}
+	point[2] = pm->ps->origin[2] + (MINS_Z + pm->ps->viewheight) / 2;
+	return (pm->pointcontents(point, pm->ps->clientNum) & CONTENTS_LADDER) ? 2 : 1;
+}
+
 qboolean PM_CheckDualForwardJumpDuck( void )
 {
 	qboolean resized = qfalse;
@@ -4503,7 +4512,7 @@ static void PM_CheckDuck (void)
 				pm->ps->pm_flags &= ~PMF_ROLLING;
 			}
 		}
-		else if (pm->cmd.upmove < 0 ||
+		else if ((pm->cmd.upmove < 0 && !pml.ladderLevel) ||
 			pm->ps->forceHandExtend == HANDEXTEND_KNOCKDOWN ||
 			pm->ps->forceHandExtend == HANDEXTEND_PRETHROWN ||
 			pm->ps->forceHandExtend == HANDEXTEND_POSTTHROWN)
@@ -5202,6 +5211,28 @@ static void PM_Footsteps( void ) {
 	//
 	pm->xyspeed = sqrt( pm->ps->velocity[0] * pm->ps->velocity[0]
 		+  pm->ps->velocity[1] * pm->ps->velocity[1] );
+
+	if (pml.ladderLevel) {
+		const float verticalSpeed = pm->ps->velocity[2];
+		const int anim = verticalSpeed > 5 ? BOTH_LADDER_UP1 :
+			verticalSpeed < -5 ? BOTH_LADDER_DWN1 : BOTH_LADDER_IDLE;
+		const int parts = pml.ladderLevel >= 2 ? SETANIM_BOTH : SETANIM_LEGS;
+		const animation_t *animations = pm->animations ? pm->animations : bgAllAnims[0].anims;
+		// The stock Academy humanoid has a hanging pose but no ladder clips.
+		if (animations) {
+			PM_SetAnim(parts, animations[anim].numFrames ? anim : BOTH_HANG_IDLE, SETANIM_FLAG_OVERRIDE);
+		}
+		if (anim != BOTH_LADDER_IDLE) {
+			old = pm->ps->bobCycle;
+			bobmove = fminf(.3f, .005f * fabsf(verticalSpeed));
+			pm->ps->bobCycle = (int)(old + bobmove * pml.msec) & 255;
+			if (!pm->noFootsteps && pm->ps->groundEntityNum == ENTITYNUM_NONE &&
+				(((old + 64) ^ (pm->ps->bobCycle + 64)) & 128)) {
+				PM_AddEvent(EV_FOOTSTEP_METAL);
+			}
+		}
+		return;
+	}
 
 	if (pm->ps->saberMove == LS_SPINATTACK)
 	{
@@ -6657,8 +6688,10 @@ Generates weapon events and modifes the weapon counter
 ==============
 */
 extern int PM_KickMoveForConditions(void);
+#include "bg_jar_fists.inc"
 static void PM_Weapon( void )
 {
+    int jarPunchCooldown=0;
 	int		addTime;
 	int amount;
 	int		killAfterItem = 0;
@@ -7584,6 +7617,10 @@ static void PM_Weapon( void )
 				pm->ps->weaponTime = 0;
 				return;
 			}
+            else if (PM_JARContinuousPunch()) {
+                jarPunchCooldown=PM_JARStartPunch();
+                if (!jarPunchCooldown) return;
+            }
 			else
 			{ //just punch
 				int desTAnim = BOTH_MELEE1;
@@ -7689,7 +7726,8 @@ static void PM_Weapon( void )
 		addTime *= 1.5;
 	}
 
-	pm->ps->weaponTime += addTime;
+	if (jarPunchCooldown) pm->ps->weaponTime=jarPunchCooldown;
+	else pm->ps->weaponTime += addTime;
 }
 
 /*
@@ -9984,90 +10022,7 @@ void PM_VehFaceHyperspacePoint(bgEntity_t *veh)
 
 #endif //VEH_CONTROL_SCHEME_4
 
-void BG_VehicleAdjustBBoxForOrientation( Vehicle_t *veh, vec3_t origin, vec3_t mins, vec3_t maxs,
-										int clientNum, int tracemask,
-										void (*localTrace)(trace_t *results, const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, int passEntityNum, int contentMask))
-{
-	if ( !veh
-		|| !veh->m_pVehicleInfo->length
-		|| !veh->m_pVehicleInfo->width
-		|| !veh->m_pVehicleInfo->height )
-		//|| veh->m_LandTrace.fraction < 1.0f )
-	{
-		return;
-	}
-	else if ( veh->m_pVehicleInfo->type != VH_FIGHTER
-		//&& veh->m_pVehicleInfo->type != VH_SPEEDER
-		&& veh->m_pVehicleInfo->type != VH_FLIER )
-	{//only those types of vehicles have dynamic bboxes, the rest just use a static bbox
-		VectorSet( maxs, veh->m_pVehicleInfo->width/2.0f, veh->m_pVehicleInfo->width/2.0f, veh->m_pVehicleInfo->height+DEFAULT_MINS_2 );
-		VectorSet( mins, veh->m_pVehicleInfo->width/-2.0f, veh->m_pVehicleInfo->width/-2.0f, DEFAULT_MINS_2 );
-		return;
-	}
-	else
-	{
-		matrix3_t	axis;
-		vec3_t		point[8], newMins, newMaxs;
-		int			curAxis = 0, i;
-		trace_t		trace;
-
-		AnglesToAxis( veh->m_vOrientation, axis );
-		VectorMA( origin, veh->m_pVehicleInfo->length/2.0f, axis[0], point[0] );
-		VectorMA( origin, -veh->m_pVehicleInfo->length/2.0f, axis[0], point[1] );
-		//extrapolate each side up and down
-		VectorMA( point[0], veh->m_pVehicleInfo->height/2.0f, axis[2], point[0] );
-		VectorMA( point[0], -veh->m_pVehicleInfo->height, axis[2], point[2] );
-		VectorMA( point[1], veh->m_pVehicleInfo->height/2.0f, axis[2], point[1] );
-		VectorMA( point[1], -veh->m_pVehicleInfo->height, axis[2], point[3] );
-
-		VectorMA( origin, veh->m_pVehicleInfo->width/2.0f, axis[1], point[4] );
-		VectorMA( origin, -veh->m_pVehicleInfo->width/2.0f, axis[1], point[5] );
-		//extrapolate each side up and down
-		VectorMA( point[4], veh->m_pVehicleInfo->height/2.0f, axis[2], point[4] );
-		VectorMA( point[4], -veh->m_pVehicleInfo->height, axis[2], point[6] );
-		VectorMA( point[5], veh->m_pVehicleInfo->height/2.0f, axis[2], point[5] );
-		VectorMA( point[5], -veh->m_pVehicleInfo->height, axis[2], point[7] );
-		/*
-		VectorMA( origin, veh->m_pVehicleInfo->height/2.0f, axis[2], point[4] );
-		VectorMA( origin, -veh->m_pVehicleInfo->height/2.0f, axis[2], point[5] );
-		*/
-		//Now inflate a bbox around these points
-		VectorCopy( origin, newMins );
-		VectorCopy( origin, newMaxs );
-		for ( curAxis = 0; curAxis < 3; curAxis++ )
-		{
-			for ( i = 0; i < 8; i++ )
-			{
-				if ( point[i][curAxis] > newMaxs[curAxis] )
-				{
-					newMaxs[curAxis] = point[i][curAxis];
-				}
-				else if ( point[i][curAxis] < newMins[curAxis] )
-				{
-					newMins[curAxis] = point[i][curAxis];
-				}
-			}
-		}
-		VectorSubtract( newMins, origin, newMins );
-		VectorSubtract( newMaxs, origin, newMaxs );
-		//now see if that's a valid way to be
-		if (localTrace)
-		{
-			localTrace( &trace, origin, newMins, newMaxs, origin, clientNum, tracemask );
-		}
-		else
-		{ //don't care about solid stuff then
-			trace.startsolid = trace.allsolid = 0;
-		}
-		if ( !trace.startsolid && !trace.allsolid )
-		{//let's use it!
-			VectorCopy( newMins, mins );
-			VectorCopy( newMaxs, maxs );
-		}
-		//else: just use the last one, I guess...?
-		//FIXME: make it as close as possible?  Or actually prevent the change in m_vOrientation?  Or push away from anything we hit?
-	}
-}
+#include "bg_jar_vehicle_bounds.inc"
 /*
 ================
 PmoveSingle
@@ -10164,11 +10119,24 @@ void PM_MoveForKata(usercmd_t *ucmd)
 	}
 }
 
+#include "bg_jar_vehicle_drift.inc"
+
 void PmoveSingle (pmove_t *pmove) {
+	qboolean jarVehicleDrift;
 	qboolean stiffenedUp = qfalse;
 	float gDist = 0;
 	qboolean noAnimate = qfalse;
 	int savedGravity = 0;
+#ifdef _GAME
+	// Empty vehicles attached to sandbox forces move as passive bodies. Keep
+	// the incoming velocity through native flight/idle-controller updates.
+	qboolean jarVehicleForces = JAR_MP_VehicleForces(pmove->ps->clientNum);
+	vec3_t jarVehicleVelocity, jarVehicleAngles;
+	if (jarVehicleForces) {
+		VectorSubtract(pmove->ps->velocity, pmove->ps->jarVehicleDrift, jarVehicleVelocity);
+		VectorCopy(pmove->ps->vehOrientation, jarVehicleAngles);
+	}
+#endif
 
 	pm = pmove;
 
@@ -10702,9 +10670,12 @@ void PmoveSingle (pmove_t *pmove) {
 		return;		// no movement at all
 	}
 
+	jarVehicleDrift = PM_JARVehicleDriftBegin();
+
 	// set watertype, and waterlevel
 	PM_SetWaterLevel();
 	pml.previous_waterlevel = pmove->waterlevel;
+	pml.ladderLevel = PM_LadderLevel();
 
 	// set mins, maxs, and viewheight
 	PM_CheckDuck ();
@@ -11031,6 +11002,18 @@ void PmoveSingle (pmove_t *pmove) {
 	}
 	else
 	{ //don't even run physics on a player if he's on a vehicle - he goes where the vehicle goes
+#ifdef _GAME
+		if (jarVehicleForces && JAR_MP_VehicleForces(pm->ps->clientNum)) {
+			VectorCopy(jarVehicleVelocity, pm->ps->velocity);
+			VectorCopy(jarVehicleAngles, pm->ps->vehOrientation);
+			VectorCopy(jarVehicleAngles, pm_entSelf->m_pVehicle->m_vPrevOrientation);
+			PM_SetPMViewAngle(pm->ps, jarVehicleAngles, &pm->cmd);
+			pm->ps->gravity = g_gravity.value;
+			// Retain native swept hulls, step/slide contacts and gravity. The
+			// occupied/boarding path immediately returns to native driving.
+			PM_StepSlideMove(qtrue);
+		} else
+#endif
 		if (pm->ps->pm_type == PM_FLOAT
 			||pm_flying == FLY_NORMAL)
 		{
@@ -11044,6 +11027,8 @@ void PmoveSingle (pmove_t *pmove) {
 		{
 			if (pm->ps->pm_flags & PMF_TIME_WATERJUMP) {
 				PM_WaterJumpMove();
+			} else if (pml.ladderLevel >= 2) {
+				PM_LadderMove();
 			} else if ( pm->waterlevel > 1 ) {
 				// swimming
 				PM_WaterMove();
@@ -11057,6 +11042,8 @@ void PmoveSingle (pmove_t *pmove) {
 		}
 	}
 
+	if (jarVehicleDrift) PM_JARVehicleDriftMove();
+
 	if (!noAnimate)
 	{
 		PM_Animate();
@@ -11069,6 +11056,7 @@ void PmoveSingle (pmove_t *pmove) {
 		PM_HoverTrace();
 	}
 	PM_SetWaterLevel();
+	pml.ladderLevel = PM_LadderLevel();
 	if (pm->cmd.forcesel != (byte)-1 && (pm->ps->fd.forcePowersKnown & (1 << pm->cmd.forcesel)))
 	{
 		pm->ps->fd.forcePowerSelected = pm->cmd.forcesel;

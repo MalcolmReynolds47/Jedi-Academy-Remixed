@@ -85,9 +85,10 @@ void CQuickSpriteSystem::Flush(void)
 
 	/*
 	if (mUseFog && r_drawfog->integer == 2 &&
-		mFogIndex == tr.world->globalFog)
+		RB_BSPFogIsGlobal(mFogIndex))
 	{ //enable hardware fog when we draw this thing if applicable -rww
-		fog_t *fog = tr.world->fogs + mFogIndex;
+		const fog_t fogValue = RB_BSPFog(mFogIndex);
+		const fog_t *fog = &fogValue;
 
 		qglFogf(GL_FOG_MODE, GL_EXP2);
 		qglFogf(GL_FOG_DENSITY, logtestExp2 / fog->parms.depthForOpaque);
@@ -127,9 +128,10 @@ void CQuickSpriteSystem::Flush(void)
 	backEnd.pc.c_totalIndexes += mNextVert;
 
 	//only for software fog pass (global soft/volumetric) -rww
-	if (mUseFog && (r_drawfog->integer != 2 || mFogIndex != tr.world->globalFog))
+	if (mUseFog && (r_drawfog->integer != 2 || !RB_BSPFogIsGlobal(mFogIndex)))
 	{
-		fog_t *fog = tr.world->fogs + mFogIndex;
+		const fog_t fogValue = RB_BSPFog(mFogIndex);
+		const fog_t *fog = &fogValue;
 
 		//
 		// render the fog pass

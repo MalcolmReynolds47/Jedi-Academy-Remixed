@@ -25,6 +25,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_functions.h"
 #include "wp_saber.h"
 #include "w_local.h"
+#include "qcommon/jar_force_enlightenment.h"
 
 //-------------------
 //	Wookiee Bowcaster
@@ -91,7 +92,7 @@ static void WP_BowcasterMainFire( gentity_t *ent )
 		vectoangles( forwardVec, angs );
 
 		if ( !(ent->client->ps.forcePowersActive&(1<<FP_SEE))
-			|| ent->client->ps.forcePowerLevel[FP_SEE] < FORCE_LEVEL_2 )
+			|| jar::enlightenment::Rank(ent->client->ps,FP_SEE) < FORCE_LEVEL_2 )
 		{//force sight 2+ gives perfect aim
 			//FIXME: maybe force sight level 3 autoaims some?
 			// add some slop to the fire direction
@@ -107,6 +108,7 @@ static void WP_BowcasterMainFire( gentity_t *ent )
 		AngleVectors( angs, dir, NULL, NULL );
 
 		missile = CreateMissile( start, dir, vel, 10000, ent );
+		if (!missile) return;
 
 		missile->classname = "bowcaster_proj";
 		missile->s.weapon = WP_BOWCASTER;
@@ -145,6 +147,7 @@ static void WP_BowcasterAltFire( gentity_t *ent )
 	WP_MissileTargetHint(ent, start, forwardVec);
 
 	gentity_t *missile = CreateMissile( start, forwardVec, BOWCASTER_VELOCITY, 10000, ent, qtrue );
+	if (!missile) return;
 
 	missile->classname = "bowcaster_alt_proj";
 	missile->s.weapon = WP_BOWCASTER;

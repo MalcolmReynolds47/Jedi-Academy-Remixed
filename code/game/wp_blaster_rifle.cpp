@@ -25,6 +25,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_functions.h"
 #include "wp_saber.h"
 #include "w_local.h"
+#include "qcommon/jar_force_enlightenment.h"
 
 
 //---------------
@@ -64,6 +65,7 @@ void WP_FireBlasterMissile( gentity_t *ent, vec3_t start, vec3_t dir, qboolean a
 	WP_MissileTargetHint(ent, start, dir);
 
 	gentity_t *missile = CreateMissile( start, dir, velocity, 10000, ent, altFire );
+	if (!missile) return;
 
 	missile->classname = "blaster_proj";
 	missile->s.weapon = WP_BLASTER;
@@ -123,7 +125,7 @@ void WP_FireBlaster( gentity_t *ent, qboolean alt_fire )
 	{//no inherent aim screw up
 	}
 	else if ( !(ent->client->ps.forcePowersActive&(1<<FP_SEE))
-		|| ent->client->ps.forcePowerLevel[FP_SEE] < FORCE_LEVEL_2 )
+		|| jar::enlightenment::Rank(ent->client->ps,FP_SEE) < FORCE_LEVEL_2 )
 	{//force sight 2+ gives perfect aim
 		//FIXME: maybe force sight level 3 autoaims some?
 		if ( alt_fire )

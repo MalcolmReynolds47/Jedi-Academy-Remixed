@@ -22,6 +22,25 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "g_local.h"
+#include "g_portable_shield.h"
+#include "g_rail_portable.h"
+#include "g_workshop.h"
+#include "g_subbsp_ownership.h"
+#include "g_combat_points.h"
+#include "g_waypoints.h"
+#include "g_laser_arm.h"
+#include "g_sandbox_laser.h"
+#include "g_sandbox_station.h"
+#include "g_sandbox_breakable.h"
+#include "g_sandbox_usable.h"
+#include "g_sandbox_speaker.h"
+#include "g_scene_camera.h"
+#include "g_portal.h"
+#include "g_spotlight.h"
+#include "g_welder.h"
+#include "g_door_camera.h"
+#include "g_shipboundary.h"
+#include "g_randomizer.h"
 #include "g_functions.h"
 #include "Q3_Interface.h"
 #include "g_nav.h"
@@ -197,6 +216,7 @@ cvar_t	*g_saberNewControlScheme;
 cvar_t	*g_debugSaberLock;
 cvar_t	*g_saberLockRandomNess;
 cvar_t	*g_debugMelee;
+cvar_t *jar_continuousFists;
 cvar_t	*g_saberRestrictForce;
 cvar_t	*g_saberPickuppableDroppedSabers;
 cvar_t	*g_dismemberProbabilities;
@@ -548,62 +568,7 @@ All but the first will have the FL_TEAMSLAVE flag set and teammaster field set
 All but the last will have the teamchain field set to the next one
 ================
 */
-void G_FindTeams( void ) {
-	gentity_t	*e, *e2;
-	int		i, j;
-	int		c, c2;
-
-	c = 0;
-	c2 = 0;
-//	for ( i=1, e=g_entities,i ; i < globals.num_entities ; i++,e++ )
-	for ( i=MAX_CLIENTS ; i < globals.num_entities ; i++ )
-	{
-//		if (!e->inuse)
-//			continue;
-		if(!PInUse(i))
-			continue;
-		e=&g_entities[i];
-
-		if (!e->team)
-			continue;
-		if (e->flags & FL_TEAMSLAVE)
-			continue;
-		e->teammaster = e;
-		c++;
-		c2++;
-//		for (j=i+1, e2=e+1 ; j < globals.num_entities ; j++,e2++)
-		for (j=i+1; j < globals.num_entities ; j++)
-		{
-//			if (!e2->inuse)
-//				continue;
-			if(!PInUse(j))
-				continue;
-
-			e2=&g_entities[j];
-			if (!e2->team)
-				continue;
-			if (e2->flags & FL_TEAMSLAVE)
-				continue;
-			if (!strcmp(e->team, e2->team))
-			{
-				c2++;
-				e2->teamchain = e->teamchain;
-				e->teamchain = e2;
-				e2->teammaster = e;
-				e2->flags |= FL_TEAMSLAVE;
-
-				// make sure that targets only point at the master
-				if ( e2->targetname ) {
-					e->targetname = G_NewString(e2->targetname);
-					e2->targetname = NULL;
-				}
-			}
-		}
-	}
-
-	//gi.Printf ("%i teams with %i entities\n", c, c2);
-}
-
+#include "g_entity_teams.inc"
 
 /*
 ============
@@ -670,6 +635,7 @@ void G_InitCvars( void ) {
 	g_saberNewControlScheme = gi.cvar( "g_saberNewControlScheme", "0", CVAR_ARCHIVE );//use +forcefocus to pull off all the special moves
 	g_debugSaberLock = gi.cvar( "g_debugSaberLock", "0", CVAR_CHEAT );//just for debugging/development, makes saberlocks happen all the time
 	g_saberLockRandomNess = gi.cvar( "g_saberLockRandomNess", "2", CVAR_ARCHIVE );//just for debugging/development, controls frequency of saberlocks
+	jar_continuousFists = gi.cvar("jar_continuousFists","1",CVAR_ARCHIVE);
 	g_debugMelee = gi.cvar( "g_debugMelee", "0", CVAR_CHEAT );//just for debugging/development, test kicks and grabs
 	g_saberRestrictForce = gi.cvar( "g_saberRestrictForce", "0", CVAR_ARCHIVE );//restricts certain force powers when using a 2-handed saber or 2 sabers
 	g_saberPickuppableDroppedSabers = gi.cvar( "g_saberPickuppableDroppedSabers", "0", CVAR_CHEAT );//lets you pick up sabers that are dropped
@@ -746,6 +712,7 @@ void InitGame(  const char *mapname, const char *spawntarget, int checkSum, cons
 	// set some level globals
 	memset( &level, 0, sizeof( level ) );
 	level.time = levelTime;
+	G_ShipBoundaryReset();
 	level.globalTime = globalTime;
 	Q_strncpyz( level.mapname, mapname, sizeof(level.mapname) );
 	if ( spawntarget != NULL && spawntarget[0] )
@@ -764,6 +731,8 @@ void InitGame(  const char *mapname, const char *spawntarget, int checkSum, cons
 	memset( g_entities, 0, MAX_GENTITIES * sizeof(g_entities[0]) );
 	globals.gentities = g_entities;
 	ClearAllInUse();
+	G_ResetEntityCapacityStats();
+	G_JAR_WorkshopInit(eSavedGameJustLoaded!=eNO);
 	// initialize all clients for this game
 	level.maxclients = 1;
 	level.clients = (gclient_t*) G_Alloc( level.maxclients * sizeof(level.clients[0]) );
@@ -826,6 +795,8 @@ ShutdownGame
 */
 void ShutdownGame( void )
 {
+	G_JAR_WorkshopShutdown();
+	G_JAR_SuspendActorRecovery(true);
 	// write all the client session data so we can get it back
 	G_WriteSessionData();
 
@@ -862,13 +833,13 @@ static void G_Cvar_Create( const char *var_name, const char *var_value, int flag
 
 //BEGIN GAMESIDE RMG
 qboolean G_ParseSpawnVars( const char **data );
-void G_SpawnGEntityFromSpawnVars( void );
+void G_SpawnGEntityFromSpawnVars( int pickupOrdinal );
 
 void G_GameSpawnRMGEntity(char *s)
 {
 	if (G_ParseSpawnVars((const char **)&s))
 	{
-		G_SpawnGEntityFromSpawnVars();
+		G_SpawnGEntityFromSpawnVars(0); // Dynamic RMG entities retain their original items.
 	}
 }
 //END GAMESIDE RMG
@@ -894,6 +865,9 @@ extern "C" Q_EXPORT game_export_t* QDECL GetGameAPI( game_import_t *import ) {
 	globals.WriteLevel = WriteLevel;
 	globals.ReadLevel = ReadLevel;
 	globals.GameAllowedToSaveHere = GameAllowedToSaveHere;
+	globals.PrepareWorkshopSave = G_JAR_WorkshopPrepareSave;
+	globals.StageWorkshopTransition = G_JAR_WorkshopTransition;
+	globals.TraceWorkshopProp = G_JAR_WorkshopTraceProp;
 
 	globals.ClientThink = ClientThink;
 	globals.ClientConnect = ClientConnect;
@@ -1061,11 +1035,16 @@ Runs thinking code for this frame if necessary
 */
 void G_RunThink (gentity_t *ent)
 {
+	G_SubBSPCapture subBspCapture(ent);
 	if ( (ent->nextthink <= 0) || (ent->nextthink > level.time) )
 	{
 		goto runicarus;
 	}
 
+	if (G_SandboxSpeaker(*ent)) {
+		G_SandboxSpeakerTick(*ent);
+		goto runicarus;
+	}
 	ent->nextthink = 0;
 	if ( ent->e_ThinkFunc == thinkF_NULL )	// actually you don't need this since I check for it in the next function -slc
 	{
@@ -1909,10 +1888,12 @@ void G_RunFrame( int levelTime ) {
 	level.framenum++;
 	level.previousTime = level.time;
 	level.time = levelTime;
+	G_ShipBoundaryFrame();
 
 	//ResetTeamCounters();
 	NAV::DecayDangerSenses();
 	Rail_Update();
+	G_RailPortableFrame();
 	Troop_Update();
 	Pilot_Update();
 
@@ -1942,6 +1923,7 @@ void G_RunFrame( int levelTime ) {
 			continue;
 		ents_inuse++;
 		ent = &g_entities[i];
+		G_SubBSPCapture subBspFrame(ent); // Includes missile/item/mover paths that bypass think.
 
 		// clear events that are too old
 		if ( level.time - ent->eventTime > EVENT_VALID_MSEC ) {
@@ -1969,6 +1951,17 @@ void G_RunFrame( int levelTime ) {
 		if ( ent->freeAfterEvent )
 			continue;
 
+		if(G_JAR_WorkshopControls(ent)){
+			if(G_PortableShield(*ent))portable_shield_think(ent);
+			G_LaserArmControlledFrame(ent);
+			G_SandboxLaserControlledFrame(ent);
+			G_SandboxStationControlledFrame(*ent);
+			G_SandboxBreakableControlledFrame(*ent);
+			G_SandboxUsableControlledFrame(*ent);
+			if(G_SandboxSpeaker(*ent))G_SandboxSpeakerTick(*ent);
+			G_SceneCameraControlledFrame(ent);
+			continue;
+		}
 		G_CheckTasksCompleted(ent);
 
 		G_Roff( ent );
@@ -2057,11 +2050,17 @@ void G_RunFrame( int levelTime ) {
 		//UpdateTeamCounters( ent );	//	   to call anyway on a freed ent.
 	}
 
+	G_JAR_WorkshopFrame();G_WaypointFrame();G_CombatPointFrame();G_PortalFrame();G_SpotlightFrame();G_WelderFrame();G_DoorCameraFrame();
 	// perform final fixups on the player
 	ent = &g_entities[0];
 	if ( ent->inuse )
 	{
 		ClientEndFrame( ent );
+	}
+	static int jarStatsTime = 0;
+	if(level.time < jarStatsTime || level.time-jarStatsTime >= 5000) {
+		jarStatsTime=level.time;
+		if(gi.JAR_Log) gi.JAR_Log(1,"entity","population","active=%d high_water=%d level_ms=%d",ents_inuse,globals.num_entities,level.time);
 	}
 	if( g_numEntities->integer )
 	{

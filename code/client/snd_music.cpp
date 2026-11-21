@@ -37,6 +37,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 //
 #include "snd_music.h"
+#include "qcommon/jar_sound_randomizer.h"
+#include "qcommon/jar_diagnostics.h"
 
 #include "../game/genericparser2.h"
 
@@ -667,11 +669,12 @@ qboolean Music_DynamicDataAvailable(const char *psDynamicMusicLabel)
 
 	if (strlen(sLevelName))	// avoid error messages when there's no music waiting to be played and we try and restart it...
 	{
-		if (Music_ParseLeveldata(sLevelName))
-		{
-			return (qboolean)(Music_GetBaseMusicFile(eBGRNDTRACK_EXPLORE) &&
-								Music_GetBaseMusicFile(eBGRNDTRACK_ACTION));
-		}
+        // Literal stream filenames (including death/credits) are not sets.
+        // Validate the requested set before mapping it; otherwise a random set
+        // could turn a nonexistent label or an intentional stream into music.
+        if (std::strchr(sLevelName,'.')) return qfalse;
+        if (!Music_ParseLeveldata(sLevelName) || !Music_GetBaseMusicFile(eBGRNDTRACK_EXPLORE) || !Music_GetBaseMusicFile(eBGRNDTRACK_ACTION)) return qfalse;
+        return qtrue;
 	}
 
 	return qfalse;

@@ -294,8 +294,8 @@ qboolean G2API_OverrideServerWithClientData(CGhoul2Info_v& ghoul2, int modelInde
 }
 
 // must be a power of two
-#define MAX_G2_MODELS (1024)
-#define G2_MODEL_BITS (10)
+#define MAX_G2_MODELS (1 << JAR_MP_GHOUL_BITS)
+#define G2_MODEL_BITS JAR_MP_GHOUL_BITS
 
 #define G2_INDEX_MASK (MAX_G2_MODELS-1)
 
@@ -317,7 +317,7 @@ class Ghoul2InfoArray : public IGhoul2InfoArray
 
 		mInfos[idx].clear();
 
-		if ((mIds[idx]>>G2_MODEL_BITS)>(1<<(31-G2_MODEL_BITS)))
+		if (mIds[idx] > INT_MAX - MAX_G2_MODELS)
 		{
 			mIds[idx]=MAX_G2_MODELS+idx; //rollover reset id to minimum value
 			mFreeIndecies.push_back(idx);
@@ -373,8 +373,7 @@ public:
 	{
 		if (mFreeIndecies.empty())
 		{
-			assert(0);
-			Com_Error(ERR_FATAL, "Out of ghoul2 info slots");
+			Com_Error(ERR_DROP, "JA:R Ghoul2 capacity exhausted");
 
 		}
 		// gonna pull from the front, doing a
@@ -1641,8 +1640,8 @@ int G2API_AddBoltSurfNum(CGhoul2Info *ghlInfo, const int surfIndex)
 
 qboolean G2API_AttachG2Model(CGhoul2Info_v &ghoul2From, int modelFrom, CGhoul2Info_v &ghoul2To, int toBoltIndex, int toModel)
 {
-	assert( toBoltIndex >= 0 );
-	if ( toBoltIndex < 0 )
+	// Validate before vector access or packing.
+	if (modelFrom < 0 || toModel < 0 || toModel > MODEL_AND || toBoltIndex < 0 || toBoltIndex > BOLT_AND)
 	{
 		return qfalse;
 	}
@@ -1651,6 +1650,7 @@ qboolean G2API_AttachG2Model(CGhoul2Info_v &ghoul2From, int modelFrom, CGhoul2In
 		// make sure we have a model to attach, a model to attach to, and a bolt on that model
 		if ((ghoul2From.size() > modelFrom) &&
 			(ghoul2To.size() > toModel) &&
+			(toBoltIndex < (int)ghoul2To[toModel].mBltlist.size()) &&
 			((ghoul2To[toModel].mBltlist[toBoltIndex].boneNumber != -1) || (ghoul2To[toModel].mBltlist[toBoltIndex].surfaceNumber != -1)))
 		{
 			// encode the bolt address into the model bolt link
@@ -1683,18 +1683,18 @@ qboolean G2API_DetachG2Model(CGhoul2Info *ghlInfo)
 
 qboolean G2API_AttachEnt(int *boltInfo, CGhoul2Info_v& ghoul2, int modelIndex, int toBoltIndex, int entNum, int toModelNum)
 {
+	int packed;
+	if (!boltInfo || !JAR_MP_PackEntityBolt(&packed, entNum, toModelNum, toBoltIndex) || modelIndex < 0 || modelIndex >= (int)ghoul2.size()) return qfalse;
+
 	CGhoul2Info *ghlInfoTo = &ghoul2[modelIndex];
 
-	if (boltInfo && G2_SetupModelPointers(ghlInfoTo))
+	if (toBoltIndex < (int)ghlInfoTo->mBltlist.size() && G2_SetupModelPointers(ghlInfoTo))
 	{
 		// make sure we have a model to attach, a model to attach to, and a bolt on that model
 		if ( ghlInfoTo->mBltlist.size() && ((ghlInfoTo->mBltlist[toBoltIndex].boneNumber != -1) || (ghlInfoTo->mBltlist[toBoltIndex].surfaceNumber != -1)))
 		{
 			// encode the bolt address into the model bolt link
-		   toModelNum &= MODEL_AND;
-		   toBoltIndex &= BOLT_AND;
-		   entNum &= ENTITY_AND;
-		   *boltInfo =  (toBoltIndex << BOLT_SHIFT) | (toModelNum << MODEL_SHIFT) | (entNum << ENTITY_SHIFT);
+		   *boltInfo = packed;
 		   return qtrue;
 		}
 	}
@@ -2752,3 +2752,7 @@ const char *G2API_GetModelName ( CGhoul2Info_v& ghoul2, int modelIndex )
 {
 	return ghoul2[modelIndex].mFileName;
 }
+
+#include "../rd-common/jar_ghoul_pose.inc"
+
+#include "../rd-common/jar_face.inc"

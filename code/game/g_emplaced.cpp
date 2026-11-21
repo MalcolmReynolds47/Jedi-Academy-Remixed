@@ -27,6 +27,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../cgame/cg_local.h"
 #include "b_local.h"
 #include "g_navigator.h"
+#include "g_bsp_section_wasteland_gun.h"
 
 extern Vehicle_t *G_IsRidingVehicle( gentity_t *pEnt );
 
@@ -240,7 +241,7 @@ void eweb_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int d
 	gi.G2API_SetSurfaceOnOff( &self->ghoul2[self->playerModel], "eweb_damage", TURN_OFF );
 
 	// create some persistent smoke by using a dynamically created fx runner
-	gentity_t *ent = G_Spawn();
+	gentity_t *ent = G_TrySpawn();
 
 	if ( ent )
 	{
@@ -571,6 +572,11 @@ void emplaced_gun_use( gentity_t *self, gentity_t *other, gentity_t *activator )
 	// don't allow using it again for half a second
 	if ( self->delay + 500 < level.time )
 	{
+		gentity_t* reserved=nullptr;
+		if(jar::wasteland::GunEntity(*self)){
+			reserved=G_TrySpawn();
+			if(!reserved)return;
+		}
 		int	oldWeapon = activator->s.weapon;
 
 		if ( oldWeapon == WP_SABER )
@@ -605,7 +611,8 @@ extern void ChangeWeapon( gentity_t *ent, int newWeapon );
 		{//you never know
 			G_FreeEntity( self->nextTrain );
 		}
-		self->nextTrain = G_Spawn();
+		self->nextTrain = reserved?reserved:G_Spawn();
+		if(reserved)reserved->owner=self;
 		//self->nextTrain->classname = "emp_placeholder";
 		self->nextTrain->contents = CONTENTS_MONSTERCLIP|CONTENTS_PLAYERCLIP;//hmm... playerclip too now that we're doing it for NPCs?
 		G_SetOrigin( self->nextTrain, activator->client->ps.origin );
@@ -689,6 +696,36 @@ void emplaced_blow( gentity_t *ent )
 }
 
 //----------------------------------------------------------
+void ExitEmplacedWeapon(gentity_t*);
+
+void G_WastelandGunForget(gentity_t* gun){
+	if(!gun||!jar::wasteland::GunEntity(*gun))return;
+	auto* rider=gun->activator;
+	if(rider&&rider->inuse&&rider->owner==gun&&rider->client&&(rider->client->ps.eFlags&EF_LOCKED_TO_WEAPON)){
+		ExitEmplacedWeapon(rider);
+		rider->owner=nullptr;
+	}
+	// Dead riders do not take the normal reserved return position.
+	if(auto* placeholder=gun->nextTrain){
+		gun->nextTrain=nullptr;
+		if(placeholder->inuse&&placeholder->owner==gun)G_FreeEntity(placeholder);
+	}
+	gun->activator=nullptr;
+	gun->s.loopSound=0;
+}
+
+void wasteland_gun_respawn(gentity_t* gun){
+	if(!gun||!jar::wasteland::GunEntity(*gun)||gun->health>0)return;
+	gun->max_health=gun->health=jar::wasteland::gunHealth;
+	gun->count=jar::wasteland::gunAmmo;
+	gun->s.weapon=WP_EMPLACED_GUN;
+	gun->takedamage=qtrue;
+	gun->e_PainFunc=painF_emplaced_gun_pain;
+	gun->e_DieFunc=dieF_emplaced_gun_die;
+	gun->e_ThinkFunc=thinkF_NULL;
+	gun->nextthink=0;
+}
+
 void emplaced_gun_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int damage, int mod,int dFlags,int hitLoc )
 {
 	vec3_t org;
@@ -707,7 +744,19 @@ void emplaced_gun_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacke
 	if ( self->e_DieFunc )
 	{
 		self->e_ThinkFunc = thinkF_emplaced_blow;
-		self->nextthink = level.time + 3000; // don't blow for a couple of seconds
+		self->nextthink = level.time + (jar::wasteland::GunEntity(*self)?4000:3000);
+		return;
+	}
+
+	if(jar::wasteland::GunEntity(*self)){
+		G_WastelandGunForget(self);
+		self->e_PainFunc=painF_NULL;
+		self->e_ThinkFunc=thinkF_wasteland_gun_respawn;
+		self->nextthink=level.time+jar::wasteland::gunRespawn;
+		VectorCopy(self->currentOrigin,org);
+		org[2]+=16;
+		G_PlayEffect("emplaced/explode",org);
+		G_RadiusDamage(self->currentOrigin,self,self->splashDamage,self->splashRadius,self,MOD_UNKNOWN);
 		return;
 	}
 
@@ -755,7 +804,7 @@ void emplaced_gun_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacke
 	G_PlayEffect( "emplaced/explode", org );
 
 	// create some persistent smoke by using a dynamically created fx runner
-	gentity_t *ent = G_Spawn();
+	gentity_t *ent = G_TrySpawn();
 
 	if ( ent )
 	{
@@ -786,6 +835,8 @@ void emplaced_gun_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacke
 void SP_emplaced_gun( gentity_t *ent )
 {
 	char name[] = "models/map_objects/imp_mine/turret_chair.glm";
+	const bool wasteland=jar::wasteland::GunEntity(*ent);
+	if(wasteland)ent->spawnflags=EMPLACED_VULNERABLE;
 
 	ent->svFlags |= SVF_PLAYER_USABLE;
 	ent->contents = CONTENTS_BODY;//CONTENTS_SHOTCLIP|CONTENTS_PLAYERCLIP|CONTENTS_MONSTERCLIP;//CONTENTS_SOLID;
@@ -827,6 +878,11 @@ void SP_emplaced_gun( gentity_t *ent )
 	G_SpawnFloat( "delay", "200", &ent->random ); // NOTE: spawning into a different field!!
 	G_SpawnFloat( "wait", "800", &ent->wait );
 
+	if(wasteland){
+		ent->health=jar::wasteland::gunHealth;
+		ent->count=jar::wasteland::gunAmmo;
+		ent->svFlags|=SVF_BROADCAST;
+	}
 	ent->max_health = ent->health;
 	ent->dflags |= DAMAGE_CUSTOM_HUD; // dumb, but we draw a custom hud
 
@@ -909,7 +965,9 @@ void ExitEmplacedWeapon( gentity_t *ent )
 				VectorCopy( ent->owner->nextTrain->mins, ent->mins );
 				VectorCopy( ent->owner->nextTrain->maxs, ent->maxs );
 				//free the placeholder
-				G_FreeEntity( ent->owner->nextTrain );
+				auto* placeholder=ent->owner->nextTrain;
+				ent->owner->nextTrain=nullptr;
+				G_FreeEntity( placeholder );
 				//re-link the ent
 				gi.linkentity( ent );
 			}

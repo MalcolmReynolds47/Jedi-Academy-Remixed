@@ -99,7 +99,7 @@ void CG_RegisterWeapon( int weaponNum) {
 		weaponNum == WP_FLECHETTE ||
 		weaponNum == WP_REPEATER ||
 		weaponNum == WP_ROCKET_LAUNCHER ||
-		weaponNum == WP_CONCUSSION)
+		weaponNum == WP_CONCUSSION || weaponNum == WP_PHYSGUN)
 	{
 		Q_strncpyz( path, item->view_model, sizeof(path) );
 		COM_StripExtension( path, path, sizeof( path ) );
@@ -134,6 +134,10 @@ void CG_RegisterWeapon( int weaponNum) {
 //	}
 
 	switch ( weaponNum ) {
+	case WP_PHYSGUN:
+	case WP_TOOLGUN:
+        weaponInfo->selectSound=trap->S_RegisterSound(weaponNum==WP_PHYSGUN?"sound/weapons/concussion/select.wav":"sound/weapons/bryar/select.wav");
+		break; // Sandbox actions and their audio are server-authoritative.
 	case WP_STUN_BATON:
 	case WP_MELEE:
 /*		MAKERGB( weaponInfo->flashDlightColor, 0.6f, 0.6f, 1.0f );

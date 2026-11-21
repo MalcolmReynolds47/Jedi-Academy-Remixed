@@ -310,13 +310,17 @@ void	cgi_R_AddRefEntityToScene( const refEntity_t *re ) {
 
 qboolean	cgi_R_inPVS( vec3_t p1, vec3_t p2 )
 {
-	return (qboolean)(Q_syscall( CG_R_INPVS, p1, p2 ) != 0);
+	byte* mask = nullptr;
+	return (qboolean)(Q_syscall( CG_R_INPVS, p1, p2, mask ) != 0);
 }
 
 
 void	cgi_R_GetLighting( const vec3_t origin, vec3_t ambientLight, vec3_t directedLight, vec3_t ligthDir ) {
 	Q_syscall( CG_R_GETLIGHTING, origin, ambientLight, directedLight, ligthDir );
 }
+
+void cgi_R_AddPortalToScene(const jar::portal::View*view){Q_syscall(CG_R_ADDPORTALTOSCENE,view);}
+int cgi_R_SetReflectionProbes(const jar::reflection::Probe* probes,int count){return (int)Q_syscall(CG_R_SETREFLECTIONPROBES,probes,count);}
 
 void	cgi_R_AddPolyToScene( qhandle_t hShader , int numVerts, const polyVert_t *verts ) {
 	Q_syscall( CG_R_ADDPOLYTOSCENE, hShader, numVerts, verts );
@@ -590,4 +594,15 @@ void *cgi_UI_GetMenuByName( const char *menu )
 void cgi_UI_Menu_Paint( void *menu, qboolean force )
 {
 	Q_syscall( CG_OPENJK_MENU_PAINT, menu, force );
+}
+
+qboolean cgi_CM_BSPModelInfo(const char*name,int*first,int*count){return (qboolean)Q_syscall(CG_CM_BSPMODELINFO,name,first,count);}
+qboolean cgi_CM_SectionSky(int modelIndex, const vec3_t localPoint) {
+    return (qboolean)Q_syscall(CG_CM_SECTION_SKY, modelIndex, localPoint);
+}
+qboolean cgi_CM_RiftSectionAir(int modelIndex, const vec3_t localPoint) {
+    return (qboolean)Q_syscall(CG_CM_RIFTSECTIONAIR, modelIndex, localPoint);
+}
+qboolean cgi_CM_SectionPVS(int modelIndex,const vec3_t localView,const vec3_t localPoint){
+    return (qboolean)Q_syscall(CG_CM_SECTION_PVS,modelIndex,localView,localPoint);
 }

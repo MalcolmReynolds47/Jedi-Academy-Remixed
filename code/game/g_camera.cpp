@@ -24,6 +24,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_local.h"
 #include "../cgame/cg_camera.h"
 #include "g_functions.h"
+#include "g_scene_camera.inc"
 
 /*
 #define MAX_CAMERA_GROUP_SUBJECTS	16

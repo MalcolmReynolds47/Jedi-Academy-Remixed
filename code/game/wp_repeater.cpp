@@ -25,6 +25,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_functions.h"
 #include "wp_saber.h"
 #include "w_local.h"
+#include "qcommon/jar_force_enlightenment.h"
 
 //-------------------
 //	Heavy Repeater
@@ -43,6 +44,7 @@ static void WP_RepeaterMainFire( gentity_t *ent, vec3_t dir )
 	WP_MissileTargetHint(ent, start, dir);
 
 	gentity_t *missile = CreateMissile( start, dir, REPEATER_VELOCITY, 10000, ent );
+	if (!missile) return;
 
 	missile->classname = "repeater_proj";
 	missile->s.weapon = WP_REPEATER;
@@ -94,11 +96,13 @@ static void WP_RepeaterAltFire( gentity_t *ent )
 	if ( ent->client && ent->client->NPC_class == CLASS_GALAKMECH )
 	{
 		missile = CreateMissile( start, ent->client->hiddenDir, ent->client->hiddenDist, 10000, ent, qtrue );
+		if (!missile) return;
 	}
 	else
 	{
 		WP_MissileTargetHint(ent, start, forwardVec);
 		missile = CreateMissile( start, forwardVec, REPEATER_ALT_VELOCITY, 10000, ent, qtrue );
+		if (!missile) return;
 	}
 
 	missile->classname = "repeater_alt_proj";
@@ -161,7 +165,7 @@ void WP_FireRepeater( gentity_t *ent, qboolean alt_fire )
 	else
 	{
 		if ( !(ent->client->ps.forcePowersActive&(1<<FP_SEE))
-			|| ent->client->ps.forcePowerLevel[FP_SEE] < FORCE_LEVEL_2 )
+			|| jar::enlightenment::Rank(ent->client->ps,FP_SEE) < FORCE_LEVEL_2 )
 		{//force sight 2+ gives perfect aim
 			//FIXME: maybe force sight level 3 autoaims some?
 			// Troopers use their aim values as well as the gun's inherent inaccuracy

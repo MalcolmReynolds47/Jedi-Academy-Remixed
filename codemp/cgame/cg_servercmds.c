@@ -27,6 +27,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // be a valid snapshot this frame
 
 #include "cg_local.h"
+#include "cg_jar_sandbox.h"
 #include "game/bg_public.h"
 #include "ui/menudef.h"
 #include "ghoul2/G2.h"
@@ -134,6 +135,7 @@ void CG_ParseServerinfo( void ) {
 
 	info = CG_ConfigString( CS_SERVERINFO );
 
+	cgs.jarMPVersion = atoi(Info_ValueForKey(info,"jar_mpVersion"));
 	cgs.debugMelee = atoi( Info_ValueForKey( info, "g_debugMelee" ) ); //trap->Cvar_GetHiddenVarValue("g_iknowkungfu");
 	cgs.stepSlideFix = atoi( Info_ValueForKey( info, "g_stepSlideFix" ) );
 
@@ -825,6 +827,16 @@ static void CG_ConfigStringModified( void ) {
 		Q_strncpyz( cgs.teamVoteString[num-CS_TEAMVOTE_STRING], str, sizeof( cgs.teamVoteString ) );
 	} else if ( num == CS_INTERMISSION ) {
 		cg.intermissionStarted = atoi( str );
+	} else if ( num == CS_ITEMS ) {
+		// Sandbox can introduce weapons after this client has loaded the map.
+		// Register their projectile and pickup art before processing snapshots.
+		for ( int i = 1, count = strlen( str ); i < bg_numItems && i < count; ++i ) {
+			if ( str[i] == '1' ) {
+				CG_RegisterItemVisuals( i );
+			}
+		}
+	} else if ( num >= CS_BSP_MODELS && num < CS_BSP_MODELS+MAX_SUB_BSP ) {
+		CG_RegisterBSPModels();
 	} else if ( num >= CS_MODELS && num < CS_MODELS+MAX_MODELS ) {
 		char modelName[MAX_QPATH];
 		strcpy(modelName, str);
@@ -1006,7 +1018,7 @@ void CG_KillCEntityInstances(void)
 	{
 		cent = &cg_entities[i];
 
-		if (i >= MAX_CLIENTS && cent->currentState.number == i)
+		if (i >= MAX_CLIENTS && (cent->npcClient || cent->currentState.number == i))
 		{ //do not clear G2 instances on client ents, they are constant
 			CG_KillCEntityG2(i);
 		}
@@ -1055,6 +1067,7 @@ require a reload of all the media
 ===============
 */
 static void CG_MapRestart( void ) {
+	CG_JAR_ClearReflectionProbes();
 	if ( cg_showMiss.integer ) {
 		trap->Print( "CG_MapRestart\n" );
 	}
@@ -1600,6 +1613,14 @@ int svcmdcmp( const void *a, const void *b ) {
 }
 
 static serverCommand_t	commands[] = {
+	{ "jarequip", CG_JAR_Equip },
+	{ "jarsettings", CG_JAR_Settings },
+	{ "jartool", CG_JAR_Tool },
+	{ "jarstatus", CG_JAR_Status },
+	{ "jarundo", CG_JAR_UndoFeedback },
+	{ "jarstats", CG_JAR_Stats },
+	{ "jarselection", CG_JAR_Selection },
+	{ "jarcontroller", CG_JAR_Controller },
 	{ "chat",				CG_Chat_f },
 	{ "clientLevelShot",	CG_ClientLevelShot_f },
 	{ "cp",					CG_CenterPrint_f },

@@ -535,6 +535,7 @@ typedef struct pmove_s {
 	int			gametype;
 
 	int			debugMelee;
+	qboolean jarContinuousFists; // per-player input preference, not wire state
 	int			stepSlideFix;
 	int			noSpecMove;
 
@@ -594,7 +595,11 @@ typedef enum {
 	STAT_ARMOR,
 	STAT_DEAD_YAW,					// look this direction when dead (FIXME: get rid of?)
 	STAT_CLIENTS_READY,				// bit mask of clients wishing to exit the intermission (FIXME: configstring?)
-	STAT_MAX_HEALTH					// health / armor limit, changable by handicap
+	STAT_MAX_HEALTH,					// health / armor limit, changable by handicap
+	STAT_JAR_PHYSGUN_HOLD,
+	// Zero keeps native movement. Positive values encode the setting plus one.
+	STAT_JAR_ACTOR_GRAVITY,
+	STAT_JAR_ACTOR_FRICTION
 } statIndex_t;
 
 

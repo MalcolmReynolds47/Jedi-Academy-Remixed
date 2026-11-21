@@ -25,10 +25,12 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // perform the server side effects of a weapon firing
 
 #include "g_local.h"
+#include "jar_galak.h"
 #include "botlib/be_aas.h"
 #include "bg_saga.h"
 #include "ghoul2/G2.h"
 #include "qcommon/q_shared.h"
+#include "jar_mp_emplaced.h"
 
 static vec3_t forward, vright, up;
 static vec3_t muzzle;
@@ -251,63 +253,34 @@ BRYAR PISTOL
 */
 
 //----------------------------------------------
-static void WP_FireBryarPistol( gentity_t *ent, qboolean altFire )
-//---------------------------------------------------------
+static void InitBryarMissile(gentity_t *missile, int damage, int charge)
 {
-	int damage = BRYAR_PISTOL_DAMAGE;
-	int count;
-
-	gentity_t	*missile = CreateMissile( muzzle, forward, BRYAR_PISTOL_VEL, 10000, ent, altFire );
-
 	missile->classname = "bryar_proj";
 	missile->s.weapon = WP_BRYAR_PISTOL;
-
-	if ( altFire )
+	if (charge)
 	{
-		float boxSize = 0;
-
-		count = ( level.time - ent->client->ps.weaponChargeTime ) / BRYAR_CHARGE_UNIT;
-
-		if ( count < 1 )
-		{
-			count = 1;
-		}
-		else if ( count > 5 )
-		{
-			count = 5;
-		}
-
-		if (count > 1)
-		{
-			damage *= (count*1.7);
-		}
-		else
-		{
-			damage *= (count*1.5);
-		}
-
-		missile->s.generic1 = count; // The missile will then render according to the charge level.
-
-		boxSize = BRYAR_ALT_SIZE*(count*0.5);
-
-		VectorSet( missile->r.maxs, boxSize, boxSize, boxSize );
-		VectorSet( missile->r.mins, -boxSize, -boxSize, -boxSize );
+		const float boxSize = BRYAR_ALT_SIZE * (charge * 0.5f);
+		missile->s.generic1 = charge;
+		VectorSet(missile->r.maxs, boxSize, boxSize, boxSize);
+		VectorSet(missile->r.mins, -boxSize, -boxSize, -boxSize);
 	}
-
 	missile->damage = damage;
 	missile->dflags = DAMAGE_DEATH_KNOCKBACK;
+	missile->methodOfDeath = charge ? MOD_BRYAR_PISTOL_ALT : MOD_BRYAR_PISTOL;
+	missile->clipmask = MASK_SHOT | CONTENTS_LIGHTSABER;
+	missile->bounceCount = 8;
+}
+
+static void WP_FireBryarPistol(gentity_t *ent, qboolean altFire)
+{
+	gentity_t *missile = CreateMissile(muzzle, forward, BRYAR_PISTOL_VEL, 10000, ent, altFire);
+	int damage = BRYAR_PISTOL_DAMAGE, charge = 0;
 	if (altFire)
 	{
-		missile->methodOfDeath = MOD_BRYAR_PISTOL_ALT;
+		charge = Com_Clampi(1, 5, (int)((level.time - ent->client->ps.weaponChargeTime) / BRYAR_CHARGE_UNIT));
+		damage *= charge > 1 ? charge * 1.7 : charge * 1.5;
 	}
-	else
-	{
-		missile->methodOfDeath = MOD_BRYAR_PISTOL;
-	}
-	missile->clipmask = MASK_SHOT | CONTENTS_LIGHTSABER;
-
-	// we don't want it to bounce forever
-	missile->bounceCount = 8;
+	InitBryarMissile(missile, damage, charge);
 }
 
 /*
@@ -367,7 +340,7 @@ void WP_Explode( gentity_t *self )
 		G_PlayEffect( self->fxID, self->r.currentOrigin, forwardVec );
 	}*/
 
-	if ( self->s.owner && self->s.owner != 1023 )
+	if ( self->s.owner > 0 && self->s.owner < ENTITYNUM_WORLD )
 	{
 		attacker = &g_entities[self->s.owner];
 	}
@@ -426,21 +399,8 @@ BLASTER
 ======================================================================
 */
 
-//---------------------------------------------------------
-void WP_FireBlasterMissile( gentity_t *ent, vec3_t start, vec3_t dir, qboolean altFire )
-//---------------------------------------------------------
+static void InitBlasterMissile(gentity_t *missile, int damage)
 {
-	int velocity	= BLASTER_VELOCITY;
-	int	damage		= BLASTER_DAMAGE;
-	gentity_t *missile;
-
-	if (ent->s.eType == ET_NPC)
-	{ //animent
-		damage = 10;
-	}
-
-	missile = CreateMissile( start, dir, velocity, 10000, ent, altFire );
-
 	missile->classname = "blaster_proj";
 	missile->s.weapon = WP_BLASTER;
 
@@ -451,6 +411,15 @@ void WP_FireBlasterMissile( gentity_t *ent, vec3_t start, vec3_t dir, qboolean a
 
 	// we don't want it to bounce forever
 	missile->bounceCount = 8;
+}
+
+//---------------------------------------------------------
+void WP_FireBlasterMissile( gentity_t *ent, vec3_t start, vec3_t dir, qboolean altFire )
+//---------------------------------------------------------
+{
+	const int damage = ent->s.eType == ET_NPC ? 10 : BLASTER_DAMAGE;
+	gentity_t *missile = CreateMissile(start, dir, BLASTER_VELOCITY, 10000, ent, altFire);
+	InitBlasterMissile(missile, damage);
 }
 
 //---------------------------------------------------------
@@ -1899,6 +1868,15 @@ void RocketDie(gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int d
 	self->die = 0;
 	self->r.contents = 0;
 
+	if (self->jarShooterSource)
+	{
+		// Finish from the next native think so adjacent rockets cannot nest splash loops.
+		self->takedamage = qfalse;
+		G_SetOrigin(self, self->r.currentOrigin);
+		self->think = G_ExplodeMissile;
+		self->nextthink = level.time + 1;
+		return;
+	}
 	G_ExplodeMissile( self );
 
 	self->think = G_FreeEntity;
@@ -1906,6 +1884,42 @@ void RocketDie(gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int d
 }
 
 //---------------------------------------------------------
+static void InitRocketMissile(gentity_t *missile, int damage, qboolean altFire)
+{
+	missile->classname = "rocket_proj";
+	missile->s.weapon = WP_ROCKET_LAUNCHER;
+
+	// Make it easier to hit things
+	VectorSet( missile->r.maxs, ROCKET_SIZE, ROCKET_SIZE, ROCKET_SIZE );
+	VectorScale( missile->r.maxs, -1, missile->r.mins );
+
+	missile->damage = damage;
+	missile->dflags = DAMAGE_DEATH_KNOCKBACK;
+	if (altFire)
+	{
+		missile->methodOfDeath = MOD_ROCKET_HOMING;
+		missile->splashMethodOfDeath = MOD_ROCKET_HOMING_SPLASH;
+	}
+	else
+	{
+		missile->methodOfDeath = MOD_ROCKET;
+		missile->splashMethodOfDeath = MOD_ROCKET_SPLASH;
+	}
+//===testing being able to shoot rockets out of the air==================================
+	missile->health = 10;
+	missile->takedamage = qtrue;
+	missile->r.contents = MASK_SHOT;
+	missile->die = RocketDie;
+//===testing being able to shoot rockets out of the air==================================
+
+	missile->clipmask = MASK_SHOT;
+	missile->splashDamage = ROCKET_SPLASH_DAMAGE;
+	missile->splashRadius = ROCKET_SPLASH_RADIUS;
+
+	// we don't want it to ever bounce
+	missile->bounceCount = 0;
+}
+
 static void WP_FireRocket( gentity_t *ent, qboolean altFire )
 //---------------------------------------------------------
 {
@@ -1955,39 +1969,7 @@ static void WP_FireRocket( gentity_t *ent, qboolean altFire )
 		ent->client->ps.rocketLockTime = 0;
 		ent->client->ps.rocketTargetTime = 0;
 	}
-
-	missile->classname = "rocket_proj";
-	missile->s.weapon = WP_ROCKET_LAUNCHER;
-
-	// Make it easier to hit things
-	VectorSet( missile->r.maxs, ROCKET_SIZE, ROCKET_SIZE, ROCKET_SIZE );
-	VectorScale( missile->r.maxs, -1, missile->r.mins );
-
-	missile->damage = damage;
-	missile->dflags = DAMAGE_DEATH_KNOCKBACK;
-	if (altFire)
-	{
-		missile->methodOfDeath = MOD_ROCKET_HOMING;
-		missile->splashMethodOfDeath = MOD_ROCKET_HOMING_SPLASH;
-	}
-	else
-	{
-		missile->methodOfDeath = MOD_ROCKET;
-		missile->splashMethodOfDeath = MOD_ROCKET_SPLASH;
-	}
-//===testing being able to shoot rockets out of the air==================================
-	missile->health = 10;
-	missile->takedamage = qtrue;
-	missile->r.contents = MASK_SHOT;
-	missile->die = RocketDie;
-//===testing being able to shoot rockets out of the air==================================
-
-	missile->clipmask = MASK_SHOT;
-	missile->splashDamage = ROCKET_SPLASH_DAMAGE;
-	missile->splashRadius = ROCKET_SPLASH_RADIUS;
-
-	// we don't want it to ever bounce
-	missile->bounceCount = 0;
+	InitRocketMissile(missile, damage, altFire);
 }
 
 /*
@@ -2043,7 +2025,7 @@ void thermalDetonatorExplode( gentity_t *ent )
 		ent->freeAfterEvent = qtrue;
 
 		if (G_RadiusDamage( ent->r.currentOrigin, ent->parent,  ent->splashDamage, ent->splashRadius,
-				ent, ent, ent->splashMethodOfDeath))
+				ent, ent, ent->splashMethodOfDeath) && g_entities[ent->r.ownerNum].client)
 		{
 			g_entities[ent->r.ownerNum].client->accuracy_hits++;
 		}
@@ -2066,91 +2048,56 @@ void thermalThinkStandard(gentity_t *ent)
 }
 
 //---------------------------------------------------------
-gentity_t *WP_FireThermalDetonator( gentity_t *ent, qboolean altFire )
-//---------------------------------------------------------
+static void InitThermalMissile(gentity_t *bolt, gentity_t *owner, qboolean altFire,
+	const vec3_t start, const vec3_t velocity, int loopSound)
 {
-	gentity_t	*bolt;
-	vec3_t		dir, start;
-	float chargeAmount = 1.0f; // default of full charge
-
-	VectorCopy( forward, dir );
-	VectorCopy( muzzle, start );
-
-	bolt = G_Spawn();
-
-	bolt->physicsObject = qtrue;
-
 	bolt->classname = "thermal_detonator";
-	bolt->think = thermalThinkStandard;
-	bolt->nextthink = level.time;
 	bolt->touch = touch_NULL;
-
-	// How 'bout we give this thing a size...
-	VectorSet( bolt->r.mins, -3.0f, -3.0f, -3.0f );
-	VectorSet( bolt->r.maxs, 3.0f, 3.0f, 3.0f );
 	bolt->clipmask = MASK_SHOT;
-
-	W_TraceSetStart( ent, start, bolt->r.mins, bolt->r.maxs );//make sure our start point isn't on the other side of a wall
-
-	if ( ent->client )
-	{
-		chargeAmount = level.time - ent->client->ps.weaponChargeTime;
-	}
-
-	// get charge amount
-	chargeAmount = chargeAmount / (float)TD_VELOCITY;
-
-	if ( chargeAmount > 1.0f )
-	{
-		chargeAmount = 1.0f;
-	}
-	else if ( chargeAmount < TD_MIN_CHARGE )
-	{
-		chargeAmount = TD_MIN_CHARGE;
-	}
-
-	// normal ones bounce, alt ones explode on impact
-	bolt->genericValue5 = level.time + TD_TIME; // How long 'til she blows
-	bolt->s.pos.trType = TR_GRAVITY;
-	bolt->parent = ent;
-	bolt->r.ownerNum = ent->s.number;
-	VectorScale( dir, TD_VELOCITY * chargeAmount, bolt->s.pos.trDelta );
-
-	if ( ent->health >= 0 )
-	{
-		bolt->s.pos.trDelta[2] += 120;
-	}
-
-	if ( !altFire )
-	{
+	bolt->parent = owner;
+	bolt->r.ownerNum = owner->s.number;
+	if (!altFire)
 		bolt->flags |= FL_BOUNCE_HALF;
-	}
-
-	bolt->s.loopSound = G_SoundIndex( "sound/weapons/thermal/thermloop.wav" );
+	bolt->s.loopSound = loopSound;
 	bolt->s.loopIsSoundset = qfalse;
-
-	bolt->damage = TD_DAMAGE;
-	bolt->dflags = 0;
-	bolt->splashDamage = TD_SPLASH_DAM;
-	bolt->splashRadius = TD_SPLASH_RAD;
-
 	bolt->s.eType = ET_MISSILE;
 	bolt->r.svFlags = SVF_USE_CURRENT_ORIGIN;
 	bolt->s.weapon = WP_THERMAL;
-
 	bolt->methodOfDeath = MOD_THERMAL;
 	bolt->splashMethodOfDeath = MOD_THERMAL_SPLASH;
-
-	bolt->s.pos.trTime = level.time;		// move a bit on the very first frame
-	VectorCopy( start, bolt->s.pos.trBase );
-
-	SnapVector( bolt->s.pos.trDelta );			// save net bandwidth
-	VectorCopy (start, bolt->r.currentOrigin);
-
-	VectorCopy( start, bolt->pos2 );
-
+	bolt->s.pos.trType = TR_GRAVITY;
+	bolt->s.pos.trTime = level.time;
+	VectorCopy(start, bolt->s.pos.trBase);
+	VectorCopy(velocity, bolt->s.pos.trDelta);
+	SnapVector(bolt->s.pos.trDelta);
+	VectorCopy(start, bolt->r.currentOrigin);
+	VectorCopy(start, bolt->pos2);
 	bolt->bounceCount = -5;
+}
 
+gentity_t *WP_FireThermalDetonator(gentity_t *ent, qboolean altFire)
+{
+	vec3_t start, velocity;
+	VectorCopy(muzzle, start);
+	gentity_t *bolt = G_Spawn();
+	VectorSet(bolt->r.mins, -3, -3, -3);
+	VectorSet(bolt->r.maxs, 3, 3, 3);
+	W_TraceSetStart(ent, start, bolt->r.mins, bolt->r.maxs);
+
+	float charge = ent->client ? level.time - ent->client->ps.weaponChargeTime : 1.0f;
+	charge = Com_Clamp(TD_MIN_CHARGE, 1.0f, charge / TD_VELOCITY);
+	VectorScale(forward, TD_VELOCITY * charge, velocity);
+	if (ent->health >= 0)
+		velocity[2] += 120;
+
+	InitThermalMissile(bolt, ent, altFire, start, velocity, G_SoundIndex("sound/weapons/thermal/thermloop.wav"));
+	bolt->physicsObject = qtrue;
+	bolt->think = thermalThinkStandard;
+	bolt->nextthink = level.time;
+	bolt->genericValue5 = level.time + TD_TIME;
+	bolt->damage = TD_DAMAGE;
+	bolt->splashDamage = TD_SPLASH_DAM;
+	bolt->splashRadius = TD_SPLASH_RAD;
 	return bolt;
 }
 
@@ -2162,9 +2109,9 @@ gentity_t *WP_DropThermal( gentity_t *ent )
 
 
 //---------------------------------------------------------
-qboolean WP_LobFire( gentity_t *self, vec3_t start, vec3_t target, vec3_t mins, vec3_t maxs, int clipmask,
+static qboolean LobFire( gentity_t *self, vec3_t start, vec3_t target, vec3_t mins, vec3_t maxs, int clipmask,
 				vec3_t velocity, qboolean tracePath, int ignoreEntNum, int enemyNum,
-				float minSpeed, float maxSpeed, float idealSpeed, qboolean mustHit )
+				float minSpeed, float maxSpeed, float idealSpeed, qboolean mustHit, int traceLimit )
 //---------------------------------------------------------
 { //for the galak mech NPC
 	float	targetDist, shotSpeed, speedInc = 100, travelTime, impactDist, bestImpactDist = Q3_INFINITE;//fireSpeed,
@@ -2230,6 +2177,11 @@ qboolean WP_LobFire( gentity_t *self, vec3_t start, vec3_t target, vec3_t mins, 
 					elapsedTime = floor( travelTime );
 				}
 				BG_EvaluateTrajectory( &tr, level.time + elapsedTime, testPos );
+				if (traceLimit > 0 && --traceLimit == 0)
+				{
+					VectorCopy(failCase, velocity);
+					return qfalse;
+				}
 				trap->Trace( &trace, lastPos, mins, maxs, testPos, ignoreEntNum, clipmask, qfalse, 0, 0 );
 
 				if ( trace.allsolid || trace.startsolid )
@@ -2307,6 +2259,16 @@ qboolean WP_LobFire( gentity_t *self, vec3_t start, vec3_t target, vec3_t mins, 
 	VectorCopy( shotVel, velocity );
 	return qtrue;
 }
+
+qboolean WP_LobFire(gentity_t *self, vec3_t start, vec3_t target, vec3_t mins, vec3_t maxs,
+	int clipmask, vec3_t velocity, qboolean tracePath, int ignoreEntNum, int enemyNum,
+	float minSpeed, float maxSpeed, float idealSpeed, qboolean mustHit)
+{
+	return LobFire(self, start, target, mins, maxs, clipmask, velocity, tracePath, ignoreEntNum,
+		enemyNum, minSpeed, maxSpeed, idealSpeed, mustHit, 0);
+}
+
+#include "g_jar_native_shooters.inc"
 
 /*
 ======================================================================
@@ -3638,6 +3600,7 @@ first person perspective.
 */
 void CalcMuzzlePoint ( gentity_t *ent, const vec3_t inForward, const vec3_t inRight, const vec3_t inUp, vec3_t muzzlePoint )
 {
+	if(ent->client && ent->client->NPC_class==CLASS_GALAKMECH){NPC_GalakMech_UpdateMuzzle(ent);VectorCopy(ent->client->renderInfo.muzzlePoint,muzzlePoint);return;}
 	int weapontype;
 	vec3_t muzzleOffPoint;
 
@@ -3751,6 +3714,8 @@ gentity_t *WP_FireVehicleWeapon( gentity_t *ent, vec3_t start, vec3_t dir, vehWe
 
 		//FIXME: externalize some of these properties?
 		missile->dflags = DAMAGE_DEATH_KNOCKBACK;
+		if (ent->m_pVehicle && ent->m_pVehicle->m_pVehicleInfo && ent->m_pVehicle->m_pVehicleInfo->type == VH_WALKER)
+			missile->dflags |= DAMAGE_JAR_CARGO_WALKER_SHOT;
 		missile->clipmask = MASK_SHOT;
 		//Maybe by checking flags...?
 		if ( vehWeapon->bSaberBlockable )
@@ -4489,6 +4454,7 @@ FireWeapon
 int BG_EmplacedView(vec3_t baseAngles, vec3_t angles, float *newYaw, float constraint);
 
 void FireWeapon( gentity_t *ent, qboolean altFire ) {
+	if(ent->client && (ent->client->ps.weapon==WP_PHYSGUN || ent->client->ps.weapon==WP_TOOLGUN)){JAR_MP_Fire(ent,altFire);return;}
 	// track shots taken for accuracy tracking. melee weapons are not tracked.
 	if( ent->s.weapon != WP_SABER && ent->s.weapon != WP_STUN_BATON && ent->s.weapon != WP_MELEE )
 	{
@@ -4508,7 +4474,7 @@ void FireWeapon( gentity_t *ent, qboolean altFire ) {
 	{
 		// set aiming directions
 		if (ent->s.weapon == WP_EMPLACED_GUN &&
-			ent->client->ps.emplacedIndex)
+			ent->client->ps.emplacedIndex > 0 && ent->client->ps.emplacedIndex < ENTITYNUM_WORLD)
 		{ //if using emplaced then base muzzle point off of gun position/angles
 			gentity_t *emp = &g_entities[ent->client->ps.emplacedIndex];
 
@@ -4525,7 +4491,7 @@ void FireWeapon( gentity_t *ent, qboolean altFire ) {
 				}
 
 				override = BG_EmplacedView(ent->client->ps.viewangles, emp->s.angles, &yaw,
-					emp->s.origin2[0]);
+					JAR_MP_EmplacedConstraint(&emp->s));
 
 				if (override)
 				{
@@ -4670,19 +4636,31 @@ static void WP_FireEmplaced( gentity_t *ent, qboolean altFire )
 		return;
 	}
 
-	if (!ent->client->ps.emplacedIndex)
+	if (ent->client->ps.emplacedIndex <= 0 || ent->client->ps.emplacedIndex >= ENTITYNUM_WORLD)
 	{ //shouldn't be using WP_EMPLACED_GUN if we aren't on an emplaced weapon
 		return;
 	}
 
 	gun = &g_entities[ent->client->ps.emplacedIndex];
+	if (JAR_MP_EWebState(&gun->s))
+		return; // The E-Web aims and fires once in its own Think callback.
 
 	if (!gun->inuse || gun->health <= 0)
 	{ //gun was removed or killed, although we should never hit this check because we should have been forced off it already
 		return;
 	}
 
-	VectorCopy(gun->s.origin, gunpoint);
+	if (JAR_MP_EmplacedState(&gun->s))
+	{
+		if (gun->activator != ent || !JAR_MP_NativeEmplacedOccupied(gun) ||
+			!JAR_MP_EmplacedCanFire(gun))
+			return;
+		VectorCopy(gun->r.currentOrigin, gunpoint);
+	}
+	else
+	{
+		VectorCopy(gun->s.origin, gunpoint);
+	}
 	gunpoint[2] += 46;
 
 	AngleVectors(ent->client->ps.viewangles, NULL, right, NULL);
@@ -4708,369 +4686,4 @@ static void WP_FireEmplaced( gentity_t *ent, qboolean altFire )
 	WP_FireEmplacedMissile( gun, gunpoint, dir, altFire, ent );
 }
 
-#define EMPLACED_CANRESPAWN 1
-
-//----------------------------------------------------------
-
-/*QUAKED emplaced_gun (0 0 1) (-30 -20 8) (30 20 60) CANRESPAWN
-
- count - if CANRESPAWN spawnflag, decides how long it is before gun respawns (in ms)
- constraint - number of degrees gun is constrained from base angles on each side (default 60.0)
-
- showhealth - set to 1 to show health bar on this entity when crosshair is over it
-
-  teamowner - crosshair shows green for this team, red for opposite team
-	0 - none
-	1 - red
-	2 - blue
-
-  alliedTeam - team that can use this
-	0 - any
-	1 - red
-	2 - blue
-
-  teamnodmg - team that turret does not take damage from or do damage to
-	0 - none
-	1 - red
-	2 - blue
-*/
-
-//----------------------------------------------------------
-extern qboolean TryHeal(gentity_t *ent, gentity_t *target); //g_utils.c
-void emplaced_gun_use( gentity_t *self, gentity_t *other, trace_t *trace )
-{
-	vec3_t fwd1, fwd2;
-	float dot;
-	int oldWeapon;
-	gentity_t *activator = other;
-	float zoffset = 50;
-	vec3_t anglesToOwner;
-	vec3_t vLen;
-	float ownLen;
-
-	if ( self->health <= 0 )
-	{ //gun is destroyed
-		return;
-	}
-
-	if (self->activator)
-	{ //someone is already using me
-		return;
-	}
-
-	if (!activator->client)
-	{
-		return;
-	}
-
-	if (activator->client->ps.emplacedTime > level.time)
-	{ //last use attempt still too recent
-		return;
-	}
-
-	if (activator->client->ps.forceHandExtend != HANDEXTEND_NONE)
-	{ //don't use if busy doing something else
-		return;
-	}
-
-	if (activator->client->ps.origin[2] > self->s.origin[2]+zoffset-8)
-	{ //can't use it from the top
-		return;
-	}
-
-	if (activator->client->ps.pm_flags & PMF_DUCKED)
-	{ //must be standing
-		return;
-	}
-
-	if (activator->client->ps.isJediMaster)
-	{ //jm can't use weapons
-		return;
-	}
-
-	VectorSubtract(self->s.origin, activator->client->ps.origin, vLen);
-	ownLen = VectorLength(vLen);
-
-	if (ownLen > 64.0f)
-	{ //must be within 64 units of the gun to use at all
-		return;
-	}
-
-	// Let's get some direction vectors for the user
-	AngleVectors( activator->client->ps.viewangles, fwd1, NULL, NULL );
-
-	// Get the guns direction vector
-	AngleVectors( self->pos1, fwd2, NULL, NULL );
-
-	dot = DotProduct( fwd1, fwd2 );
-
-	// Must be reasonably facing the way the gun points ( 110 degrees or so ), otherwise we don't allow to use it.
-	if ( dot < -0.2f )
-	{
-		goto tryHeal;
-	}
-
-	VectorSubtract(self->s.origin, activator->client->ps.origin, fwd1);
-	VectorNormalize(fwd1);
-
-	dot = DotProduct( fwd1, fwd2 );
-
-	//check the positioning in relation to the gun as well
-	if ( dot < 0.6f )
-	{
-		goto tryHeal;
-	}
-
-	self->genericValue1 = 1;
-
-	oldWeapon = activator->s.weapon;
-
-	// swap the users weapon with the emplaced gun
-	activator->client->ps.weapon = self->s.weapon;
-	activator->client->ps.weaponstate = WEAPON_READY;
-	activator->client->ps.stats[STAT_WEAPONS] |= ( 1 << WP_EMPLACED_GUN );
-
-	activator->client->ps.emplacedIndex = self->s.number;
-
-	self->s.emplacedOwner = activator->s.number;
-	self->s.activeForcePass = NUM_FORCE_POWERS+1;
-
-	// the gun will track which weapon we used to have
-	self->s.weapon = oldWeapon;
-
-	//user's new owner becomes the gun ent
-	activator->r.ownerNum = self->s.number;
-	self->activator = activator;
-
-	VectorSubtract(self->r.currentOrigin, activator->client->ps.origin, anglesToOwner);
-	vectoangles(anglesToOwner, anglesToOwner);
-	return;
-
-tryHeal: //well, not in the right dir, try healing it instead...
-	TryHeal(activator, self);
-}
-
-void emplaced_gun_realuse( gentity_t *self, gentity_t *other, gentity_t *activator )
-{
-	emplaced_gun_use(self, other, NULL);
-}
-
-//----------------------------------------------------------
-void emplaced_gun_pain( gentity_t *self, gentity_t *attacker, int damage )
-{
-	self->s.health = self->health;
-
-	if ( self->health <= 0 )
-	{
-		//death effect.. for now taken care of on cgame
-	}
-	else
-	{
-		//if we have a pain behavior set then use it I guess
-		G_ActivateBehavior( self, BSET_PAIN );
-	}
-}
-
-#define EMPLACED_GUN_HEALTH 800
-
-//----------------------------------------------------------
-void emplaced_gun_update(gentity_t *self)
-{
-	vec3_t	smokeOrg, puffAngle;
-	int oldWeap;
-	float ownLen = 0;
-
-	if (self->health < 1 && !self->genericValue5)
-	{ //we are dead, set our respawn delay if we have one
-		if (self->spawnflags & EMPLACED_CANRESPAWN)
-		{
-			self->genericValue5 = level.time + 4000 + self->count;
-		}
-	}
-	else if (self->health < 1 && self->genericValue5 < level.time)
-	{ //we are dead, see if it's time to respawn
-		self->s.time = 0;
-		self->genericValue4 = 0;
-		self->genericValue3 = 0;
-		self->health = EMPLACED_GUN_HEALTH*0.4;
-		self->s.health = self->health;
-	}
-
-	if (self->genericValue4 && self->genericValue4 < 2 && self->s.time < level.time)
-	{ //we have finished our warning (red flashing) effect, it's time to finish dying
-		vec3_t explOrg;
-
-		VectorSet( puffAngle, 0, 0, 1 );
-
-		VectorCopy(self->r.currentOrigin, explOrg);
-		explOrg[2] += 16;
-
-		//just use the detpack explosion effect
-		G_PlayEffect(EFFECT_EXPLOSION_DETPACK, explOrg, puffAngle);
-
-		self->genericValue3 = level.time + Q_irand(2500, 3500);
-
-		G_RadiusDamage(self->r.currentOrigin, self, self->splashDamage, self->splashRadius, self, NULL, MOD_UNKNOWN);
-
-		self->s.time = -1;
-
-		self->genericValue4 = 2;
-	}
-
-	if (self->genericValue3 > level.time)
-	{ //see if we are freshly dead and should be smoking
-		if (self->genericValue2 < level.time)
-		{ //is it time yet to spawn another smoke puff?
-			VectorSet( puffAngle, 0, 0, 1 );
-			VectorCopy(self->r.currentOrigin, smokeOrg);
-
-			smokeOrg[2] += 60;
-
-			G_PlayEffect(EFFECT_SMOKE, smokeOrg, puffAngle);
-			self->genericValue2 = level.time + Q_irand(250, 400);
-		}
-	}
-
-	if (self->activator && self->activator->client && self->activator->inuse)
-	{ //handle updating current user
-		vec3_t vLen;
-		VectorSubtract(self->s.origin, self->activator->client->ps.origin, vLen);
-		ownLen = VectorLength(vLen);
-
-		if (!(self->activator->client->pers.cmd.buttons & BUTTON_USE) && self->genericValue1)
-		{
-			self->genericValue1 = 0;
-		}
-
-		if ((self->activator->client->pers.cmd.buttons & BUTTON_USE) && !self->genericValue1)
-		{
-			self->activator->client->ps.emplacedIndex = 0;
-			self->activator->client->ps.saberHolstered = 0;
-			self->nextthink = level.time + 50;
-			return;
-		}
-	}
-
-	if ((self->activator && self->activator->client) &&
-		(!self->activator->inuse || self->activator->client->ps.emplacedIndex != self->s.number || self->genericValue4 || ownLen > 64))
-	{ //get the user off of me then
-		self->activator->client->ps.stats[STAT_WEAPONS] &= ~(1<<WP_EMPLACED_GUN);
-
-		oldWeap = self->activator->client->ps.weapon;
-		self->activator->client->ps.weapon = self->s.weapon;
-		self->s.weapon = oldWeap;
-		self->activator->r.ownerNum = ENTITYNUM_NONE;
-		self->activator->client->ps.emplacedTime = level.time + 1000;
-		self->activator->client->ps.emplacedIndex = 0;
-		self->activator->client->ps.saberHolstered = 0;
-		self->activator = NULL;
-
-		self->s.activeForcePass = 0;
-	}
-	else if (self->activator && self->activator->client)
-	{ //make sure the user is using the emplaced gun weapon
-		self->activator->client->ps.weapon = WP_EMPLACED_GUN;
-		self->activator->client->ps.weaponstate = WEAPON_READY;
-	}
-	self->nextthink = level.time + 50;
-}
-
-//----------------------------------------------------------
-void emplaced_gun_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int damage, int mod )
-{ //set us up to flash and then explode
-	if (self->genericValue4)
-	{
-		return;
-	}
-
-	self->genericValue4 = 1;
-
-	self->s.time = level.time + 3000;
-
-	self->genericValue5 = 0;
-}
-
-void SP_emplaced_gun( gentity_t *ent )
-{
-	const char *name = "models/map_objects/mp/turret_chair.glm";
-	vec3_t down;
-	trace_t tr;
-
-	//make sure our assets are precached
-	RegisterItem( BG_FindItemForWeapon(WP_EMPLACED_GUN) );
-
-	ent->r.contents = CONTENTS_SOLID;
-	ent->s.solid = SOLID_BBOX;
-
-	ent->genericValue5 = 0;
-
-	VectorSet( ent->r.mins, -30, -20, 8 );
-	VectorSet( ent->r.maxs, 30, 20, 60 );
-
-	VectorCopy(ent->s.origin, down);
-
-	down[2] -= 1024;
-
-	trap->Trace(&tr, ent->s.origin, ent->r.mins, ent->r.maxs, down, ent->s.number, MASK_SOLID, qfalse, 0, 0);
-
-	if (tr.fraction != 1 && !tr.allsolid && !tr.startsolid)
-	{
-		VectorCopy(tr.endpos, ent->s.origin);
-	}
-
-	ent->spawnflags |= 4; // deadsolid
-
-	ent->health = EMPLACED_GUN_HEALTH;
-
-	if (ent->spawnflags & EMPLACED_CANRESPAWN)
-	{ //make it somewhat easier to kill if it can respawn
-		ent->health *= 0.4;
-	}
-
-	ent->maxHealth = ent->health;
-	G_ScaleNetHealth(ent);
-
-	ent->genericValue4 = 0;
-
-	ent->takedamage = qtrue;
-	ent->pain = emplaced_gun_pain;
-	ent->die = emplaced_gun_die;
-
-	// being caught in this thing when it blows would be really bad.
-	ent->splashDamage = 80;
-	ent->splashRadius = 128;
-
-	// amount of ammo that this little poochie has
-	G_SpawnInt( "count", "600", &ent->count );
-
-	G_SpawnFloat( "constraint", "60", &ent->s.origin2[0] );
-
-	ent->s.modelindex = G_ModelIndex( (char *)name );
-	ent->s.modelGhoul2 = 1;
-	ent->s.g2radius = 110;
-
-	//so the cgame knows for sure that we're an emplaced weapon
-	ent->s.weapon = WP_EMPLACED_GUN;
-
-	G_SetOrigin( ent, ent->s.origin );
-
-	// store base angles for later
-	VectorCopy( ent->s.angles, ent->pos1 );
-	VectorCopy( ent->s.angles, ent->r.currentAngles );
-	VectorCopy( ent->s.angles, ent->s.apos.trBase );
-
-	ent->think = emplaced_gun_update;
-	ent->nextthink = level.time + 50;
-
-	ent->use = emplaced_gun_realuse;
-
-	ent->r.svFlags |= SVF_PLAYER_USABLE;
-
-	ent->s.pos.trType = TR_STATIONARY;
-
-	ent->s.owner = MAX_CLIENTS+1;
-	ent->s.shouldtarget = qtrue;
-	//ent->s.teamowner = 0;
-
-	trap->LinkEntity((sharedEntity_t *)ent);
-}
+#include "g_jar_native_emplaced.inc"

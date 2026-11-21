@@ -124,6 +124,7 @@ enum
 typedef struct {
 	qhandle_t	charsetShader;
 	qhandle_t	whiteShader;
+	qhandle_t	jarLogicMarkerShader;
 
 	qhandle_t	crosshairShader[NUM_CROSSHAIRS];
 	qhandle_t	backTileShader;
@@ -177,6 +178,7 @@ typedef struct {
 
 	qhandle_t	explosionModel;
 	qhandle_t	surfaceExplosionShader;
+	qhandle_t	wastelandSnowShader;
 
 	qhandle_t	halfShieldModel;
 

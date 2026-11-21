@@ -354,8 +354,9 @@ static void ComputeShaderColors( shaderStage_t *pStage, vec4_t baseColor, vec4_t
 			break;
 		case CGEN_FOG:
 			{
-				fog_t *fog = tr.world->fogs + tess.fogNum;
-				VectorCopy4(fog->color, baseColor);
+				const auto *world = R_BSPFogWorld(backEnd.currentEntity);
+				if (world && tess.fogNum > 0 && tess.fogNum < world->numfogs)
+					VectorCopy4(world->fogs[tess.fogNum].color, baseColor);
 			}
 			break;
 		case CGEN_WAVEFORM:
@@ -766,7 +767,10 @@ static UniformBlockBinding GetFogsBlockUniformBinding()
 	else
 	{
 		binding.ubo = currentFrameUbo;
-		binding.offset = tr.fogsUboOffset;
+		const auto *entity = backEnd.currentEntity;
+		if (entity == &tr.worldEntity && backEnd.sectionFogCapRoom) entity = backEnd.sectionFogCapRoom;
+		binding.offset = entity && entity != &tr.worldEntity && entity != &backEnd.entity2D ?
+			entity->bspFogUboOffset : tr.fogsUboOffset;
 	}
 	return binding;
 }
@@ -1044,8 +1048,10 @@ static void RB_FogPass( shaderCommands_t *input, const VertexArraysProperties *v
 	else if (glState.skeletalAnimation)
 		shaderBits |= FOGDEF_USE_SKELETAL_ANIMATION;
 
-	if (tr.world && tr.world->globalFog &&
-		input->fogNum != tr.world->globalFogIndex &&
+	const auto *fogWorld = R_BSPFogWorld(backEnd.currentEntity);
+	if (fogWorld == tr.world && fogWorld && fogWorld->globalFog &&
+		fogWorld->globalFogIndex > 0 && fogWorld->globalFogIndex <= ARRAY_LEN(FogsBlock::fogs) &&
+		input->fogNum != fogWorld->globalFogIndex &&
 		input->shader->sort != SS_FOG)
 		shaderBits |= FOGDEF_USE_FALLBACK_GLOBAL_FOG;
 
@@ -1106,7 +1112,8 @@ static void RB_FogPass( shaderCommands_t *input, const VertexArraysProperties *v
 	RB_AddDrawItem(backEndData->currentPass, key, item);
 
 	// invert fog planes and render global fog into them
-	if (input->fogNum != tr.world->globalFogIndex && tr.world->globalFogIndex != -1)
+	if (fogWorld == tr.world && fogWorld && input->fogNum != fogWorld->globalFogIndex &&
+		fogWorld->globalFogIndex > 0 && fogWorld->globalFogIndex <= ARRAY_LEN(FogsBlock::fogs))
 	{
 		// only invert render fog planes
 		if (input->shader->sort != SS_FOG)
@@ -1122,7 +1129,7 @@ static void RB_FogPass( shaderCommands_t *input, const VertexArraysProperties *v
 			cullType = CT_FRONT_SIDED;
 		UniformDataWriter uniformDataWriterBack;
 		uniformDataWriterBack.Start(sp);
-		uniformDataWriterBack.SetUniformInt(UNIFORM_FOGINDEX, tr.world->globalFogIndex - 1);
+		uniformDataWriterBack.SetUniformInt(UNIFORM_FOGINDEX, fogWorld->globalFogIndex - 1);
 		if (input->numPasses > 0)
 		{
 			uniformDataWriterBack.SetUniformInt(UNIFORM_ALPHA_TEST_TYPE, input->xstages[0]->alphaTestType);
@@ -1622,6 +1629,9 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input, const VertexArrays
 		bool enableCubeMaps = (	r_cubeMapping->integer
 								&& !(tr.viewParms.flags & VPF_NOCUBEMAPS)
 								&& input->cubemapIndex > 0
+								&& input->cubemapIndex <= tr.numCubemaps
+								&& tr.cubemaps[input->cubemapIndex-1].image
+								&& tr.cubemaps[input->cubemapIndex-1].parallaxRadius > 0
 								&& pStage->rgbGen != CGEN_LIGHTMAPSTYLE );
 		bool enableDLights = (	tess.dlightBits
 								&& tess.shader->sort <= SS_OPAQUE
@@ -1899,7 +1909,8 @@ void RB_StageIteratorGeneric( void )
 	}
 	else
 	{
-		RB_IterateStagesGeneric( input, &vertexArrays );
+		if (input->shader != tr.sectionFogCapShader)
+			RB_IterateStagesGeneric( input, &vertexArrays );
 
 		//
 		// pshadows!
@@ -1923,12 +1934,9 @@ void RB_StageIteratorGeneric( void )
 		//
 		// now do fog
 		//
-		const fog_t *fog = nullptr;
-		if ( tr.world && input->fogNum != 0)
-		{
-			fog = tr.world->fogs + input->fogNum;
-		}
-		if (fog && tess.shader->fogPass && r_drawfog->integer)
+		const auto *fogWorld = R_BSPFogWorld(backEnd.currentEntity);
+		if (fogWorld && input->fogNum > 0 && input->fogNum < fogWorld->numfogs &&
+			tess.shader->fogPass && r_drawfog->integer)
 			RB_FogPass(input, &vertexArrays);
 
 		//
@@ -1971,7 +1979,10 @@ void RB_BinTriangleCounts( void )
 /*
 ** RB_EndSurface
 */
+#include "rd-common/jar_ui_clock.h"
 void RB_EndSurface( void ) {
+	static cvar_t* uiMotion = ri.Cvar_Get("jar_uiMotion", "1", CVAR_ARCHIVE, "");
+	JAR_UIClock uiClock(backEnd.projection2D && !uiMotion->integer, backEnd.refdef.floatTime, backEnd.refdef.time, &tess.shaderTime);
 	shaderCommands_t *input;
 
 	input = &tess;
@@ -1996,7 +2007,8 @@ void RB_EndSurface( void ) {
 		if (tr.world->skyboxportal)
 		{
 			// world
-			if (!(tr.viewParms.isSkyPortal) && (tess.currentStageIteratorFunc == RB_StageIteratorSky))
+			if (!backEnd.viewParms.isSkyPortal && !backEnd.viewParms.portalMonitor &&
+				(tess.currentStageIteratorFunc == RB_StageIteratorSky))
 			{	// don't process these tris at all
 				return;
 			}

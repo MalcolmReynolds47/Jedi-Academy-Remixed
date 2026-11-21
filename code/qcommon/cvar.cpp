@@ -1,3 +1,5 @@
+#include "qcommon/jar_live_randomizer.h"
+#include "qcommon/jar_diagnostics.h"
 /*
 ===========================================================================
 Copyright (C) 1999 - 2005, Id Software, Inc.
@@ -100,7 +102,7 @@ static qboolean Cvar_ValidateString( const char *s ) {
 Cvar_FindVar
 ============
 */
-static cvar_t *Cvar_FindVar( const char *var_name ) {
+cvar_t *Cvar_FindVar( const char *var_name ) {
 	cvar_t	*var;
 	long hash;
 
@@ -655,6 +657,7 @@ cvar_t *Cvar_Set2( const char *var_name, const char *value, qboolean force ) {
 			}
 
 			Com_Printf ("%s will be changed upon restarting.\n", var_name);
+			if(JAR_DiagnosticCvar(var_name)) JAR_Log(1,"cvar","latched","name=%s old=%s requested=%s flags=%x",var_name,var->string,value,var->flags);
 			var->latchedString = CopyString(value);
 			var->modified = qtrue;
 			var->modificationCount++;
@@ -682,6 +685,7 @@ cvar_t *Cvar_Set2( const char *var_name, const char *value, qboolean force ) {
 	var->modified = qtrue;
 	var->modificationCount++;
 
+	if(JAR_DiagnosticCvar(var_name)) JAR_Log(1,"cvar","applied","name=%s old=%s new=%s force=%d flags=%x",var_name,var->string,value,force,var->flags);
 	Cvar_FreeString (var->string);	// free the old value string
 
 	var->string = CopyString(value);
@@ -976,6 +980,7 @@ void Cvar_WriteVariables( fileHandle_t f ) {
 			continue;
 
 		if ( var->flags & CVAR_ARCHIVE ) {
+            const char *archiveValue = JAR_LiveConfigValue(var->name,var->string);
 			// write the latched value, even if it hasn't taken effect yet
 			if ( var->latchedString ) {
 				if( strlen( var->name ) + strlen( var->latchedString ) + 10 > sizeof( buffer ) ) {
@@ -988,15 +993,15 @@ void Cvar_WriteVariables( fileHandle_t f ) {
 				}
 				Com_sprintf (buffer, sizeof(buffer), "seta %s \"%s\"\n", var->name, var->latchedString);
 			} else {
-				if( strlen( var->name ) + strlen( var->string ) + 10 > sizeof( buffer ) ) {
+				if( strlen( var->name ) + strlen( archiveValue ) + 10 > sizeof( buffer ) ) {
 					Com_Printf( S_COLOR_YELLOW "WARNING: value of variable "
 							"\"%s\" too long to write to file\n", var->name );
 					continue;
 				}
-				if ( (var->flags & CVAR_NODEFAULT) && !strcmp( var->string, var->resetString ) ) {
+				if ( (var->flags & CVAR_NODEFAULT) && !strcmp( archiveValue, var->resetString ) ) {
 					continue;
 				}
-				Com_sprintf (buffer, sizeof(buffer), "seta %s \"%s\"\n", var->name, var->string);
+				Com_sprintf (buffer, sizeof(buffer), "seta %s \"%s\"\n", var->name, archiveValue);
 			}
 			FS_Write( buffer, strlen( buffer ), f );
 		}

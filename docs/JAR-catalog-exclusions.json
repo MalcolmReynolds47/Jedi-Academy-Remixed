@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "decisionDate": "2026-10-11",
+  "ownerDecision": "Exclude these tag-only helpers and hide their menu cards",
+  "scope": "Twenty audited zero-surface MD3 attachment helpers and the separately approved empty no-weapon GLM. Actual weapons and visible models remain available.",
+  "models": [
+    "models/weapons2/blaster_pistol/blaster_pistol_hand.md3",
+    "models/weapons2/blaster_r/blaster_hand.md3",
+    "models/weapons2/bowcaster/bowcaster_hand.md3",
+    "models/weapons2/briar_pistol/briar_pistol_hand.md3",
+    "models/weapons2/concussion/c_rifle_hand.md3",
+    "models/weapons2/demp2/demp2_hand.md3",
+    "models/weapons2/detpack/det_pack_hand.md3",
+    "models/weapons2/disruptor/disruptor_hand.md3",
+    "models/weapons2/golan_arms/golan_arms_hand.md3",
+    "models/weapons2/heavy_repeater/heavy_repeater_hand.md3",
+    "models/weapons2/laser_trap/laser_trap_hand.md3",
+    "models/weapons2/merr_sonn/merr_sonn_hand.md3",
+    "models/weapons2/noghri_stick/noghri_stick_hand.md3",
+    "models/weapons2/noweap/noweap.md3",
+    "models/weapons2/noweap/noweap_hand.md3",
+    "models/weapons2/sith_scepter/sith_scepter_hand.md3",
+    "models/weapons2/stun_baton/baton_hand.md3",
+    "models/weapons2/thermal/thermal_hand.md3",
+    "models/weapons2/tusken_rifle/tusken_rifle_hand.md3",
+    "models/weapons2/tusken_staff/tusken_staff_hand.md3",
+    "models/weapons2/noweap/noweap.glm"
+  ],
+  "emptyPlaceholderDecision": "Exclude and hide the empty placeholder",
+  "unavailableContentDecision": "Exclude and hide these seven",
+  "unavailableContentDecisionDate": "2026-10-11",
+  "unavailableEntries": [
+    {
+      "kind": 2,
+      "name": "test",
+      "missingModel": "models/players/test/model.glm"
+    },
+    {
+      "kind": 5,
+      "name": "NPC_Monster_Claw",
+      "missingNpc": "claw"
+    },
+    {
+      "kind": 5,
+      "name": "NPC_Monster_Fish",
+      "missingNpc": "fish"
+    },
+    {
+      "kind": 5,
+      "name": "NPC_Monster_Flier2",
+      "missingNpc": "flier2"
+    },
+    {
+      "kind": 5,
+      "name": "NPC_Monster_Lizard",
+      "missingNpc": "lizard"
+    },
+    {
+      "kind": 5,
+      "name": "NPC_Monster_Murjj",
+      "missingNpc": "murjj"
+    },
+    {
+      "kind": 5,
+      "name": "NPC_Monster_Swamp",
+      "missingNpc": "swamp"
+    }
+  ],
+  "disabledSystemDecision": "Exclude and hide terrain",
+  "disabledSystemDecisionDate": "2026-10-12",
+  "disabledEntries": [
+    {
+      "kind": 5,
+      "name": "terrain",
+      "reason": "Disabled legacy native terrain system; landscape dependencies and retail terrain definitions/heightmaps are absent."
+    }
+  ]
+}

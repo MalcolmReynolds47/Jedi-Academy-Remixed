@@ -25,6 +25,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define SKY_SUBDIVISIONS		8
 #define HALF_SKY_SUBDIVISIONS	(SKY_SUBDIVISIONS/2)
 
+static_assert((SKY_SUBDIVISIONS + 1) * (SKY_SUBDIVISIONS + 1) < SHADER_MAX_VERTEXES);
+static_assert(6 * SKY_SUBDIVISIONS * SKY_SUBDIVISIONS < SHADER_MAX_INDEXES);
+
 static float s_cloudTexCoords[6][SKY_SUBDIVISIONS+1][SKY_SUBDIVISIONS+1][2];
 static float s_cloudTexP[6][SKY_SUBDIVISIONS+1][SKY_SUBDIVISIONS+1];
 
@@ -360,67 +363,12 @@ static void MakeSkyVec( float s, float t, int axis, float outSt[2], vec3_t outXY
 static vec3_t	s_skyPoints[SKY_SUBDIVISIONS+1][SKY_SUBDIVISIONS+1];
 static float	s_skyTexCoords[SKY_SUBDIVISIONS+1][SKY_SUBDIVISIONS+1][2];
 
+#include "../../shared/rd-rend2/tr_sky_side.inc"
+
 static void DrawSkySide( struct image_s *image, const int mins[2], const int maxs[2] )
 {
 	const uint32_t SKY_BOX_VERTEX_ATTRIBUTES = ATTR_POSITION | ATTR_TEXCOORD0 | ATTR_COLOR | ATTR_NORMAL;
-	int s, t;
-	int firstVertex = tess.numVertexes;
-	int minIndex = tess.minIndex;
-	int maxIndex = tess.maxIndex;
-
-	tess.firstIndex = tess.numIndexes;
-
-	for ( t = mins[1]+HALF_SKY_SUBDIVISIONS;
-			t <= maxs[1]+HALF_SKY_SUBDIVISIONS; t++ )
-	{
-		for ( s = mins[0]+HALF_SKY_SUBDIVISIONS;
-				s <= maxs[0]+HALF_SKY_SUBDIVISIONS; s++ )
-		{
-			tess.xyz[tess.numVertexes][0] = s_skyPoints[t][s][0];
-			tess.xyz[tess.numVertexes][1] = s_skyPoints[t][s][1];
-			tess.xyz[tess.numVertexes][2] = s_skyPoints[t][s][2];
-			tess.xyz[tess.numVertexes][3] = 1.0;
-
-			tess.texCoords[tess.numVertexes][0][0] = s_skyTexCoords[t][s][0];
-			tess.texCoords[tess.numVertexes][0][1] = s_skyTexCoords[t][s][1];
-
-			VectorSet4(tess.vertexColors[tess.numVertexes], 1.0f, 1.0f, 1.0f, 1.0f);
-			tess.normal[tess.numVertexes] = 0;
-
-			tess.numVertexes++;
-
-			if(tess.numVertexes >= SHADER_MAX_VERTEXES)
-			{
-				ri.Error(ERR_DROP, "SHADER_MAX_VERTEXES hit in DrawSkySideVBO()");
-			}
-		}
-	}
-
-	float ssize = maxs[0] - mins[0];
-	float tsize = maxs[1] - mins[1];
-	float ssizePlusOne = ssize + 1.0f;
-	for ( t = 0; t < tsize; t++ )
-	{
-		for ( s = 0; s < ssize; s++ )
-		{
-			if ((tess.numIndexes + 6) >= SHADER_MAX_INDEXES)
-			{
-				ri.Error(ERR_DROP, "SHADER_MAX_INDEXES hit in DrawSkySideVBO()");
-			}
-
-			tess.indexes[tess.numIndexes++] =  s +       t      * ssizePlusOne + firstVertex;
-			tess.indexes[tess.numIndexes++] =  s +      (t + 1) * ssizePlusOne + firstVertex;
-			tess.indexes[tess.numIndexes++] = (s + 1) +  t      * ssizePlusOne + firstVertex;
-
-			tess.indexes[tess.numIndexes++] = (s + 1) +  t      * ssizePlusOne + firstVertex;
-			tess.indexes[tess.numIndexes++] =  s +      (t + 1) * ssizePlusOne + firstVertex;
-			tess.indexes[tess.numIndexes++] = (s + 1) + (t + 1) * ssizePlusOne + firstVertex;
-		}
-	}
-
-	tess.minIndex = firstVertex;
-	tess.maxIndex = tess.numVertexes;
-	tess.useInternalVBO = qtrue;
+	BuildSkySide(mins, maxs);
 
 	RB_UpdateVBOs(SKY_BOX_VERTEX_ATTRIBUTES);
 
@@ -476,20 +424,13 @@ static void DrawSkySide( struct image_s *image, const int mins[2], const int max
 		item, uniformBlockBindings, frameAllocator);
 
 	RB_FillDrawCommand(item.draw, GL_TRIANGLES, 1, &tess);
-	item.draw.params.indexed.numIndices -= tess.firstIndex;
 
 	uint32_t key = RB_CreateSortKey(item, 0, SS_ENVIRONMENT);
 	RB_AddDrawItem(backEndData->currentPass, key, item);
 
 	RB_CommitInternalBufferData();
-
-	tess.useInternalVBO = qfalse;
-	tess.numIndexes = tess.firstIndex;
-	tess.numVertexes = firstVertex;
-	tess.firstIndex = 0;
-	tess.minIndex = minIndex;
-	tess.maxIndex = maxIndex;
 }
+
 
 static void DrawSkyBox( shader_t *shader )
 {
@@ -840,7 +781,7 @@ void RB_StageIteratorSky( void ) {
 		return;
 	}
 
-	if (tr.world->skyboxportal && !(tr.viewParms.isSkyPortal)) {
+	if (tr.world->skyboxportal && !tr.viewParms.isSkyPortal && !backEnd.viewParms.portalMonitor) {
 		return;
 	}
 

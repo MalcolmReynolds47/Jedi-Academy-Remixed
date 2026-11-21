@@ -503,6 +503,8 @@ void String_Report();
 void Init_Display(displayContextDef_t *dc);
 void Display_ExpandMacros(char * buff);
 void Menu_Init(menuDef_t *menu);
+menuDef_t *Menu_CreateJAR(const char *name);
+menuDef_t *Menu_JARAt(int index);
 void Item_Init(itemDef_t *item);
 void Menu_PostParse(menuDef_t *menu);
 menuDef_t *Menu_GetFocused();

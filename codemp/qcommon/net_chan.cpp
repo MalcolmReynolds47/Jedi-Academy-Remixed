@@ -28,7 +28,7 @@ packet header
 -------------
 4	outgoing sequence.  high bit will be set if this is a fragmented message
 [2	qport (only for client to server)]
-[2	fragment start byte]
+[4	fragment start byte]
 [2	fragment length. if < FRAGMENT_SIZE, this is the last fragment]
 
 if the sequence number is -1, the packet should be handled as an out-of-band
@@ -120,7 +120,7 @@ void Netchan_TransmitNextFragment( netchan_t *chan ) {
 		fragmentLength = chan->unsentLength - chan->unsentFragmentStart;
 	}
 
-	MSG_WriteShort( &send, chan->unsentFragmentStart );
+	MSG_WriteLong( &send, chan->unsentFragmentStart );
 	MSG_WriteShort( &send, fragmentLength );
 	MSG_WriteData( &send, chan->unsentBuffer + chan->unsentFragmentStart, fragmentLength );
 
@@ -160,7 +160,7 @@ void Netchan_Transmit( netchan_t *chan, int length, const byte *data ) {
 	msg_t		send;
 	byte		send_buf[MAX_PACKETLEN];
 
-	if ( length > MAX_MSGLEN ) {
+	if ( length < 0 || length > MAX_MSGLEN ) {
 		Com_Error( ERR_DROP, "Netchan_Transmit: length = %i", length );
 	}
 	chan->unsentFragmentStart = 0;
@@ -214,7 +214,7 @@ Netchan_Process
 Returns qfalse if the message should not be processed due to being
 out of order or a fragment.
 
-Msg must be large enough to hold MAX_MSGLEN, because if this is the
+Msg must be large enough to hold MAX_MSGLEN + 4, because if this is the
 final fragment of a multi-part message, the entire thing will be
 copied out.
 =================
@@ -244,12 +244,14 @@ qboolean Netchan_Process( netchan_t *chan, msg_t *msg ) {
 
 	// read the fragment information
 	if ( fragmented ) {
-		fragmentStart  = (unsigned short)MSG_ReadShort( msg );
+		fragmentStart  = MSG_ReadLong( msg );
 		fragmentLength = (unsigned short)MSG_ReadShort( msg );
 	} else {
 		fragmentStart = 0;		// stop warning message
 		fragmentLength = 0;
 	}
+
+	if (msg->readcount > msg->cursize) return qfalse;
 
 	if ( showpackets->integer ) {
 		if ( fragmented ) {
@@ -329,7 +331,7 @@ qboolean Netchan_Process( netchan_t *chan, msg_t *msg ) {
 		}
 
 		// copy the fragment to the fragment buffer
-		if ( fragmentLength < 0 || msg->readcount + fragmentLength > msg->cursize ||
+		if ( fragmentStart < 0 || fragmentStart > MAX_MSGLEN || fragmentLength < 0 || fragmentLength > FRAGMENT_SIZE || msg->readcount + fragmentLength > msg->cursize ||
 			chan->fragmentLength + fragmentLength > (int)sizeof( chan->fragmentBuffer ) ) {
 			if ( showdrop->integer || showpackets->integer ) {
 				Com_Printf ("%s:illegal fragment length\n"
@@ -367,7 +369,7 @@ qboolean Netchan_Process( netchan_t *chan, msg_t *msg ) {
 		msg->bit = 32;	// past the sequence number
 
 		// but I am a wuss -mw
-		// chan->incomingSequence = sequence;   // lets not accept any more with this sequence number -gil
+		chan->incomingSequence = sequence; // Completed fragmented messages also reject replay.
 		return qtrue;
 	}
 
@@ -529,6 +531,7 @@ qboolean	NET_GetLoopPacket (netsrc_t sock, netadr_t *net_from, msg_t *net_messag
 	i = loop->get & (MAX_LOOPBACK-1);
 	loop->get++;
 
+	if (loop->msgs[i].datalen < 0 || loop->msgs[i].datalen > net_message->maxsize) return qfalse;
 	Com_Memcpy (net_message->data, loop->msgs[i].data, loop->msgs[i].datalen);
 	net_message->cursize = loop->msgs[i].datalen;
 	Com_Memset (net_from, 0, sizeof(*net_from));
@@ -585,7 +588,7 @@ Sends a text message in an out-of-band datagram
 */
 void QDECL NET_OutOfBandPrint( netsrc_t sock, const netadr_t *adr, const char *format, ... ) {
 	va_list		argptr;
-	char		string[MAX_MSGLEN];
+	static char		string[MAX_MSGLEN];
 
 
 	// set the header

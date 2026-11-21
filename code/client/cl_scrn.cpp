@@ -506,6 +506,12 @@ void SCR_UpdateScreen( void ) {
 			SCR_DrawScreenField( STEREO_CENTER );
 		}
 
+        cvar_t *captureLoading=Cvar_Get("jar_captureLoading","0",0);
+        if (cls.state==CA_LOADING && captureLoading->integer>0) {
+            const int remaining=captureLoading->integer;
+            Cvar_SetValue("jar_captureLoading",remaining>1024 ? 0 : remaining-1);
+            if (remaining==1) Cmd_ExecuteString("screenshot_png jar_loading");
+        }
 		if ( com_speeds->integer ) {
 			re.EndFrame( &time_frontend, &time_backend );
 		} else {

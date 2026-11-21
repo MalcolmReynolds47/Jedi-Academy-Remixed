@@ -887,9 +887,9 @@ netField_t	entityStateFields[] =
 { NETF(otherEntityNum2), GENTITYNUM_BITS },
 // used all over the place
 { NETF(owner), GENTITYNUM_BITS },
-{ NETF(modelindex2), 8 },
+{ NETF(modelindex2), 16 },
 // why was this changed from 0 to 8 ?
-{ NETF(eventParm), 8 },
+{ NETF(eventParm), 16 },
 // unknown about size?
 { NETF(saberMove), 8 },
 { NETF(apos.trDelta[1]), 0 },
@@ -912,7 +912,7 @@ netField_t	entityStateFields[] =
 //		return;
 //	}
 { NETF(modelGhoul2), 8 },
-{ NETF(loopSound), 8 },
+{ NETF(loopSound), 16 },
 { NETF(origin2[0]), 0 },
 // multiple purpose bit flag
 { NETF(shouldtarget), 1 },
@@ -1018,7 +1018,33 @@ netField_t	entityStateFields[] =
 { NETF(userVec1[2]), 1 },
 { NETF(userVec2[0]), 1 },
 { NETF(userVec2[1]), 1 },
-{ NETF(userVec2[2]), 1 }
+{ NETF(userVec2[2]), 1 },
+{ NETF(jarRopeState), 4 },
+{ NETF(jarRopeLength), 0 },
+{ NETF(jarRopeBends[0][0]), 0 },
+{ NETF(jarRopeBends[0][1]), 0 },
+{ NETF(jarRopeBends[0][2]), 0 },
+{ NETF(jarRopeBends[1][0]), 0 },
+{ NETF(jarRopeBends[1][1]), 0 },
+{ NETF(jarRopeBends[1][2]), 0 },
+{ NETF(jarRopeBends[2][0]), 0 },
+{ NETF(jarRopeBends[2][1]), 0 },
+{ NETF(jarRopeBends[2][2]), 0 },
+{ NETF(jarRopeBends[3][0]), 0 },
+{ NETF(jarRopeBends[3][1]), 0 },
+{ NETF(jarRopeBends[3][2]), 0 },
+{ NETF(jarRopeBends[4][0]), 0 },
+{ NETF(jarRopeBends[4][1]), 0 },
+{ NETF(jarRopeBends[4][2]), 0 },
+{ NETF(jarRopeBends[5][0]), 0 },
+{ NETF(jarRopeBends[5][1]), 0 },
+{ NETF(jarRopeBends[5][2]), 0 },
+{ NETF(jarRopeBends[6][0]), 0 },
+{ NETF(jarRopeBends[6][1]), 0 },
+{ NETF(jarRopeBends[6][2]), 0 },
+{ NETF(jarRopeBends[7][0]), 0 },
+{ NETF(jarRopeBends[7][1]), 0 },
+{ NETF(jarRopeBends[7][2]), 0 }
 };
 
 // if (int)f == f and (int)f + ( 1<<(FLOAT_INT_BITS-1) ) < ( 1 << FLOAT_INT_BITS )
@@ -1362,7 +1388,7 @@ netField_t	playerStateFields[] =
 { PSF(damageYaw), 8 },
 { PSF(damageCount), 8 },
 { PSF(inAirAnim), 1 }, //just transmit it for the sake of knowing right when on the client to play a land anim, it's only 1 bit
-{ PSF(eventParms[1]), 8 },
+{ PSF(eventParms[1]), -16 },
 { PSF(fd.forceSide), 2 }, //so we know if we should apply greyed out shaders to dark/light force enlightenment
 { PSF(saberAttackChainCount), 4 },
 { PSF(pm_type), 8 },
@@ -1455,7 +1481,10 @@ netField_t	playerStateFields[] =
 { PSF(userVec1[2]), 1 },
 { PSF(userVec2[0]), 1 },
 { PSF(userVec2[1]), 1 },
-{ PSF(userVec2[2]), 1 }
+{ PSF(userVec2[2]), 1 },
+{ PSF(jarVehicleDrift[0]), 0 },
+{ PSF(jarVehicleDrift[1]), 0 },
+{ PSF(jarVehicleDrift[2]), 0 }
 };
 
 netField_t	pilotPlayerStateFields[] =
@@ -1482,7 +1511,7 @@ netField_t	pilotPlayerStateFields[] =
 { PSF(delta_angles[2]), 16 },
 { PSF(viewangles[2]), 0 },
 { PSF(externalEvent), 10 },
-{ PSF(eventParms[1]), 8 },
+{ PSF(eventParms[1]), -16 },
 { PSF(pm_type), 8 },
 { PSF(externalEventParm), 8 },
 { PSF(eventParms[0]), -16 },
@@ -1619,7 +1648,10 @@ netField_t	pilotPlayerStateFields[] =
 { PSF(userVec1[2]), 1 },
 { PSF(userVec2[0]), 1 },
 { PSF(userVec2[1]), 1 },
-{ PSF(userVec2[2]), 1 }
+{ PSF(userVec2[2]), 1 },
+{ PSF(jarVehicleDrift[0]), 0 },
+{ PSF(jarVehicleDrift[1]), 0 },
+{ PSF(jarVehicleDrift[2]), 0 }
 };
 
 netField_t	vehPlayerStateFields[] =
@@ -1662,7 +1694,7 @@ netField_t	vehPlayerStateFields[] =
 { PSF(delta_angles[2]), 16 },
 { PSF(viewangles[2]), 0 },
 { PSF(externalEvent), 10 },
-{ PSF(eventParms[1]), 8 },
+{ PSF(eventParms[1]), -16 },
 { PSF(pm_type), 8 },
 { PSF(externalEventParm), 8 },
 { PSF(eventParms[0]), -16 },
@@ -1705,7 +1737,10 @@ netField_t	vehPlayerStateFields[] =
 { PSF(userVec1[2]), 1 },
 { PSF(userVec2[0]), 1 },
 { PSF(userVec2[1]), 1 },
-{ PSF(userVec2[2]), 1 }
+{ PSF(userVec2[2]), 1 },
+{ PSF(jarVehicleDrift[0]), 0 },
+{ PSF(jarVehicleDrift[1]), 0 },
+{ PSF(jarVehicleDrift[2]), 0 }
 };
 
 //=====_OPTIMIZED_VEHICLE_NETWORKING=======================================================================
@@ -1775,7 +1810,7 @@ netField_t	playerStateFields[] =
 { PSF(damageYaw), 8 },
 { PSF(damageCount), 8 },
 { PSF(inAirAnim), 1 }, //just transmit it for the sake of knowing right when on the client to play a land anim, it's only 1 bit
-{ PSF(eventParms[1]), 8 },
+{ PSF(eventParms[1]), -16 },
 { PSF(fd.forceSide), 2 }, //so we know if we should apply greyed out shaders to dark/light force enlightenment
 { PSF(saberAttackChainCount), 4 },
 { PSF(pm_type), 8 },
@@ -1868,7 +1903,10 @@ netField_t	playerStateFields[] =
 { PSF(userVec1[2]), 1 },
 { PSF(userVec2[0]), 1 },
 { PSF(userVec2[1]), 1 },
-{ PSF(userVec2[2]), 1 }
+{ PSF(userVec2[2]), 1 },
+{ PSF(jarVehicleDrift[0]), 0 },
+{ PSF(jarVehicleDrift[1]), 0 },
+{ PSF(jarVehicleDrift[2]), 0 }
 };
 
 //=====_OPTIMIZED_VEHICLE_NETWORKING=======================================================================

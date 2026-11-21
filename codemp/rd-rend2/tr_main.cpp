@@ -22,6 +22,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // tr_main.c -- main control flow for each frame
 
 #include "tr_local.h"
+#include "../../code/qcommon/jar_portal.h"
 #include "tr_weather.h"
 
 #include <string.h> // memcpy
@@ -807,6 +808,8 @@ static void R_RotateForViewer(orientationr_t *ori, viewParms_t *viewParms)
 	Matrix16Identity(ori->modelMatrix);
 }
 
+#include "../../shared/rd-rend2/tr_jar_far_clip.inc"
+
 /*
 ** SetFarClip
 */
@@ -875,7 +878,9 @@ static void R_SetFarClip( viewParms_t *viewParms, const trRefdef_t *refdef )
 	// Bring in the zFar to the distanceCull distance
 	// The sky renders at zFar so need to move it out a little
 	// ...and make sure there is a minimum zfar to prevent problems
-	viewParms->zFar = Com_Clamp(2048.0f, tr.distanceCull * (1.732), sqrtf( farthestCornerDistance ));
+	const float farDepth = R_Rend2BSPFarDepth(*viewParms, refdef ? *refdef : tr.refdef,
+		sqrtf(farthestCornerDistance));
+	viewParms->zFar = Com_Clamp(2048.0f, tr.distanceCull * (1.732), farDepth);
 }
 
 /*
@@ -1029,7 +1034,7 @@ void R_SetupProjectionZ(viewParms_t *dest)
 	dest->projectionMatrix[10] = -( zFar + zNear ) / depth;
 	dest->projectionMatrix[14] = -2 * zFar * zNear / depth;
 
-	if (dest->isPortal)
+	if (dest->isPortal && !dest->portalMonitor)
 	{
 		float	plane[4];
 		float	plane2[4];
@@ -1226,6 +1231,14 @@ Returns qtrue if it should be mirrored
 qboolean R_GetPortalOrientations(const msurface_t *surf, int entityNum,
 							 orientation_t *surface, orientation_t *camera,
 							 vec3_t pvsOrigin, qboolean *mirror ) {
+	if(surf->data&&*surf->data==SF_POLY){
+		const auto* poly=reinterpret_cast<const srfPoly_t*>(surf->data);
+		if(poly->jarPortal){
+			jar::portal::Orientations(*poly->jarPortal,*surface,*camera,pvsOrigin);
+			*mirror=poly->jarPortal->mirror?qtrue:qfalse;
+			return qtrue;
+		}
+	}
 	int			i;
 	cplane_t	originalPlane, plane;
 	trRefEntity_t	*e;
@@ -1343,6 +1356,10 @@ qboolean R_GetPortalOrientations(const msurface_t *surf, int entityNum,
 
 static qboolean IsMirror( const msurface_t *surface, int entityNum )
 {
+	if(surface->data&&*surface->data==SF_POLY){
+		const auto* poly=reinterpret_cast<const srfPoly_t*>(surface->data);
+		if(poly->jarPortal)return poly->jarPortal->mirror?qtrue:qfalse;
+	}
 	int			i;
 	cplane_t	originalPlane, plane;
 	trRefEntity_t	*e;
@@ -1488,7 +1505,8 @@ static qboolean SurfIsOffscreen( const msurface_t *surface, int entityNum, vec4_
 
 	// mirrors can early out at this point, since we don't do a fade over distance
 	// with them (although we could)
-	if ( IsMirror( surface, entityNum) )
+	if ((*surface->data == SF_POLY && reinterpret_cast<const srfPoly_t*>(surface->data)->jarPortal) ||
+		IsMirror(surface, entityNum))
 	{
 		return qfalse;
 	}
@@ -1501,6 +1519,19 @@ static qboolean SurfIsOffscreen( const msurface_t *surface, int entityNum, vec4_
 	return qfalse;
 }
 
+static void R_ProjectPortablePanelPoint(const float* point, float* clip) {
+	vec4_t eye;
+	R_TransformModelToClip(point, tr.viewParms.world.modelViewMatrix, tr.viewParms.projectionMatrix, eye, clip);
+}
+
+static bool R_PortablePanelVisible(const jar::portal::View& panel) {
+	return jar::portal::PanelVisible(panel, tr.viewParms.ori.origin, R_ProjectPortablePanelPoint);
+}
+
+static float R_PortablePanelCoverage(const jar::portal::View& panel) {
+	return jar::portal::PanelCoverage(panel, tr.viewParms.ori.origin, R_ProjectPortablePanelPoint);
+}
+
 /*
 ========================
 R_MirrorViewBySurface
@@ -1508,7 +1539,7 @@ R_MirrorViewBySurface
 Returns qtrue if another view has been rendered
 ========================
 */
-qboolean R_MirrorViewBySurface (msurface_t *surface, int entityNum) {
+qboolean R_MirrorViewBySurface (msurface_t *surface, int entityNum, int monitorSlot = 0) {
 	vec4_t			clipDest[128];
 	int				numVertices;
 	viewParms_t		newParms;
@@ -1521,12 +1552,14 @@ qboolean R_MirrorViewBySurface (msurface_t *surface, int entityNum) {
 		return qfalse;
 	}
 
-	if ( r_noportals->integer || (r_fastsky->integer == 1) ) {
+	const auto* panel = *surface->data == SF_POLY ?
+		reinterpret_cast<const srfPoly_t*>(surface->data)->jarPortal : nullptr;
+	const bool monitor = panel && !panel->mirror;
+	if (r_noportals->integer || (monitor ? !tr.portalMonitorFbos[monitorSlot] : r_fastsky->integer == 1))
 		return qfalse;
-	}
 
 	// trivially reject portal/mirror
-	if ( SurfIsOffscreen(surface, entityNum, clipDest, &numVertices ) ) {
+	if (panel ? !R_PortablePanelVisible(*panel) : SurfIsOffscreen(surface, entityNum, clipDest, &numVertices)) {
 		return qfalse;
 	}
 
@@ -1607,14 +1640,22 @@ qboolean R_MirrorViewBySurface (msurface_t *surface, int entityNum) {
 	newParms.scissorWidth = maxRectX - minRectX;
 	newParms.scissorHeight = maxRectY - minRectY;*/
 
-	R_MirrorPoint (oldParms.ori.origin, &surfaceOri, &camera, newParms.ori.origin );
+	if (monitor) {
+		newParms.portalMonitor = monitorSlot + 1;
+		newParms.targetFbo = tr.portalMonitorFbos[monitorSlot];
+		newParms.viewportX = newParms.viewportY = 0;
+		newParms.viewportWidth = newParms.viewportHeight = JAR_PORTAL_CAMERA_SIZE;
+		newParms.flags |= VPF_NOVIEWMODEL;
+		jar::portal::MonitorView(*panel, newParms.ori, newParms.pvsOrigin, newParms.fovX, newParms.fovY);
+	} else
+	{
+		R_MirrorPoint(oldParms.ori.origin, &surfaceOri, &camera, newParms.ori.origin);
+		VectorSubtract(vec3_origin, camera.axis[0], newParms.portalPlane.normal);
+		newParms.portalPlane.dist = DotProduct(camera.origin, newParms.portalPlane.normal);
+		for (int i = 0; i < 3; ++i)
+			R_MirrorVector(oldParms.ori.axis[i], &surfaceOri, &camera, newParms.ori.axis[i]);
+	}
 
-	VectorSubtract( vec3_origin, camera.axis[0], newParms.portalPlane.normal );
-	newParms.portalPlane.dist = DotProduct( camera.origin, newParms.portalPlane.normal );
-
-	R_MirrorVector (oldParms.ori.axis[0], &surfaceOri, &camera, newParms.ori.axis[0]);
-	R_MirrorVector (oldParms.ori.axis[1], &surfaceOri, &camera, newParms.ori.axis[1]);
-	R_MirrorVector (oldParms.ori.axis[2], &surfaceOri, &camera, newParms.ori.axis[2]);
 
 	// OPTIMIZE further: restrict the viewport and set up the view and projection
 	// matrices so they only draw into the tightest screen-space aligned box required
@@ -1622,6 +1663,7 @@ qboolean R_MirrorViewBySurface (msurface_t *surface, int entityNum) {
 
 	tr.viewCount++;
 	tr.viewParms = newParms;
+	tr.viewParms.riftFogRoom = R_RiftFogRoomAtPoint(tr.viewParms.ori.origin);
 	R_RotateForViewer(&tr.viewParms.world, &tr.viewParms);
 	R_SetupProjection(&tr.viewParms, tr.viewParms.zNear, tr.viewParms.zFar, qtrue);
 
@@ -1728,7 +1770,15 @@ static void R_RadixSort( drawSurf_t *source, int size )
   R_Radix( 1, size, scratch, source );
   R_Radix( 2, size, source, scratch );
   R_Radix( 3, size, scratch, source );
+  R_Radix( 4, size, source, scratch );
+  R_Radix( 5, size, scratch, source );
+  R_Radix( 6, size, source, scratch );
+  R_Radix( 7, size, scratch, source );
 #else
+  R_Radix( 7, size, source, scratch );
+  R_Radix( 6, size, scratch, source );
+  R_Radix( 5, size, source, scratch );
+  R_Radix( 4, size, scratch, source );
   R_Radix( 3, size, source, scratch );
   R_Radix( 2, size, scratch, source );
   R_Radix( 1, size, source, scratch );
@@ -1750,7 +1800,7 @@ bool R_IsPostRenderEntity ( const trRefEntity_t *refEntity )
 R_DecomposeSort
 =================
 */
-void R_DecomposeSort( uint32_t sort, int *entityNum, shader_t **shader, int *cubemap, int *postRender )
+void R_DecomposeSort( uint64_t sort, int *entityNum, shader_t **shader, int *cubemap, int *postRender )
 {
 	*shader = tr.sortedShaders[ ( sort >> QSORT_SHADERNUM_SHIFT ) & QSORT_SHADERNUM_MASK ];
 	*postRender = (sort >> QSORT_POSTRENDER_SHIFT ) & QSORT_POSTRENDER_MASK;
@@ -1758,14 +1808,14 @@ void R_DecomposeSort( uint32_t sort, int *entityNum, shader_t **shader, int *cub
 	*cubemap = (sort >> QSORT_CUBEMAP_SHIFT ) & QSORT_CUBEMAP_MASK;
 }
 
-uint32_t R_CreateSortKey(int entityNum, int sortedShaderIndex, int cubemapIndex, int postRender)
+uint64_t R_CreateSortKey(int entityNum, int sortedShaderIndex, int cubemapIndex, int postRender)
 {
-	uint32_t key = 0;
+	uint64_t key = 0;
 
-	key |= (sortedShaderIndex & QSORT_SHADERNUM_MASK) << QSORT_SHADERNUM_SHIFT;
-	key |= (cubemapIndex & QSORT_CUBEMAP_MASK) << QSORT_CUBEMAP_SHIFT;
-	key |= (postRender & QSORT_POSTRENDER_MASK) << QSORT_POSTRENDER_SHIFT;
-	key |= (entityNum & QSORT_ENTITYNUM_MASK) << QSORT_ENTITYNUM_SHIFT;
+	key |= uint64_t(sortedShaderIndex & QSORT_SHADERNUM_MASK) << QSORT_SHADERNUM_SHIFT;
+	key |= uint64_t(cubemapIndex & QSORT_CUBEMAP_MASK) << QSORT_CUBEMAP_SHIFT;
+	key |= uint64_t(postRender & QSORT_POSTRENDER_MASK) << QSORT_POSTRENDER_SHIFT;
+	key |= uint64_t(entityNum & QSORT_ENTITYNUM_MASK) << QSORT_ENTITYNUM_SHIFT;
 
 	return key;
 }
@@ -1787,7 +1837,9 @@ void R_AddDrawSurf(
 	int index;
 	drawSurf_t *surf;
 
-	if (tr.refdef.rdflags & RDF_NOFOG)
+	if (entityNum >= 0 && entityNum < tr.refdef.num_entities && tr.refdef.entities[entityNum].riftFogRoom)
+		fogIndex = tr.refdef.entities[entityNum].riftFogIndex;
+	if ((tr.refdef.rdflags & RDF_NOFOG) || fogIndex > ARRAY_LEN(FogsBlock::fogs))
 	{
 		fogIndex = 0;
 	}
@@ -1834,7 +1886,11 @@ R_SortAndSubmitDrawSurfs
 void R_SortAndSubmitDrawSurfs( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	// it is possible for some views to not have any surfaces
 	if (numDrawSurfs < 1)
+	{
+		if (tr.viewParms.portalMonitor)
+			R_AddDrawSurfCmd(drawSurfs, 0);
 		return;
+	}
 
 	// if we overflowed MAX_DRAWSURFS, the drawsurfs
 	// wrapped around in the buffer and we will be missing
@@ -2010,6 +2066,10 @@ R_GenerateDrawSurfs
 ====================
 */
 void R_GenerateDrawSurfs( viewParms_t *viewParms, trRefdef_t *refdef ) {
+	if (viewParms->flags & VPF_JAR_SECTION_SKY) {
+		R_AddEntitySurfaces(refdef);
+		return;
+	}
 
 	// TODO: Get rid of this
 	if (viewParms->viewParmType == VPT_PLAYER_SHADOWS)
@@ -2103,6 +2163,7 @@ void R_RenderView (viewParms_t *parms) {
 	tr.viewCount++;
 
 	tr.viewParms = *parms;
+	tr.viewParms.riftFogRoom = R_RiftFogRoomAtPoint(tr.viewParms.ori.origin);
 	tr.viewParms.frameSceneNum = tr.frameSceneNum;
 	tr.viewParms.frameCount = tr.frameCount;
 
@@ -2402,84 +2463,7 @@ void R_SetupPshadowMaps(trRefdef_t *refdef)
 	}
 }
 
-void R_RenderCubemapSide(int cubemapIndex, int cubemapSide, bool bounce)
-{
-	refdef_t refdef = {};
-	float oldColorScale = tr.refdef.colorScale;
-
-	VectorCopy(tr.cubemaps[cubemapIndex].origin, refdef.vieworg);
-	refdef.fov_x = 90;
-	refdef.fov_y = 90;
-	refdef.width = tr.renderCubeFbo[cubemapSide]->width;
-	refdef.height = tr.renderCubeFbo[cubemapSide]->height;
-	refdef.x = 0;
-	refdef.y = 0;
-
-	switch (cubemapSide)
-	{
-	case 0:
-		// +X
-		VectorSet(refdef.viewaxis[0], 1, 0, 0);
-		VectorSet(refdef.viewaxis[1], 0, 0, 1);
-		VectorSet(refdef.viewaxis[2], 0, -1, 0);
-		break;
-	case 1:
-		// -X
-		VectorSet(refdef.viewaxis[0], -1, 0, 0);
-		VectorSet(refdef.viewaxis[1], 0, 0, -1);
-		VectorSet(refdef.viewaxis[2], 0, -1, 0);
-		break;
-	case 2:
-		// +Y
-		VectorSet(refdef.viewaxis[0], 0, 1, 0);
-		VectorSet(refdef.viewaxis[1], -1, 0, 0);
-		VectorSet(refdef.viewaxis[2], 0, 0, 1);
-		break;
-	case 3:
-		// -Y
-		VectorSet(refdef.viewaxis[0], 0, -1, 0);
-		VectorSet(refdef.viewaxis[1], -1, 0, 0);
-		VectorSet(refdef.viewaxis[2], 0, 0, -1);
-		break;
-	case 4:
-		// +Z
-		VectorSet(refdef.viewaxis[0], 0, 0, 1);
-		VectorSet(refdef.viewaxis[1], -1, 0, 0);
-		VectorSet(refdef.viewaxis[2], 0, -1, 0);
-		break;
-	case 5:
-		// -Z
-		VectorSet(refdef.viewaxis[0], 0, 0, -1);
-		VectorSet(refdef.viewaxis[1], 1, 0, 0);
-		VectorSet(refdef.viewaxis[2], 0, -1, 0);
-		break;
-	}
-
-	RE_BeginFrame(STEREO_CENTER);
-
-	RE_BeginScene(&refdef);
-
-	tr.refdef.colorScale = 1.0f;
-
-	for (int i = 0; i < tr.numCachedViewParms; i++)
-	{
-		if (!tr.cachedViewParms[i].targetFbo)
-		{
-			tr.cachedViewParms[i].targetFbo = tr.renderCubeFbo[cubemapSide];
-			tr.cachedViewParms[i].targetFboLayer = 0;
-			tr.cachedViewParms[i].flags |= VPF_NOVIEWMODEL;
-			if (!bounce)
-				tr.cachedViewParms[i].flags |= VPF_NOCUBEMAPS;
-		}
-		R_RenderView(&tr.cachedViewParms[i]);
-		R_IssuePendingRenderCommands();
-		tr.refdef.numDrawSurfs = 0;
-	}
-
-	RE_EndScene();
-
-	R_NewFrameSync();
-}
+#include "../../shared/rd-rend2/tr_cubemap_capture.inc"
 
 void R_SetupViewParms(const trRefdef_t *refdef)
 {
@@ -2501,6 +2485,7 @@ void R_SetupViewParms(const trRefdef_t *refdef)
 	tr.viewParms.fovY = refdef->fov_y;
 
 	VectorCopy(refdef->vieworg, tr.viewParms.ori.origin);
+	tr.viewParms.riftFogRoom = R_RiftFogRoomAtPoint(tr.viewParms.ori.origin);
 	VectorCopy(refdef->viewaxis[0], tr.viewParms.ori.axis[0]);
 	VectorCopy(refdef->viewaxis[1], tr.viewParms.ori.axis[1]);
 	VectorCopy(refdef->viewaxis[2], tr.viewParms.ori.axis[2]);
@@ -2525,10 +2510,16 @@ void R_SetupViewParms(const trRefdef_t *refdef)
 	R_SetupProjectionZ(&tr.viewParms);
 }
 
+#include "../../code/rd-common/tr_portal_views.inc"
+
 qboolean R_AddPortalView(const trRefdef_t *refdef)
 {
-	if (!tr.world)
+	if (!tr.world || refdef->rdflags & RDF_NOWORLDMODEL)
 		return qfalse;
+
+	// Queue camera feeds and give a visible portable mirror priority over authored portals.
+	if (R_AddPortablePortalView(refdef))
+		return qtrue;
 
 	for (int i = 0; i < tr.world->numWorldSurfaces; i++)
 	{
@@ -2643,18 +2634,20 @@ void R_GatherFrameViews(trRefdef_t *refdef)
 	{
 		tr.viewCount++;
 		tr.viewParms = tr.skyPortalParms;
+		const bool sectionSky = (tr.viewParms.flags & VPF_JAR_SECTION_SKY) != 0;
+		if (sectionSky)
+			tr.viewParms.zFar = 2048.0f;
 		R_RotateForViewer(&tr.viewParms.world, &tr.viewParms);
 		R_SetupProjection(&tr.viewParms, tr.viewParms.zNear, tr.viewParms.zFar, qtrue);
 
 		VectorCopy(tr.skyPortalParms.pvsOrigin, tr.viewParms.pvsOrigin);
-		R_MarkLeaves();
-
-		// clear out the visible min/max
-		ClearBounds(tr.viewParms.visBounds[0], tr.viewParms.visBounds[1]);
-		int planeBits = (tr.viewParms.flags & VPF_FARPLANEFRUSTUM) ? 31 : 15;
-		// set vis bounds
-		R_RecursiveWorldNode(tr.world->nodes, planeBits, 0, 0);
-		R_SetFarClip(&tr.viewParms, refdef);
+		if (!sectionSky) {
+			R_MarkLeaves();
+			ClearBounds(tr.viewParms.visBounds[0], tr.viewParms.visBounds[1]);
+			const int planeBits = (tr.viewParms.flags & VPF_FARPLANEFRUSTUM) ? 31 : 15;
+			R_RecursiveWorldNode(tr.world->nodes, planeBits, 0, 0);
+			R_SetFarClip(&tr.viewParms, refdef);
+		}
 		R_SetupProjectionZ(&tr.viewParms);
 
 		tr.viewParms.currentViewParm = tr.numCachedViewParms;

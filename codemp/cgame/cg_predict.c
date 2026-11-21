@@ -27,6 +27,11 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // It also handles local physics interaction, like fragments bouncing off walls
 
 #include "cg_local.h"
+#include "game/jar_mp_emplaced.h"
+#include "qcommon/jar_combat.h"
+#include "../game/jar_mp_prop.h"
+#include "../game/jar_mp_crystal_crate.h"
+#include "cg_jar_vehicle_prediction.inc"
 
 static	pmove_t		cg_pmove;
 
@@ -91,7 +96,7 @@ void CG_BuildSolidList( void ) {
 			continue;
 		}
 
-		if ( cent->nextState.solid ) {
+		if ( cent->nextState.solid || JAR_MP_CrystalCrateShotOnly(&cent->nextState) ) {
 			cg_solidEntities[cg_numSolidEntities] = cent;
 			cg_numSolidEntities++;
 			continue;
@@ -230,7 +235,7 @@ extern void BG_VehicleAdjustBBoxForOrientation( Vehicle_t *veh, vec3_t origin, v
 										int clientNum, int tracemask,
 										void (*localTrace)(trace_t *results, const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, int passEntityNum, int contentMask)); // bg_pmove.c
 static void CG_ClipMoveToEntities ( const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end,
-							int skipNumber, int mask, trace_t *tr, qboolean g2Check ) {
+							int skipNumber, int skipSecond, int mask, trace_t *tr, qboolean g2Check, qboolean strictPair ) {
 	int			i, x, zd, zu;
 	trace_t		trace, oldTrace;
 	entityState_t	*ent;
@@ -240,7 +245,7 @@ static void CG_ClipMoveToEntities ( const vec3_t start, const vec3_t mins, const
 	centity_t	*cent;
 	centity_t	*ignored = NULL;
 
-	if (skipNumber != -1 && skipNumber != ENTITYNUM_NONE)
+	if (!strictPair && skipNumber != -1 && skipNumber != ENTITYNUM_NONE)
 	{
 		ignored = &cg_entities[skipNumber];
 	}
@@ -249,11 +254,15 @@ static void CG_ClipMoveToEntities ( const vec3_t start, const vec3_t mins, const
 		cent = cg_solidEntities[ i ];
 		ent = &cent->currentState;
 
-		if ( ent->number == skipNumber ) {
+		if ( ent->number == skipNumber || ent->number == skipSecond ) {
 			continue;
 		}
+		const qboolean ammoRack = JAR_MP_AmmoRackClip(ent);
+		if (ammoRack && !JAR_MP_AmmoRackClipTrace(mask)) continue;
+		const qboolean crystalCrate = JAR_MP_CrystalCrateShotOnly(ent);
+		if (crystalCrate && !(mask & CONTENTS_CORPSE)) continue;
 
-		if ( ent->number > MAX_CLIENTS &&
+		if ( !strictPair && ent->number > MAX_CLIENTS &&
 			 (ent->genericenemyindex-MAX_GENTITIES==cg.predictedPlayerState.clientNum || ent->genericenemyindex-MAX_GENTITIES==cg.predictedVehicleState.clientNum) )
 //		if (ent->number > MAX_CLIENTS && cg.snap && ent->genericenemyindex && (ent->genericenemyindex-MAX_GENTITIES) == cg.snap->ps.clientNum)
 		{ //rww - method of keeping objects from colliding in client-prediction (in case of ownership)
@@ -275,6 +284,7 @@ static void CG_ClipMoveToEntities ( const vec3_t start, const vec3_t mins, const
 			bmaxs[0] = bmaxs[1] = x;
 			bmins[2] = -zd;
 			bmaxs[2] = zu;
+			JAR_MP_PropBounds(ent,bmins,bmaxs);
 
 			if (ent->eType == ET_NPC && ent->NPC_class == CLASS_VEHICLE &&
 				cent->m_pVehicle)
@@ -293,7 +303,14 @@ static void CG_ClipMoveToEntities ( const vec3_t start, const vec3_t mins, const
 		}
 
 
-		trap->CM_TransformedTrace ( &trace, start, end, mins, maxs, cmodel,  mask, origin, angles, 0);
+		const int boxMask = ammoRack || crystalCrate ? mask | CONTENTS_BODY : mask;
+		const qboolean shaped = JAR_MP_ModelHullState(ent) && trap->JAR_TracePropHull;
+		// Interpolated prediction angles can extend beyond the replicated AABB.
+		// Do not let the previous server pose veto a hit on the current hull.
+		if (!shaped || !trap->JAR_TracePropHull(&trace, ent, origin, cent->lerpAngles, start, end, mins, maxs))
+			trap->CM_TransformedTrace ( &trace, start, end, mins, maxs, cmodel, boxMask, origin, angles, 0);
+		if (ammoRack && (trace.fraction < 1 || trace.startsolid)) trace.contents = JAR_MP_AMMO_RACK_CONTENTS;
+		if (crystalCrate && (trace.fraction < 1 || trace.startsolid)) trace.contents = CONTENTS_CORPSE;
 		trace.entityNum = trace.fraction != 1.0 ? ent->number : ENTITYNUM_NONE;
 
 		if (g2Check || (ignored && ignored->currentState.m_iVehicleNum))
@@ -370,6 +387,25 @@ static void CG_ClipMoveToEntities ( const vec3_t start, const vec3_t mins, const
 CG_Trace
 ================
 */
+// Rope mesh queries exclude both attached bodies without changing client state.
+void CG_JAR_RopeTrace(trace_t* result,const vec3_t start,const vec3_t mins,const vec3_t maxs,const vec3_t end,int first,int second){
+ const int mask=MASK_SOLID|CONTENTS_BODY;
+ trace_t t;trap->CM_Trace(&t,start,end,mins,maxs,0,mask,0);
+ t.entityNum=t.fraction!=1?ENTITYNUM_WORLD:ENTITYNUM_NONE;
+ CG_ClipMoveToEntities(start,mins,maxs,end,first,second,mask,&t,qfalse,qtrue);*result=t;
+}
+// A destination must clear the world and every other visible body. The
+// authoritative grant already checked server-only and out-of-PVS collision.
+static qboolean CG_JAR_TeleportArrivalClear(const vec3_t origin, const vec3_t mins, const vec3_t maxs,
+                                             int vehicle, int pilot) {
+    trace_t trace;
+    trap->CM_Trace(&trace, origin, origin, mins, maxs, 0, MASK_PLAYERSOLID, 0);
+    if (trace.startsolid || trace.allsolid || trace.fraction < 1) return qfalse;
+    trace.entityNum = ENTITYNUM_NONE;
+    CG_ClipMoveToEntities(origin, mins, maxs, origin, vehicle, pilot, MASK_PLAYERSOLID, &trace, qfalse, qtrue);
+    return !trace.startsolid && !trace.allsolid && trace.fraction == 1;
+}
+
 void	CG_Trace( trace_t *result, const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end,
 					 int skipNumber, int mask ) {
 	trace_t	t;
@@ -377,7 +413,7 @@ void	CG_Trace( trace_t *result, const vec3_t start, const vec3_t mins, const vec
 	trap->CM_Trace ( &t, start, end, mins, maxs, 0, mask, 0);
 	t.entityNum = t.fraction != 1.0 ? ENTITYNUM_WORLD : ENTITYNUM_NONE;
 	// check all other solid models
-	CG_ClipMoveToEntities (start, mins, maxs, end, skipNumber, mask, &t, qfalse);
+	CG_ClipMoveToEntities (start, mins, maxs, end, skipNumber, ENTITYNUM_NONE, mask, &t, qfalse, qfalse);
 
 	*result = t;
 }
@@ -394,7 +430,7 @@ void	CG_G2Trace( trace_t *result, const vec3_t start, const vec3_t mins, const v
 	trap->CM_Trace ( &t, start, end, mins, maxs, 0, mask, 0);
 	t.entityNum = t.fraction != 1.0 ? ENTITYNUM_WORLD : ENTITYNUM_NONE;
 	// check all other solid models
-	CG_ClipMoveToEntities (start, mins, maxs, end, skipNumber, mask, &t, qtrue);
+	CG_ClipMoveToEntities (start, mins, maxs, end, skipNumber, ENTITYNUM_NONE, mask, &t, qtrue, qfalse);
 
 	*result = t;
 }
@@ -422,6 +458,21 @@ int		CG_PointContents( const vec3_t point, int passEntityNum ) {
 			continue;
 		}
 
+		if (JAR_MP_AmmoRackClip(ent)) {
+			vec3_t low, high;
+			if (JAR_MP_PropBounds(ent, low, high)) {
+				cmodel = trap->CM_TempModel(low, high, 0);
+				if (trap->CM_TransformedPointContents(point, cmodel, cent->lerpOrigin, vec3_origin))
+					contents |= JAR_MP_AMMO_RACK_CONTENTS;
+			}
+			continue;
+		}
+		if (JAR_MP_ModelHullState(ent) && trap->JAR_TracePropHull) {
+			trace_t trace;
+			if (trap->JAR_TracePropHull(&trace, ent, cent->lerpOrigin, cent->lerpAngles, point, point, NULL, NULL)
+				&& trace.startsolid) contents |= trace.contents;
+			continue;
+		}
 		if (ent->solid != SOLID_BMODEL) { // special value for bmodel
 			continue;
 		}
@@ -682,62 +733,8 @@ CG_TouchTriggerPrediction
 Predict push triggers and items
 =========================
 */
-static void CG_TouchTriggerPrediction( void ) {
-	int			i;
-	trace_t		trace;
-	entityState_t	*ent;
-	clipHandle_t cmodel;
-	centity_t	*cent;
-	qboolean	spectator;
-
-	// dead clients don't activate triggers
-	if ( cg.predictedPlayerState.stats[STAT_HEALTH] <= 0 ) {
-		return;
-	}
-
-	spectator = ( cg.predictedPlayerState.pm_type == PM_SPECTATOR );
-
-	if ( cg.predictedPlayerState.pm_type != PM_NORMAL && cg.predictedPlayerState.pm_type != PM_JETPACK && cg.predictedPlayerState.pm_type != PM_FLOAT && !spectator ) {
-		return;
-	}
-
-	for ( i = 0 ; i < cg_numTriggerEntities ; i++ ) {
-		cent = cg_triggerEntities[ i ];
-		ent = &cent->currentState;
-
-		if ( ent->eType == ET_ITEM && !spectator ) {
-			CG_TouchItem( cent );
-			continue;
-		}
-
-		if ( ent->solid != SOLID_BMODEL ) {
-			continue;
-		}
-
-		cmodel = trap->CM_InlineModel( ent->modelindex );
-		if ( !cmodel ) {
-			continue;
-		}
-
-		trap->CM_Trace( &trace, cg.predictedPlayerState.origin, cg.predictedPlayerState.origin, cg_pmove.mins, cg_pmove.maxs, cmodel, -1, 0 );
-
-		if ( !trace.startsolid ) {
-			continue;
-		}
-
-		if ( ent->eType == ET_TELEPORT_TRIGGER ) {
-			cg.hyperspace = qtrue;
-		} else if ( ent->eType == ET_PUSH_TRIGGER ) {
-			BG_TouchJumpPad( &cg.predictedPlayerState, ent );
-		}
-	}
-
-	// if we didn't touch a jump pad this pmove frame
-	if ( cg.predictedPlayerState.jumppad_frame != cg.predictedPlayerState.pmove_framecount ) {
-		cg.predictedPlayerState.jumppad_frame = 0;
-		cg.predictedPlayerState.jumppad_ent = 0;
-	}
-}
+#include "cg_jar_push_prediction.inc"
+#include "cg_jar_native_trigger_prediction.inc"
 
 #if 0
 static QINLINE void CG_EntityStateToPlayerState( entityState_t *s, playerState_t *ps )
@@ -884,8 +881,15 @@ void CG_PmoveClientPointerUpdate()
 //check if local client is on an eweb
 qboolean CG_UsingEWeb(void)
 {
-	if (cg.predictedPlayerState.weapon == WP_EMPLACED_GUN && cg.predictedPlayerState.emplacedIndex &&
-		cg_entities[cg.predictedPlayerState.emplacedIndex].currentState.weapon == WP_NONE)
+	if (cg.snap) {
+		const int number = cg.snap->ps.emplacedIndex;
+		if (number >= MAX_CLIENTS && number < ENTITYNUM_WORLD && CG_JAR_EWebOperator(&cg_entities[number], &cg.snap->ps))
+			return qtrue;
+	}
+
+	const int number = cg.predictedPlayerState.emplacedIndex;
+	if (cg.predictedPlayerState.weapon == WP_EMPLACED_GUN && number > 0 && number < ENTITYNUM_WORLD &&
+		cg_entities[number].currentState.weapon == WP_NONE && !JAR_MP_EWebState(&cg_entities[number].currentState))
 	{
 		return qtrue;
 	}
@@ -934,6 +938,9 @@ void CG_PredictPlayerState( void ) {
 	centity_t *pEnt;
 	clientInfo_t *ci;
 
+	const qboolean oldPortableTeleport=jarTeleportPredicted;
+	const qboolean oldVehicleTeleport=jarVehicleTeleportPredicted;
+	jarTeleportPredicted=jarVehicleTeleportPredicted=qfalse;
 	cg.hyperspace = qfalse;	// will be set if touching a trigger_teleport
 
 	// if this is the first frame we must guarantee
@@ -1011,10 +1018,7 @@ void CG_PredictPlayerState( void ) {
 
 	// save the state before the pmove so we can detect transitions
 	oldPlayerState = cg.predictedPlayerState;
-	if (CG_Piloting(cg.predictedPlayerState.m_iVehicleNum))
-	{
-		oldVehicleState = cg.predictedVehicleState;
-	}
+	oldVehicleState = cg.predictedVehicleState;
 
 	current = trap->GetCurrentCmdNumber();
 
@@ -1100,8 +1104,10 @@ void CG_PredictPlayerState( void ) {
 		cg.predictedVehicleState.commandTime = cg.predictedPlayerState.commandTime;
 	}
 
+	CG_JAR_BeginPushPrediction();
 	// run cmds
 	moved = qfalse;
+	qboolean teleportRiderBlocked = qfalse;
 	for ( cmdNum = current - CMD_BACKUP + 1 ; cmdNum <= current ; cmdNum++ ) {
 		// get the command
 		trap->GetUserCmd( cmdNum, &cg_pmove.cmd );
@@ -1132,7 +1138,7 @@ void CG_PredictPlayerState( void ) {
 			vec3_t	delta;
 			float	len;
 
-			if ( cg.thisFrameTeleport ) {
+			if ( cg.thisFrameTeleport || CG_JAR_VehiclePortalDiscontinuity(&oldVehicleState,oldVehicleTeleport) ) {
 				// a teleport will not cause an error decay
 				VectorClear( cg.predictedError );
 				if ( cg_showVehMiss.integer ) {
@@ -1191,7 +1197,7 @@ void CG_PredictPlayerState( void ) {
 			vec3_t	delta;
 			float	len;
 
-			if ( cg.thisFrameTeleport ) {
+			if ( cg.thisFrameTeleport || CG_JAR_PortalDiscontinuity(&oldPlayerState,oldPortableTeleport) ) {
 				// a teleport will not cause an error decay
 				VectorClear( cg.predictedError );
 				if ( cg_showMiss.integer ) {
@@ -1244,6 +1250,7 @@ void CG_PredictPlayerState( void ) {
 		cg_pmove.gametype = cgs.gametype;
 
 		cg_pmove.debugMelee = cgs.debugMelee;
+		cg_pmove.jarContinuousFists = cgs.jarMPVersion>=53 && JAR_FistsSelected(jar_continuousFists.string);
 		cg_pmove.stepSlideFix = cgs.stepSlideFix;
 		cg_pmove.noSpecMove = cgs.noSpecMove;
 
@@ -1280,6 +1287,7 @@ void CG_PredictPlayerState( void ) {
 
 		Pmove (&cg_pmove);
 
+		centity_t *teleportVehicle = NULL;
 		if (CG_Piloting(cg.predictedPlayerState.m_iVehicleNum) &&
 			cg.predictedPlayerState.pm_type != PM_INTERMISSION)
 		{ //we're riding a vehicle, let's predict it
@@ -1367,7 +1375,16 @@ void CG_PredictPlayerState( void ) {
 				//update boarding value sent from server. boarding is not predicted, but no big deal
 				veh->m_pVehicle->m_iBoarding = cg.predictedVehicleState.vehBoarding;
 
-				Pmove(&cg_vehPmove);
+				if (!JAR_FrozenVehiclePrediction(&cg_vehPmove, (bgEntity_t *)veh, (bgEntity_t *)&cg_entities[cg.predictedPlayerState.clientNum])) {
+					// A rider-first touch can change the server hull before its
+					// move. Defer prediction for the rest of this command replay.
+					if (!teleportRiderBlocked)
+						teleportRiderBlocked = CG_JAR_VehicleTeleportRiderBlocked(
+							&cg.predictedPlayerState, cg_pmove.mins, cg_pmove.maxs);
+					Pmove(&cg_vehPmove);
+					if (!teleportRiderBlocked) teleportVehicle = veh;
+				}
+				CG_JAR_PredictVehiclePushVolumes(&cg_vehPmove, veh);
 				/*
 				if ( !cg_paused.integer )
 				{
@@ -1389,9 +1406,18 @@ void CG_PredictPlayerState( void ) {
 
 		// add push trigger movement effects
 		CG_TouchTriggerPrediction();
+		if (teleportVehicle) CG_JAR_PredictVehicleTeleportVolumes(&cg_vehPmove, teleportVehicle);
 
 		// check for predictable events that changed from previous predictions
 		//CG_CheckChangedPredictableEvents(&cg.predictedPlayerState);
+	}
+
+	// A newly predicted warp and a refused warp both cut camera smoothing.
+	const qboolean vehicleDiscontinuity = CG_JAR_VehiclePortalDiscontinuity(&oldVehicleState,oldVehicleTeleport);
+	if(CG_JAR_PortalDiscontinuity(&oldPlayerState,oldPortableTeleport) || vehicleDiscontinuity){
+		extern int cameraLastFrame;
+		VectorClear(cg.predictedError);cameraLastFrame=0;
+		if(vehicleDiscontinuity)cg.predictedErrorTime=0;
 	}
 
 	if ( cg_showMiss.integer > 1 ) {

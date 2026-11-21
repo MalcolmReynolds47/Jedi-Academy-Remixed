@@ -1,0 +1,29 @@
+// Original JA:R gameplay definitions; reference models from the user's retail game.
+jar_shortblade
+{
+ name "JA:R Shortblade"
+ saberType SABER_SINGLE
+ saberModel "models/weapons2/saber_1/saber_1.glm"
+ saberColor purple
+ numBlades 1
+ saberLength 24
+ saberRadius 2
+ saberStyle fast
+ damageScale 0.8
+ moveSpeedScale 1.05
+}
+jar_pike
+{
+ name "JA:R Energy Pike"
+ saberType SABER_SINGLE
+ saberModel "models/weapons2/saber_dual_1/saber_dual_1.glm"
+ saberColor yellow
+ numBlades 1
+ saberLength 60
+ saberRadius 2.5
+ saberStyle strong
+ twoHanded 1
+ throwable 0
+ damageScale 1.15
+ moveSpeedScale 0.9
+}

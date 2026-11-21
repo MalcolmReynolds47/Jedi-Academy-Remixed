@@ -71,6 +71,7 @@ cent->nextState is moved to cent->currentState and events are fired
 ===============
 */
 static void CG_TransitionEntity( centity_t *cent ) {
+	CG_JAR_EmplacedTransition(cent, &cent->nextState);
 	cent->currentState = cent->nextState;
 	cent->currentValid = qtrue;
 
@@ -130,6 +131,7 @@ void CG_SetInitialSnapshot( snapshot_t *snap ) {
 		state = &cg.snap->entities[ i ];
 		cent = &cg_entities[ state->number ];
 
+		CG_JAR_EmplacedTransition(cent, state);
 		memcpy(&cent->currentState, state, sizeof(entityState_t));
 		//cent->currentState = *state;
 		cent->interpolate = qfalse;
@@ -246,9 +248,9 @@ static void CG_SetNextSnap( snapshot_t *snap ) {
 		memcpy(&cent->nextState, es, sizeof(entityState_t));
 		//cent->nextState = *es;
 
-		// if this frame is a teleport, or the entity wasn't in the
-		// previous frame, don't interpolate
-		if ( !cent->currentValid || ( ( cent->currentState.eFlags ^ es->eFlags ) & EF_TELEPORT_BIT )  ) {
+		// A teleport, missing previous frame, or reused emplaced gun slot cuts interpolation.
+		if (!cent->currentValid || ((cent->currentState.eFlags ^ es->eFlags) & EF_TELEPORT_BIT) ||
+			CG_JAR_EmplacedSlotChanged(&cent->currentState, es)) {
 			cent->interpolate = qfalse;
 		} else {
 			cent->interpolate = qtrue;

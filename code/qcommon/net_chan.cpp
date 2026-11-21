@@ -31,7 +31,7 @@ packet header
 4	outgoing sequence.  high bit will be set if this is a fragmented message
 4	acknowledge sequence
 [2	qport (only for client to server)]
-[2	fragment start byte]
+[4	fragment start byte]
 [2	fragment length. if < FRAGMENT_SIZE, this is the last fragment]
 
 if the sequence number is -1, the packet should be handled as an out-of-band
@@ -49,15 +49,13 @@ to the new value before sending out any replies.
 */
 
 
-#define	MAX_PACKETLEN			(MAX_MSGLEN)	//(1400)		// max size of a network packet
-#define MAX_LOOPDATA            16 * 1024
+#define	MAX_PACKETLEN			16384	//(1400)		// max size of a network packet
+#define MAX_LOOPDATA (4 * MAX_MSGLEN) // queue several large local messages
 
 #if (MAX_PACKETLEN > MAX_MSGLEN)
 #error MAX_PACKETLEN must be <= MAX_MSGLEN
 #endif
-#if (MAX_LOOPDATA > MAX_MSGLEN)
-#error MAX_LOOPDATA must be <= MAX_MSGLEN
-#endif
+
 
 #define	FRAGMENT_SIZE			(MAX_PACKETLEN - 100)
 #define	PACKET_HEADER			10			// two ints and a short
@@ -162,7 +160,7 @@ void Netchan_Transmit( netchan_t *chan, int length, const byte *data ) {
 				fragmentLength = length - fragmentStart;
 			}
 
-			MSG_WriteShort( &send, fragmentStart );
+			MSG_WriteLong( &send, fragmentStart );
 			MSG_WriteShort( &send, fragmentLength );
 			MSG_WriteData( &send, data + fragmentStart, fragmentLength );
 
@@ -253,7 +251,7 @@ qboolean Netchan_Process( netchan_t *chan, msg_t *msg ) {
 
 	// read the fragment information
 	if ( fragmented ) {
-		fragmentStart = MSG_ReadShort( msg );
+		fragmentStart = MSG_ReadLong( msg );
 		fragmentLength = MSG_ReadShort( msg );
 	} else {
 		fragmentStart = 0;		// stop warning message
@@ -347,7 +345,7 @@ qboolean Netchan_Process( netchan_t *chan, msg_t *msg ) {
 			return qfalse;
 		}
 
-		if ( chan->fragmentLength > msg->maxsize ) {
+		if ( chan->fragmentLength > msg->maxsize - 4 ) {
 			Com_Printf( "%s:fragmentLength %i > msg->maxsize\n"
 				, NET_AdrToString (chan->remoteAddress ),
 				chan->fragmentLength );
@@ -437,96 +435,55 @@ LOOPBACK BUFFERS FOR LOCAL PLAYER
 =============================================================================
 */
 
-qboolean	NET_GetLoopPacket (netsrc_t sock, netadr_t *net_from, msg_t *net_message)
+qboolean NET_GetLoopPacket(netsrc_t sock, netadr_t *net_from, msg_t *net_message)
 {
-	int		i;
-	loopback_t	*loop;
-
-	loop = &loopbacks[sock];
-
-	//If read and write positions are the same, nothing left to read.
-	if (loop->get == loop->send)
+	loopback_t *loop = &loopbacks[sock];
+	if (loop->get == loop->send) return qfalse;
+	int pos = loop->get;
+	if (pos > MAX_LOOPDATA - 4) pos = 0;
+	int length;
+	memcpy(&length, loop->loopData + pos, sizeof(length));
+	pos += 4;
+	if (length < 0 || length > net_message->maxsize || length > MAX_MSGLEN)
+	{
+		loop->get = loop->send;
+		Com_DPrintf("JA:R: discarded invalid local packet\n");
 		return qfalse;
-
-	//Get read position.  Wrap if too close to end.
-	i = loop->get;
-	if(i > MAX_LOOPDATA - 4) {
-		i = 0;
 	}
-
-	//Get length of packet.
-	byteAlias_t *ba = (byteAlias_t *)&loop->loopData[i];
-	const int length = ba->i;
-	i += 4;
-
-	//See if entire packet is at end of buffer or part is at the beginning.
-	if(i + length <= MAX_LOOPDATA) {
-		//Everything fits, full copy.
-		memcpy (net_message->data, loop->loopData + i, length);
-		net_message->cursize = length;
-		i += length;
-		loop->get = i;
-	} else {
-		//Doesn't all fit, partial copy
-		const int copyToEnd = MAX_LOOPDATA - i;
-		memcpy (net_message->data, loop->loopData + i, copyToEnd);
-		memcpy ((char*)net_message->data + copyToEnd,
-				loop->loopData, length - copyToEnd);
-		net_message->cursize = length;
-		loop->get = length - copyToEnd;
-	}
-
-	memset (net_from, 0, sizeof(*net_from));
+	const int first = length < MAX_LOOPDATA - pos ? length : MAX_LOOPDATA - pos;
+	memcpy(net_message->data, loop->loopData + pos, first);
+	memcpy(net_message->data + first, loop->loopData, length - first);
+	loop->get = (pos + length) % MAX_LOOPDATA;
+	net_message->cursize = length;
+	memset(net_from, 0, sizeof(*net_from));
 	net_from->type = NA_LOOPBACK;
-
 	return qtrue;
 }
 
-
-void NET_SendLoopPacket (netsrc_t sock, int length, const void *data, netadr_t to)
+void NET_SendLoopPacket(netsrc_t sock, int length, const void *data, netadr_t to)
 {
-	int		i;
-	loopback_t	*loop;
-
-	loop = &loopbacks[sock^1];
-
-	//Make sure there is enough free space in the buffer.
-#ifdef _DEBUG
-	int freeSpace;
-	if(loop->send >= loop->get) {
-		freeSpace = MAX_LOOPDATA - (loop->send - loop->get);
-	} else {
-		freeSpace = loop->get - loop->send;
+	loopback_t *loop = &loopbacks[sock ^ 1];
+	if (length < 0 || length > MAX_MSGLEN)
+	{
+		Com_DPrintf("JA:R: discarded oversized local packet\n");
+		return;
 	}
-
-	assert(freeSpace > length);
-#endif // _DEBUG
-
-	//Get write position.  Wrap around if too close to end.
-	i = loop->send;
-	if(i > MAX_LOOPDATA - 4) {
-		i = 0;
+	int pos = loop->send;
+	const int padding = pos > MAX_LOOPDATA - 4 ? MAX_LOOPDATA - pos : 0;
+	const int used = (loop->send - loop->get + MAX_LOOPDATA) % MAX_LOOPDATA;
+	if (length + 4 + padding >= MAX_LOOPDATA - used)
+	{
+		// Drop the new packet rather than overwrite unread data, in release too.
+		Com_DPrintf("JA:R: local packet queue full; packet skipped\n");
+		return;
 	}
-
-	//Write length of packet.
-	byteAlias_t *ba = (byteAlias_t *)&loop->loopData[i];
-	ba->i = length;
-	i += 4;
-
-	//See if the whole packet will fit on the end of the buffer or if we
-	//need to write part of it back at the beginning.
-	if(i + length <= MAX_LOOPDATA) {
-		//Everything fits, full copy.
-		memcpy (loop->loopData + i, data, length);
-		i += length;
-		loop->send = i;
-	} else {
-		//Doesn't all fit, partial copy
-		int copyToEnd = MAX_LOOPDATA - i;
-		memcpy(loop->loopData + i, data, copyToEnd);
-		memcpy(loop->loopData, (char*)data + copyToEnd, length - copyToEnd);
-		loop->send = length - copyToEnd;
-	}
+	if (padding) pos = 0;
+	memcpy(loop->loopData + pos, &length, sizeof(length));
+	pos += 4;
+	const int first = length < MAX_LOOPDATA - pos ? length : MAX_LOOPDATA - pos;
+	memcpy(loop->loopData + pos, data, first);
+	memcpy(loop->loopData, static_cast<const byte *>(data) + first, length - first);
+	loop->send = (pos + length) % MAX_LOOPDATA;
 }
 
 //=============================================================================

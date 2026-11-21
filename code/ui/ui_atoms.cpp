@@ -30,6 +30,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../server/exe_headers.h"
 
 #include "ui_local.h"
+#include "ui_jar.h"
 #include "gameinfo.h"
 
 uiimport_t	ui;
@@ -211,6 +212,46 @@ qboolean UI_ConsoleCommand( void )
 
 	// ensure minimum menu data is available
 	Menu_Cache();
+
+    if(!Q_stricmp(cmd,"jar_ui_pointer")){
+        if(!atoi(Cvar_VariableString("developer")) || !Menu_GetFocused())return qtrue;
+        int x=atoi(UI_Argv(1)),y=atoi(UI_Argv(2));if(x<0 || x>640 || y<0 || y>480)return qtrue;
+        uiInfo.uiDC.cursorx=x;uiInfo.uiDC.cursory=y;
+        Display_MouseMove(nullptr,x,y);
+        if(!Q_stricmp(UI_Argv(3),"click")){_UI_KeyEvent(A_MOUSE1,qtrue);_UI_KeyEvent(A_MOUSE1,qfalse);}
+        const char*next=UI_Argv(4);bool valid=*next && strlen(next)<64;
+        for(const char*c=next;*c;++c)if(!isalnum(static_cast<unsigned char>(*c)) && *c!='_')valid=false;
+        if(valid)ui.Cmd_ExecuteText(EXEC_APPEND,va("vstr %s\n",next));
+        return qtrue;
+    }
+    // Native, window-local QA/navigation entry point; no OS input injection.
+    if (!Q_stricmp(cmd,"jar_ui_nav")) {
+        const char* action=UI_Argv(1); int key=0;
+        if(!Q_stricmp(action,"open")){
+            if(!atoi(Cvar_VariableString("developer")))return qtrue;
+            char name[128];Q_strncpyz(name,UI_Argv(2),sizeof(name));auto*target=Menus_FindByName(name);
+            const bool tier=!Q_stricmp(name,"ingameMissionSelect1")||!Q_stricmp(name,"ingameMissionSelect2")||!Q_stricmp(name,"ingameMissionSelect3");
+            if(!target&&!tier){Com_Printf("JA:R QA menu is not loaded: %s\n",name);return qtrue;}
+            Menus_CloseAll();Menus_ActivateByName(name);ui.Key_SetCatcher(KEYCATCH_UI);
+            Cvar_Set("cl_paused",atoi(Cvar_VariableString("sv_running"))?"1":"0");
+        }
+        struct Nav {const char* name;int key;};
+        for (const auto& nav : {Nav{"up",A_CURSOR_UP},Nav{"down",A_CURSOR_DOWN},
+             Nav{"left",A_CURSOR_LEFT},Nav{"right",A_CURSOR_RIGHT},Nav{"tab",A_TAB},
+             Nav{"enter",A_ENTER},Nav{"escape",A_ESCAPE},Nav{"confirm",A_JOY1},
+             Nav{"back",A_JOY2},Nav{"hat_up",A_JOY28},Nav{"hat_right",A_JOY29},
+             Nav{"hat_down",A_JOY30},Nav{"hat_left",A_JOY31}})
+            if (!Q_stricmp(action,nav.name)) key=nav.key;
+        if(key && Menu_GetFocused()){_UI_KeyEvent(key,qtrue);_UI_KeyEvent(key,qfalse);}
+        const auto* menu=Menu_GetFocused();const itemDef_t* item=nullptr;
+        if(menu && menu->cursorItem>=0 && menu->cursorItem<menu->itemCount)item=menu->items[menu->cursorItem];
+        Com_Printf("JA:R menu navigation: menu=%s focus=%s binding=%d\n",
+            menu&&menu->window.name?menu->window.name:"none",item&&item->window.name?item->window.name:"none",Display_KeyBindPending());
+        return qtrue;
+    }
+	if (Q_stricmp(cmd,"jar_spawnmenu")==0) { UI_JAR_WorkshopOpen(UI_Argv(1)); return qtrue; }
+	if (Q_stricmp(cmd,"jar_inventory_menu")==0) { UI_JAR_WorkshopOpen("inventory"); return qtrue; }
+	if (Q_stricmp(cmd, "jar_graphics") == 0) { UI_JAR_Open(UI_Argv(1)); return qtrue; }
 
 	if ( Q_stricmp (cmd, "ui_cache") == 0 )
 	{

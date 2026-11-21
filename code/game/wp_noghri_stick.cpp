@@ -24,6 +24,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "b_local.h"
 #include "wp_saber.h"
 #include "w_local.h"
+#include "qcommon/jar_force_enlightenment.h"
 
 //---------------------------------------------------------
 void WP_FireNoghriStick( gentity_t *ent )
@@ -34,12 +35,15 @@ void WP_FireNoghriStick( gentity_t *ent )
 	vectoangles( forwardVec, angs );
 
 	if ( !(ent->client->ps.forcePowersActive&(1<<FP_SEE))
-		|| ent->client->ps.forcePowerLevel[FP_SEE] < FORCE_LEVEL_2 )
+		|| jar::enlightenment::Rank(ent->client->ps,FP_SEE) < FORCE_LEVEL_2 )
 	{//force sight 2+ gives perfect aim
 		//FIXME: maybe force sight level 3 autoaims some?
-		// add some slop to the main-fire direction
-		angs[PITCH] += ( Q_flrand(-1.0f, 1.0f) * (BLASTER_NPC_SPREAD+(6-ent->NPC->currentAim)*0.25f));//was 0.5f
-		angs[YAW]	+= ( Q_flrand(-1.0f, 1.0f) * (BLASTER_NPC_SPREAD+(6-ent->NPC->currentAim)*0.25f));//was 0.5f
+		// The Sandbox makes this formerly NPC-only weapon available to players.
+		const float spread = ent->NPC
+			? BLASTER_NPC_SPREAD+(6-ent->NPC->currentAim)*0.25f
+			: BLASTER_MAIN_SPREAD;
+		angs[PITCH] += Q_flrand(-1.0f, 1.0f) * spread;
+		angs[YAW] += Q_flrand(-1.0f, 1.0f) * spread;
 	}
 
 	AngleVectors( angs, dir, NULL, NULL );
@@ -52,11 +56,14 @@ void WP_FireNoghriStick( gentity_t *ent )
 	WP_MissileTargetHint(ent, muzzle, dir);
 
 	gentity_t *missile = CreateMissile( muzzle, dir, velocity, 10000, ent, qfalse );
+	if (!missile) return;
 
 	missile->classname = "noghri_proj";
 	missile->s.weapon = WP_NOGHRI_STICK;
 
 	// Do the damages
+	// Like the Tusken rifle, player shots use the native hard-difficulty damage.
+	missile->damage = 10;
 	if ( ent->s.number != 0 )
 	{
 		if ( g_spskill->integer == 0 )

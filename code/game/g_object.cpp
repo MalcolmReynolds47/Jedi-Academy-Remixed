@@ -21,11 +21,27 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "g_local.h"
+#include "g_actor_lifetime.h"
 #include "g_functions.h"
 #include "b_local.h"
+#include "g_workshop.h"
 
 extern void G_MoverTouchPushTriggers( gentity_t *ent, vec3_t oldOrg );
-void G_StopObjectMoving( gentity_t *object );
+#include "g_object_pose.inc"
+
+static void G_AlignObjectWithSlope(gentity_t* object,vec3_t normal)
+{
+	if (object->client)
+	{
+		pitch_roll_for_slope(object, normal);
+		return;
+	}
+	vec3_t aligned;
+	VectorCopy(object->currentAngles, aligned);
+	pitch_roll_for_slope(object, normal, aligned);
+	if (G_JAR_WorkshopMoveRackStock(*object, object->currentOrigin, aligned))
+		VectorCopy(aligned, object->currentAngles);
+}
 
 /*
 ================
@@ -90,7 +106,7 @@ G_RunObject
 extern void DoImpact( gentity_t *self, gentity_t *other, qboolean damageSelf, trace_t *trace );
 void G_RunObject( gentity_t *ent )
 {
-	vec3_t		origin, oldOrg;
+	vec3_t		origin, oldOrg, angles;
 	trace_t		tr;
 	gentity_t	*traceEnt = NULL;
 
@@ -111,11 +127,11 @@ void G_RunObject( gentity_t *ent )
 	VectorCopy( ent->currentOrigin, oldOrg );
 	// get current position
 	EvaluateTrajectory( &ent->s.pos, level.time, origin );
-	//Get current angles?
-	EvaluateTrajectory( &ent->s.apos, level.time, ent->currentAngles );
+	EvaluateTrajectory( &ent->s.apos, level.time, angles );
 
 	if ( VectorCompare( ent->currentOrigin, origin ) )
 	{//error - didn't move at all!
+		G_AdvanceObjectPose(*ent, origin, angles);
 		return;
 	}
 	// trace a line from the previous position to the current position,
@@ -123,9 +139,11 @@ void G_RunObject( gentity_t *ent )
 	gi.trace( &tr, ent->currentOrigin, ent->mins, ent->maxs, origin,
 		ent->owner ? ent->owner->s.number : ent->s.number, ent->clipmask, (EG2_Collision)0, 0 );
 
-	if ( !tr.startsolid && !tr.allsolid && tr.fraction )
+	const bool moved = !tr.startsolid && !tr.allsolid && tr.fraction;
+	if (!G_AdvanceObjectPose(*ent, moved ? tr.endpos : oldOrg, angles))
+		return;
+	if ( moved )
 	{
-		VectorCopy( tr.endpos, ent->currentOrigin );
 		gi.linkentity( ent );
 	}
 	else
@@ -210,7 +228,9 @@ void G_RunObject( gentity_t *ent )
 				G_Sound( ent, G_SoundIndex( "sound/movers/objects/objectHit.wav" ) );
 			}
 		}
+		const G_ActorLifetime object(*ent);
 		DoImpact( ent, traceEnt, (qboolean)!(tr.surfaceFlags&SURF_NODAMAGE), &tr );
+		if (!object.Current()) return;
 	}
 
 	if ( !ent || (ent->takedamage&&ent->health <= 0) )
@@ -247,7 +267,7 @@ void G_RunObject( gentity_t *ent )
 		else
 		{
 			ent->s.apos.trType = TR_STATIONARY;
-			pitch_roll_for_slope( ent, tr.plane.normal );
+			G_AlignObjectWithSlope( ent, tr.plane.normal );
 			//ent->currentAngles[0] = 0;//FIXME: match to slope
 			//ent->currentAngles[2] = 0;//FIXME: match to slope
 			VectorCopy( ent->currentAngles, ent->s.apos.trBase );
@@ -260,7 +280,7 @@ void G_RunObject( gentity_t *ent )
 	else
 	{
 		ent->s.apos.trType = TR_STATIONARY;
-		pitch_roll_for_slope( ent, tr.plane.normal );
+		G_AlignObjectWithSlope( ent, tr.plane.normal );
 		//ent->currentAngles[0] = 0;//FIXME: match to slope
 		//ent->currentAngles[2] = 0;//FIXME: match to slope
 		VectorCopy( ent->currentAngles, ent->s.apos.trBase );
@@ -268,22 +288,6 @@ void G_RunObject( gentity_t *ent )
 
 	//call touch func
 	GEntity_TouchFunc( ent, &g_entities[tr.entityNum], &tr );
-}
-
-void G_StopObjectMoving( gentity_t *object )
-{
-	object->s.pos.trType = TR_STATIONARY;
-	VectorCopy( object->currentOrigin, object->s.origin );
-	VectorCopy( object->currentOrigin, object->s.pos.trBase );
-	VectorClear( object->s.pos.trDelta );
-
-	/*
-	//Stop spinning
-	VectorClear( self->s.apos.trDelta );
-	vectoangles(trace->plane.normal, self->s.angles);
-	VectorCopy(self->s.angles, self->currentAngles );
-	VectorCopy(self->s.angles, self->s.apos.trBase);
-	*/
 }
 
 void G_StartObjectMoving( gentity_t *object, vec3_t dir, float speed, trType_t trType )
@@ -319,7 +323,7 @@ gentity_t *G_CreateObject ( gentity_t *owner, vec3_t origin, vec3_t angles, int 
 {
 	gentity_t	*object;
 
-	object = G_Spawn();
+	object = G_TrySpawn();
 
 	if ( object == NULL )
 	{

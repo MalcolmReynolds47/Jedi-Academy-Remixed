@@ -22,6 +22,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "cm_local.h"
+#include "cm_workshop_hull.inc"
 
 /*
 ===============================================================================
@@ -60,12 +61,14 @@ void CM_TestBoxInBrush( traceWork_t *tw, cbrush_t *brush ) {
 
 	// the first six planes are the axial planes, so we only
 	// need to test the remainder
+	if (CM_TraceWorkshopAxialBrush(*tw,*brush)) return;
 	for ( i = 6 ; i < brush->numsides ; i++ ) {
 		side = brush->sides + i;
 		plane = side->plane;
 
 		// adjust the plane distance apropriately for mins/maxs
-		dist = plane->dist - DotProduct( tw->offsets[ plane->signbits ], plane->normal );
+		dist = plane->dist - (tw->workshopHull ? CM_WorkshopHullMin(*tw,plane->normal) :
+			DotProduct(tw->offsets[plane->signbits],plane->normal));
 
 		d1 = DotProduct( tw->start, plane->normal ) - dist;
 
@@ -413,6 +416,7 @@ void CM_TraceThroughBrush( traceWork_t *tw, cbrush_t *brush ) {
 	}
 
 	c_brush_traces++;
+	if (CM_TraceWorkshopAxialBrush(*tw,*brush)) return;
 
 	getout = qfalse;
 	startout = qfalse;
@@ -429,7 +433,8 @@ void CM_TraceThroughBrush( traceWork_t *tw, cbrush_t *brush ) {
 		plane = side->plane;
 
 		// adjust the plane distance apropriately for mins/maxs
-		dist = plane->dist - DotProduct( tw->offsets[ plane->signbits ], plane->normal );
+		dist = plane->dist - (tw->workshopHull ? CM_WorkshopHullMin(*tw,plane->normal) :
+			DotProduct(tw->offsets[plane->signbits],plane->normal));
 
 		d1 = DotProduct( tw->start, plane->normal ) - dist;
 		d2 = DotProduct( tw->end, plane->normal ) - dist;
@@ -495,7 +500,8 @@ void CM_TraceThroughBrush( traceWork_t *tw, cbrush_t *brush ) {
 			}
 			tw->trace.fraction = enterFrac;
 			tw->trace.plane = *clipplane;
-			tw->trace.surfaceFlags = cmg.shaders[leadside->shaderNum].surfaceFlags;
+			const auto& map=tw->workshopMap?*tw->workshopMap:cmg;
+			tw->trace.surfaceFlags = map.shaders[leadside->shaderNum].surfaceFlags;
 			tw->trace.contents = brush->contents;
 		}
 	}
@@ -658,7 +664,7 @@ CM_TraceThroughTree( tw, local, node->children[1], p1f, p2f, p1, p2 );
 return;
 #endif
 			offset = tw->maxOffset;
-			offset = 2048;
+			offset = tw->workshopHull ? std::max(2048.f,tw->maxOffset) : 2048.f;
 		}
 	}
 
@@ -749,9 +755,9 @@ void CM_CalcExtents(const vec3_t start, const vec3_t end, const traceWork_t *tw,
 CM_BoxTrace
 ==================
 */
-void CM_BoxTrace( trace_t *results, const vec3_t start, const vec3_t end,
+static void CM_Trace( trace_t *results, const vec3_t start, const vec3_t end,
 						  const vec3_t mins, const vec3_t maxs,
-						  clipHandle_t model, int brushmask) {
+						  clipHandle_t model, int brushmask,const JarSweepHull* hull) {
 	int			i;
 	traceWork_t	tw;
 	vec3_t		offset;
@@ -783,6 +789,8 @@ void CM_BoxTrace( trace_t *results, const vec3_t start, const vec3_t end,
 
 	// set basic parms
 	tw.contents = brushmask;
+	tw.workshopHull = hull;
+	tw.workshopMap = hull?local:nullptr;
 
 	// adjust so that mins and maxs are always symetric, which
 	// avoids some complications with plane expanding of rotated
@@ -794,6 +802,7 @@ void CM_BoxTrace( trace_t *results, const vec3_t start, const vec3_t end,
 		tw.start[i] = start[i] + offset[i];
 		tw.end[i] = end[i] + offset[i];
 	}
+	VectorCopy(offset,tw.workshopCenter);
 
 	tw.maxOffset = tw.size[1][0] + tw.size[1][1] + tw.size[1][2];
 
@@ -887,6 +896,51 @@ void CM_BoxTrace( trace_t *results, const vec3_t start, const vec3_t end,
 	}
 
 	*results = tw.trace;
+}
+
+void CM_BoxTrace(trace_t* result,const vec3_t start,const vec3_t end,
+ const vec3_t mins,const vec3_t maxs,clipHandle_t model,int mask){
+ CM_Trace(result,start,end,mins,maxs,model,mask,nullptr);
+}
+
+void CM_HullTrace(trace_t* result,const vec3_t start,const vec3_t end,clipHandle_t model,int mask,
+ const vec3_t origin,const vec3_t angles,const JarSweepHull& hull){
+ vec3_t localStart,localEnd,mins,maxs;
+ VectorSubtract(start,origin,localStart);VectorSubtract(end,origin,localEnd);
+ const bool rotate=angles[0]||angles[1]||angles[2];
+ JarSweepHull rotated;
+ const JarSweepHull* query=&hull;
+ vec3_t basis[3];
+ if(rotate){
+  AnglesToAxis(angles,basis);
+  const auto toLocal=[&](const vec3_t point,vec3_t dest){
+   vec3_t local;
+   for(int axis=0;axis<3;++axis)local[axis]=DotProduct(point,basis[axis]);
+   VectorCopy(local,dest);
+  };
+  toLocal(localStart,localStart);toLocal(localEnd,localEnd);
+  rotated.pointCount=hull.pointCount;rotated.faceCount=hull.faceCount;rotated.edgeCount=hull.edgeCount;
+  rotated.arcRadius=hull.arcRadius;toLocal(hull.arcAxis,rotated.arcAxis);
+  for(int i=0;i<hull.pointCount;++i)toLocal(hull.points[i],rotated.points[i]);
+  for(int i=0;i<hull.faceCount;++i)toLocal(hull.faces[i],rotated.faces[i]);
+  for(int i=0;i<hull.edgeCount;++i)toLocal(hull.edges[i],rotated.edges[i]);
+  query=&rotated;
+ }
+ JAR_SweepBounds(*query,mins,maxs);
+ CM_Trace(result,localStart,localEnd,mins,maxs,model,mask,query);
+ if(result->fraction<1&&!result->allsolid){
+  if(rotate){
+   vec3_t normal;
+   VectorScale(basis[0],result->plane.normal[0],normal);
+   VectorMA(normal,result->plane.normal[1],basis[1],normal);
+   VectorMA(normal,result->plane.normal[2],basis[2],result->plane.normal);
+  }
+  result->plane.dist+=DotProduct(result->plane.normal,origin);
+  result->plane.type=PlaneTypeForNormal(result->plane.normal);
+  SetPlaneSignbits(&result->plane);
+ }
+ vec3_t delta;
+ VectorSubtract(end,start,delta);VectorMA(start,result->fraction,delta,result->endpos);
 }
 
 

@@ -2167,23 +2167,6 @@ qboolean WP_SaberParseParm( const char *saberName, const char *parmname, char *s
 	return qfalse;
 }
 
-qboolean WP_SaberValidForPlayerInMP( const char *saberName )
-{
-	char allowed [8]={0};
-	if ( !WP_SaberParseParm( saberName, "notInMP", allowed ) )
-	{//not defined, default is yes
-		return qtrue;
-	}
-	if ( !allowed[0] )
-	{//not defined, default is yes
-		return qtrue;
-	}
-	else
-	{//return value
-		return ((qboolean)(atoi(allowed)==0));
-	}
-}
-
 void WP_RemoveSaber( saberInfo_t *sabers, int saberNum )
 {
 	if ( !sabers )
@@ -2225,14 +2208,14 @@ void WP_SetSaber( int entNum, saberInfo_t *sabers, int saberNum, const char *sab
 		return;
 	}
 
-	if ( entNum < MAX_CLIENTS &&
-		!WP_SaberValidForPlayerInMP( saberName ) )
+	WP_SaberParseParms( saberName, &sabers[saberNum] );
+	// The engine's invisible no-weapon attachment is unavailable as a player hilt.
+	if (entNum < MAX_CLIENTS && !Q_stricmp(sabers[saberNum].model, "models/weapons2/noweap/noweap.glm"))
 	{
-		WP_SaberParseParms( DEFAULT_SABER, &sabers[saberNum] );//get saber info
-	}
-	else
-	{
-		WP_SaberParseParms( saberName, &sabers[saberNum] );//get saber info
+		if (saberNum == 0)
+			WP_SaberParseParms(DEFAULT_SABER, &sabers[0]);
+		else
+			WP_RemoveSaber(sabers, 1);
 	}
 	if ((sabers[1].saberFlags&SFL_TWO_HANDED))
 	{//not allowed to use a 2-handed saber as second saber
@@ -2262,7 +2245,7 @@ void WP_SaberLoadParms( void )
 {
 	int				len, totallen, saberExtFNLen, fileCnt, i;
 	char			*holdChar, *marker;
-	char			saberExtensionListBuf[2048];			//	The list of file names read in
+	static char		saberExtensionListBuf[65536];
 	fileHandle_t	f;
 
 	len = 0;
@@ -2347,18 +2330,17 @@ void WP_SaberGetHiltInfo( const char *singleHilts[MAX_SABER_HILTS], const char *
 			continue;
 		}
 		saberName = String_Alloc( token );
-		//see if there's a "{" on the next line
-		SkipRestOfLine( &p );
 
 		if ( BG_ParseLiteralSilent( &p, "{" ) )
 		{//nope, not a name, keep looking
 			continue;
 		}
 
-		//this is a saber name
-		if ( !WP_SaberValidForPlayerInMP( saberName ) )
+		char model[MAX_TOKEN_CHARS] = {0};
+		if (WP_SaberParseParm(saberName, "saberModel", model) &&
+		    !Q_stricmp(model, "models/weapons2/noweap/noweap.glm"))
 		{
-			SkipBracedSection( &p, 0 );
+			SkipBracedSection(&p, 0);
 			continue;
 		}
 
@@ -2491,74 +2473,7 @@ void BG_SI_SetDesiredLength(saberInfo_t *saber, float len, int bladeNum )
 }
 
 //also not in sp, added it for my own convenience
-void BG_SI_SetLengthGradual(saberInfo_t *saber, int time)
-{
-	int i;
-	float amt, dLen;
-
-	for (i = 0; i < saber->numBlades; i++)
-	{
-		dLen = saber->blade[i].desiredLength;
-
-		if (dLen == -1)
-		{ //assume we want max blade len
-			dLen = saber->blade[i].lengthMax;
-		}
-
-		if (saber->blade[i].length == dLen)
-		{
-			continue;
-		}
-
-		if (saber->blade[i].length == saber->blade[i].lengthMax ||
-			saber->blade[i].length == 0)
-		{
-			saber->blade[i].extendDebounce = time;
-			if (saber->blade[i].length == 0)
-			{
-				saber->blade[i].length++;
-			}
-			else
-			{
-				saber->blade[i].length--;
-			}
-		}
-
-		amt = (time - saber->blade[i].extendDebounce)*0.01;
-
-		if (amt < 0.2f)
-		{
-			amt = 0.2f;
-		}
-
-		if (saber->blade[i].length < dLen)
-		{
-			saber->blade[i].length += amt;
-
-			if (saber->blade[i].length > dLen)
-			{
-				saber->blade[i].length = dLen;
-			}
-			if (saber->blade[i].length > saber->blade[i].lengthMax)
-			{
-				saber->blade[i].length = saber->blade[i].lengthMax;
-			}
-		}
-		else if (saber->blade[i].length > dLen)
-		{
-			saber->blade[i].length -= amt;
-
-			if (saber->blade[i].length < dLen)
-			{
-				saber->blade[i].length = dLen;
-			}
-			if (saber->blade[i].length < 0)
-			{
-				saber->blade[i].length = 0;
-			}
-		}
-	}
-}
+#include "bg_jar_native_saber_length.inc"
 
 float BG_SI_Length(saberInfo_t *saber)
 {//return largest length

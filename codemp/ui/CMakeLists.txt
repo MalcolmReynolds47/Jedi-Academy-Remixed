@@ -73,6 +73,10 @@ set(MPUIUIFiles
 	"${MPDir}/ui/ui_force.c"
 	"${MPDir}/ui/ui_gameinfo.c"
 	"${MPDir}/ui/ui_main.c"
+	"${MPDir}/ui/ui_jar_frontend.c"
+	"${MPDir}/ui/ui_jar_frontend.h"
+	"${MPDir}/ui/ui_jar_map_bsp.cpp"
+	"${MPDir}/ui/ui_jar_map_bsp.h"
 	"${MPDir}/ui/ui_saber.c"
 	"${MPDir}/ui/ui_shared.c"
 	"${MPDir}/ui/ui_syscalls.c"
@@ -112,22 +116,22 @@ if(MakeApplicationBundles AND BuildMPEngine)
 elseif(WIN32)
 	install(TARGETS ${MPUI}
 		RUNTIME
-		DESTINATION "${JKAInstallDir}/OpenJK"
+		DESTINATION "${JKAInstallDir}"
 		COMPONENT ${JKAMPCoreComponent})
 
 	# Use OpenJK modules as default
 	install(TARGETS ${MPUI}
 		RUNTIME
-		DESTINATION "${JKAInstallDir}/base"
+		DESTINATION "${JKAInstallDir}"
 		COMPONENT ${JKAMPCoreComponent})
 else()
 	install(TARGETS ${MPUI}
 		LIBRARY
-		DESTINATION "${JKAInstallDir}/OpenJK"
+		DESTINATION "${JKAInstallDir}"
 		COMPONENT ${JKAMPCoreComponent})
 	install(TARGETS ${MPUI}
 		LIBRARY
-		DESTINATION "${JKAInstallDir}/base"
+		DESTINATION "${JKAInstallDir}"
 		COMPONENT ${JKAMPCoreComponent})
 endif()
 

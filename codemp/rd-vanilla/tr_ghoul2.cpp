@@ -786,20 +786,7 @@ public:
 	{}
 };
 
-#ifdef _G2_GORE
-#define MAX_RENDER_SURFACES (2048)
-static CRenderableSurface RSStorage[MAX_RENDER_SURFACES];
-static unsigned int NextRS=0;
-
-CRenderableSurface *AllocRS()
-{
-	CRenderableSurface *ret=&RSStorage[NextRS];
-	ret->Init();
-	NextRS++;
-	NextRS%=MAX_RENDER_SURFACES;
-	return ret;
-}
-#endif
+#include "tr_jar_ghoul_pool.inc"
 
 /*
 
@@ -2467,7 +2454,8 @@ void RenderSurfaces(CRenderSurface &RS) //also ended up just ripping right from 
 			&& !(RS.renderfx & ( RF_NOSHADOW | RF_DEPTHHACK ) )
 			&& shader->sort == SS_OPAQUE )
 		{		// set the surface info to point at the where the transformed bone list is going to be for when the surface gets rendered out
-			CRenderableSurface *newSurf = new CRenderableSurface;
+			CRenderableSurface *newSurf = AllocRS();
+			if (!newSurf) return;
 			if (surface->numVerts >= SHADER_MAX_VERTEXES/2)
 			{ //we need numVerts*2 xyz slots free in tess to do shadow, if this surf is going to exceed that then let's try the lowest lod -rww
 				mdxmSurface_t *lowsurface = (mdxmSurface_t *)G2_FindSurface(RS.currentModel, RS.surfaceNum, RS.currentModel->numLods-1);
@@ -2487,7 +2475,8 @@ void RenderSurfaces(CRenderSurface &RS) //also ended up just ripping right from 
 			&& (RS.renderfx & RF_SHADOW_PLANE )
 			&& shader->sort == SS_OPAQUE )
 		{		// set the surface info to point at the where the transformed bone list is going to be for when the surface gets rendered out
-			CRenderableSurface *newSurf = new CRenderableSurface;
+			CRenderableSurface *newSurf = AllocRS();
+			if (!newSurf) return;
 			newSurf->surfaceData = surface;
 			newSurf->boneCache = RS.boneCache;
 			R_AddDrawSurf( (surfaceType_t *)newSurf, tr.projectionShadowShader, 0, qfalse );
@@ -2496,7 +2485,8 @@ void RenderSurfaces(CRenderSurface &RS) //also ended up just ripping right from 
 		// don't add third_person objects if not viewing through a portal
 		if ( !RS.personalModel )
 		{		// set the surface info to point at the where the transformed bone list is going to be for when the surface gets rendered out
-			CRenderableSurface *newSurf = new CRenderableSurface;
+			CRenderableSurface *newSurf = AllocRS();
+			if (!newSurf) return;
 			newSurf->surfaceData = surface;
 			newSurf->boneCache = RS.boneCache;
 			R_AddDrawSurf( (surfaceType_t *)newSurf, (shader_t *)shader, RS.fogNum, qfalse );
@@ -2529,6 +2519,7 @@ void RenderSurfaces(CRenderSurface &RS) //also ended up just ripping right from 
 					else if (tex->tex[RS.lod])
 					{
 						CRenderableSurface *newSurf2 = AllocRS();
+						if (!newSurf2) break;
 						*newSurf2=*newSurf;
 						newSurf2->goreChain=0;
 						newSurf2->alternateTex=tex->tex[RS.lod];
@@ -3597,7 +3588,7 @@ void RB_SurfaceGhoul( CRenderableSurface *surf )
 	CBoneCache *bones = surf->boneCache;
 
 #ifndef _G2_GORE //we use this later, for gore
-	delete surf;
+	// Frame-owned storage is reset only after all draw passes finish.
 #endif
 
 	// first up, sanity check our numbers
@@ -3813,7 +3804,7 @@ void RB_SurfaceGhoul( CRenderableSurface *surf )
 	extern bool g_bDynamicGlowSupported;
 	if ( !tess.shader->hasGlow || g_bRenderGlowingObjects || !g_bDynamicGlowSupported || !r_DynamicGlow->integer )
 	{
-		delete storeSurf;
+		// Frame-owned storage is reset only after all draw passes finish.
 	}
 #endif
 

@@ -24,6 +24,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_local.h"
 #include "g_functions.h"
 #include "g_nav.h"
+#include "g_reference_tags.h"
+#include <cmath>
 
 extern int delayedShutDown;
 
@@ -74,6 +76,7 @@ TAG_Init
 
 void TAG_Init( void )
 {
+ G_ReferenceReset();
 	refTagOwner_m::iterator	rtoi;
 
 	//Delete all owners
@@ -136,7 +139,7 @@ TAG_Find
 -------------------------
 */
 
-reference_tag_t	*TAG_Find( const char *owner, const char *name )
+static reference_tag_t	*TAG_FindAuthored( const char *owner, const char *name )
 {
 	tagOwner_t	*tagOwner;
 
@@ -182,6 +185,12 @@ reference_tag_t	*TAG_Find( const char *owner, const char *name )
 TAG_Add
 -------------------------
 */
+
+reference_tag_t*TAG_Find(const char*owner,const char*name){
+ if(!name||!*name)return nullptr;
+ if(auto*tag=TAG_FindAuthored(owner,name))return tag;
+ return G_ReferenceFind(owner,name);
+}
 
 reference_tag_t	*TAG_Add( const char *name, const char *owner, vec3_t origin, vec3_t angles, int radius, int flags )
 {
@@ -417,3 +426,4 @@ void SP_reference_tag ( gentity_t *ent )
 		ref_link( ent );
 	}
 }
+#include "g_reference_tags.inc"

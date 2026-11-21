@@ -1,3 +1,4 @@
+#include "qcommon/jar_diagnostics.h"
 /*
 ===========================================================================
 Copyright (C) 1999 - 2005, Id Software, Inc.
@@ -29,7 +30,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "cg_media.h"
 
-#define	MAX_LOCAL_ENTITIES	512
+#define	MAX_LOCAL_ENTITIES	(512 * JAR_CAPACITY_MULTIPLIER)
 localEntity_t	cg_localEntities[MAX_LOCAL_ENTITIES];
 localEntity_t	cg_activeLocalEntities;		// double linked list
 localEntity_t	*cg_freeLocalEntities;		// single linked list
@@ -85,6 +86,7 @@ localEntity_t	*CG_AllocLocalEntity( void ) {
 	localEntity_t	*le;
 
 	if ( !cg_freeLocalEntities ) {
+		JAR_DiagnosticsCount(JAR_LOCAL_RECYCLED);
 		// no free entities, so free the one at the end of the chain
 		// remove the oldest active entity
 		CG_FreeLocalEntity( cg_activeLocalEntities.prev );

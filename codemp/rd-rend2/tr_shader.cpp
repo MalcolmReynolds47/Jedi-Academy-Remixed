@@ -20,6 +20,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 ===========================================================================
 */
 #include "tr_local.h"
+#include "../../code/qcommon/jar_portal.h"
 
 // tr_shader.c -- this file deals with the parsing and definition of shaders
 
@@ -1230,7 +1231,12 @@ static qboolean ParseStage( shaderStage_t *stage, const char **text )
 				return qfalse;
 			}
 
-			if ( !Q_stricmp( token, "$whiteimage" ) )
+			const int slot = jar::portal::MonitorImageSlot(token);
+			if (slot >= 0)
+			{
+				stage->bundle[0].image[0] = tr.portalMonitorImages[slot] ? tr.portalMonitorImages[slot] : tr.whiteImage;
+			}
+			else if ( !Q_stricmp( token, "$whiteimage" ) )
 			{
 				stage->bundle[0].image[0] = tr.whiteImage;
 				continue;
@@ -5087,6 +5093,13 @@ static void CreateInternalShaders( void ) {
 	Q_strncpyz(shader.name, "<weather>", sizeof(shader.name));
 	shader.sort = SS_SEE_THROUGH;
 	tr.weatherInternalShader = FinishShader();
+
+	Q_strncpyz(shader.name, "<section fog cap>", sizeof(shader.name));
+	shader.sort = SS_FOG;
+	shader.cullType = CT_TWO_SIDED;
+	stages[0].bundle[0].image[0] = tr.whiteImage;
+	tr.sectionFogCapShader = FinishShader();
+	tr.sectionFogCapShader->fogPass = FP_LE;
 }
 
 static void CreateExternalShaders( void ) {

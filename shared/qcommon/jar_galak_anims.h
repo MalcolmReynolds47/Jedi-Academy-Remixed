@@ -1,0 +1,9 @@
+// Original Galak clips use model-local Academy slots, preserving network enums.
+// The asset builder reads these source clip mappings. GPL-2.0-only.
+#pragma once
+#define JAR_GALAK_RAISE TORSO_RAISEWEAP4 // TORSO_RAISEWEAP2
+#define JAR_GALAK_DROP TORSO_DROPWEAP4 // TORSO_DROPWEAP2
+#define JAR_GALAK_GLOAT_START BOTH_CIN_1 // BOTH_TRIUMPHANT1START
+#define JAR_GALAK_GLOAT_LOOP BOTH_CIN_2 // BOTH_TRIUMPHANT1STARTGESTURE
+#define JAR_GALAK_GLOAT_STOP BOTH_CIN_3 // BOTH_TRIUMPHANT1STOP
+#define JAR_GALAK_GENERATOR_BREAK BOTH_CIN_4 // BOTH_ALERT1

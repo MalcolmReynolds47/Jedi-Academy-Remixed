@@ -1,3 +1,6 @@
+#ifdef _JK2EXE
+#include "qcommon/jar_diagnostics.h"
+#endif
 /*
 ===========================================================================
 Copyright (C) 2005 - 2015, ioquake3 contributors
@@ -31,6 +34,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "sys_loadlib.h"
 #include "sys_public.h"
 #include "con_local.h"
+#include "jar_install_path.h"
 
 static char binaryPath[ MAX_OSPATH ] = { 0 };
 static char installPath[ MAX_OSPATH ] = { 0 };
@@ -170,6 +174,9 @@ void Sys_Init( void ) {
 }
 
 static void NORETURN Sys_Exit( int ex ) {
+#ifdef _JK2EXE
+	JAR_Log(0,"session","exit","code=%d",ex);
+#endif
 	IN_Shutdown();
 #ifndef DEDICATED
 	SDL_Quit();
@@ -184,6 +191,9 @@ static void NORETURN Sys_Exit( int ex ) {
 
 	CON_Shutdown();
 
+#ifdef _JK2EXE
+	JAR_LogClose();
+#endif
     exit( ex );
 }
 
@@ -758,7 +768,13 @@ int main ( int argc, char* argv[] )
 #endif
 
 	Sys_SetBinaryPath( Sys_Dirname( argv[ 0 ] ) );
-	Sys_SetDefaultInstallPath( DEFAULT_BASEDIR );
+#ifdef _WIN32
+	// Explorer, shortcuts and PATH launches need the actual executable location,
+	// independent of argv[0] and the caller's current working directory.
+	const std::string executableDirectory = JAR_ExecutableDirectory();
+	if (!executableDirectory.empty()) Sys_SetBinaryPath(executableDirectory.c_str());
+#endif
+	Sys_SetDefaultInstallPath( JAR_DefaultInstallDirectory(DEFAULT_BASEDIR).c_str() );
 
 	// Concatenate the command line for passing to Com_Init
 	for( i = 1; i < argc; i++ )

@@ -27,6 +27,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #define ARMOR_EFFECT_TIME	500
 
+void WP_EndForceEnlightenment(gentity_t* entity);
+
 #define JSF_AMBUSH		16	//ambusher Jedi
 
 //saberEventFlags
@@ -199,7 +201,10 @@ enum
 extern void WP_InitForcePowers( gentity_t *ent );
 extern int WP_GetVelocityForForceJump( gentity_t *self, vec3_t jumpVel, usercmd_t *ucmd );
 extern int WP_SaberInitBladeData( gentity_t *ent );
+extern bool WP_SaberInitSandboxBladeData( gentity_t *ent );
 extern void G_CreateG2AttachedWeaponModel( gentity_t *ent, const char *weaponModel, int boltNum, int weaponNum );
+bool G_ReplaceG2HandWeapon(gentity_t& actor, const char* model);
+void G_RestoreCarriedWeaponHand(gentity_t& actor);
 extern void WP_SaberAddG2SaberModels( gentity_t *ent, int specificSaberNum = -1 );
 extern qboolean WP_SaberParseParms( const char *SaberName, saberInfo_t *saber, qboolean setColors = qtrue );
 extern qboolean WP_BreakSaber( gentity_t *ent, const char *surfName, saberType_t saberType = SABER_NONE );

@@ -24,15 +24,23 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // g_utils.c -- misc utility functions for game module
 
 #include "../cgame/cg_local.h"
+#include "g_target_music.h"
+#include "g_skyportal.h"
+#include "g_scene_camera.h"
 #include "Q3_Interface.h"
 #include "g_local.h"
+#include "g_galak_mech.h"
+#include "g_workshop.h"
+#include "g_randomizer.h"
 #include "g_functions.h"
 #include "g_navigator.h"
 #include "b_local.h"
 #include "g_nav.h"
+#include "g_entity_pool.h"
+#include "wp_saber.h"
+#include "g_subbsp_ownership.inc"
+#include "g_spawn_transaction.inc"
 
-#define ACT_ACTIVE		qtrue
-#define ACT_INACTIVE	qfalse
 extern void NPC_UseResponse ( gentity_t *self, gentity_t *user, qboolean useWhenDone );
 extern qboolean PM_CrouchAnim( int anim );
 /*
@@ -132,6 +140,7 @@ void G_PlayEffect( int fxID, const vec3_t origin, const vec3_t fwd )
 	vec3_t	temp;
 
 	tent = G_TempEntity( origin, EV_PLAY_EFFECT );
+	if (!tent) return;
 	tent->s.eventParm = fxID;
 
 	VectorSet( tent->maxs, FX_ENT_RADIUS, FX_ENT_RADIUS, FX_ENT_RADIUS );
@@ -152,6 +161,7 @@ void G_PlayEffect( int fxID, int entNum, const vec3_t fwd )
 	vec3_t		temp;
 
 	tent = G_TempEntity( g_entities[entNum].currentOrigin, EV_PLAY_EFFECT );
+	if (!tent) return;
 	tent->s.eventParm = fxID;
 	tent->s.otherEntityNum = entNum;
 	VectorSet( tent->maxs, FX_ENT_RADIUS, FX_ENT_RADIUS, FX_ENT_RADIUS );
@@ -169,6 +179,7 @@ void G_PlayEffect( const char *name, int clientNum )
 	gentity_t	*tent;
 
 	tent = G_TempEntity( g_entities[clientNum].currentOrigin, EV_PLAY_MUZZLE_EFFECT );
+	if (!tent) return;
 	tent->s.eventParm = G_EffectIndex( name );
 	tent->s.otherEntityNum = clientNum;
 	VectorSet( tent->maxs, FX_ENT_RADIUS, FX_ENT_RADIUS, FX_ENT_RADIUS );
@@ -181,6 +192,7 @@ void G_PlayEffect( int fxID, const vec3_t origin, const vec3_t axis[3] )
 	gentity_t	*tent;
 
 	tent = G_TempEntity( origin, EV_PLAY_EFFECT );
+	if (!tent) return;
 	tent->s.eventParm = fxID;
 
 	VectorSet( tent->maxs, FX_ENT_RADIUS, FX_ENT_RADIUS, FX_ENT_RADIUS );
@@ -198,6 +210,7 @@ void G_PlayEffect( int fxID, const int modelIndex, const int boltIndex, const in
 	gentity_t	*tent;
 
 	tent = G_TempEntity( origin, EV_PLAY_EFFECT );
+	if (!tent) return;
 	tent->s.eventParm = fxID;
 
 	tent->s.loopSound = iLoopTime;
@@ -239,6 +252,7 @@ void G_StopEffect( int fxID, const int modelIndex, const int boltIndex, const in
 	gentity_t	*tent;
 
 	tent = G_TempEntity( g_entities[entNum].currentOrigin, EV_STOP_EFFECT );
+	if (!tent) return;
 	tent->s.eventParm = fxID;
 	tent->svFlags |= SVF_BROADCAST;
 	gi.G2API_AttachEnt( &tent->s.boltInfo, &g_entities[entNum].ghoul2[modelIndex], boltIndex, entNum, modelIndex );
@@ -457,39 +471,7 @@ NULL will be returned if the end of the list is reached.
 
 =============
 */
-gentity_t *G_Find (gentity_t *from, int fieldofs, const char *match)
-{
-	char	*s;
-
-	if(!match || !match[0])
-	{
-		return NULL;
-	}
-
-	if (!from)
-		from = g_entities;
-	else
-		from++;
-
-//	for ( ; from < &g_entities[globals.num_entities] ; from++)
-	int i=from-g_entities;
-	for ( ; i < globals.num_entities ; i++)
-	{
-//		if (!from->inuse)
-		if(!PInUse(i))
-			continue;
-
-		from=&g_entities[i];
-		s = *(char **) ((byte *)from + fieldofs);
-		if (!s)
-			continue;
-		if (!Q_stricmp (s, match))
-			return from;
-	}
-
-	return NULL;
-}
-
+#include "g_entity_find.inc"
 
 /*
 ============
@@ -565,104 +547,7 @@ G_PickTarget
 Selects a random entity from among the targets
 =============
 */
-#define MAXCHOICES	32
-
-gentity_t *G_PickTarget (char *targetname)
-{
-	gentity_t	*ent = NULL;
-	int		num_choices = 0;
-	gentity_t	*choice[MAXCHOICES];
-
-	if (!targetname)
-	{
-		gi.Printf("G_PickTarget called with NULL targetname\n");
-		return NULL;
-	}
-
-	while(1)
-	{
-		ent = G_Find (ent, FOFS(targetname), targetname);
-		if (!ent)
-			break;
-		choice[num_choices++] = ent;
-		if (num_choices == MAXCHOICES)
-			break;
-	}
-
-	if (!num_choices)
-	{
-		gi.Printf("G_PickTarget: target %s not found\n", targetname);
-		return NULL;
-	}
-
-	return choice[rand() % num_choices];
-}
-
-void G_UseTargets2 (gentity_t *ent, gentity_t *activator, const char *string)
-{
-	gentity_t		*t;
-
-//
-// fire targets
-//
-	if (string)
-	{
-		if( !Q_stricmp( string, "self") )
-		{
-			t = ent;
-			if (t->e_UseFunc != useF_NULL)	// check can be omitted
-			{
-				GEntity_UseFunc(t, ent, activator);
-			}
-
-			if (!ent->inuse)
-			{
-				gi.Printf("entity was removed while using targets\n");
-				return;
-			}
-		}
-		else
-		{
-			t = NULL;
-			while ( (t = G_Find (t, FOFS(targetname), (char *) string)) != NULL )
-			{
-				if (t == ent)
-				{
-	//				gi.Printf ("WARNING: Entity used itself.\n");
-				}
-				if (t->e_UseFunc != useF_NULL)	// check can be omitted
-				{
-					GEntity_UseFunc(t, ent, activator);
-				}
-
-				if (!ent->inuse)
-				{
-					gi.Printf("entity was removed while using targets\n");
-					return;
-				}
-			}
-		}
-	}
-}
-
-/*
-==============================
-G_UseTargets
-
-"activator" should be set to the entity that initiated the firing.
-
-Search for (string)targetname in all entities that
-match (string)self.target and call their .use function
-
-==============================
-*/
-void G_UseTargets (gentity_t *ent, gentity_t *activator)
-{
-//
-// fire targets
-//
-	G_UseTargets2 (ent, activator, ent->target);
-}
+#include "g_entity_targets.inc"
 
 /*
 =============
@@ -736,124 +621,27 @@ float vectoyaw( const vec3_t vec ) {
 }
 
 
-void G_InitGentity( gentity_t *e, qboolean bFreeG2 )
-{
-	e->inuse = qtrue;
-	SetInUse(e);
-	e->m_iIcarusID = IIcarusInterface::ICARUS_INVALID;
-	e->classname = "noclass";
-	e->s.number = e - g_entities;
-
-	// remove any ghoul2 models here in case we're reusing
-	if (bFreeG2 && e->ghoul2.IsValid())
-	{
-		gi.G2API_CleanGhoul2Models(e->ghoul2);
-	}
-	//Navigational setups
-	e->waypoint				= WAYPOINT_NONE;
-	e->lastWaypoint			= WAYPOINT_NONE;
-}
-
-/*
-=================
-G_Spawn
-
-Either finds a free entity, or allocates a new one.
-
-  The slots from 0 to MAX_CLIENTS-1 are always reserved for clients, and will
-never be used by anything else.
-
-Try to avoid reusing an entity that was recently freed, because it
-can cause the client to think the entity morphed into something else
-instead of being removed and recreated, which can cause interpolated
-angles and bad trails.
-=================
-*/
-gentity_t *G_Spawn( void )
-{
-	int			i, force;
-	gentity_t	*e;
-
-	e = NULL;	// shut up warning
-	i = 0;		// shut up warning
-	for ( force = 0 ; force < 2 ; force++ )
-	{
-		// if we go through all entities and can't find one to free,
-		// override the normal minimum times before use
-		e = &g_entities[MAX_CLIENTS];
-//		for ( i = MAX_CLIENTS ; i<globals.num_entities ; i++, e++)
-//		{
-//			if ( e->inuse )
-//			{
-//				continue;
-//			}
-		for ( i = MAX_CLIENTS ; i<globals.num_entities ; i++)
-		{
-			if(PInUse(i))
-			{
-				continue;
-			}
-			e=&g_entities[i];
-
-			// the first couple seconds of server time can involve a lot of
-			// freeing and allocating, so relax the replacement policy
-			if ( !force && e->freetime > 2000 && level.time - e->freetime < 1000 ) {
-				continue;
-			}
-
-			// reuse this slot
-			G_InitGentity( e, qtrue );
-			return e;
-		}
-		e=&g_entities[i];
-		if ( i != ENTITYNUM_MAX_NORMAL )
-		{
-			break;
-		}
-	}
-	if ( i == ENTITYNUM_MAX_NORMAL )
-	{
-
-//#ifndef FINAL_BUILD
-		e = &g_entities[0];
-
-//--------------Use this to dump directly to a file
-		char buff[256];
-		FILE *fp;
-
-		fp = fopen( "c:/nofreeentities.txt", "w" );
-		for ( i = 0 ; i<globals.num_entities ; i++, e++)
-		{
-			if ( e->classname )
-			{
-				sprintf( buff, "%d: %s\n", i, e->classname );
-			}
-
-			fputs( buff, fp );
-		}
-		fclose( fp );
-/*
-//---------------Or use this to dump to the console -- beware though, the console will fill quickly and you probably won't see the full list
-		for ( i = 0 ; i<globals.num_entities ; i++, e++)
-		{
-			if ( e->classname )
-			{
-				Com_Printf( "%d: %s\n", i, e->classname );
-
-			}
-		}
-*/
-//FINAL_BUILD
-		G_Error( "G_Spawn: no free entities" );
-	}
-
-	// open up a new slot
-	globals.num_entities++;
-	G_InitGentity( e, qtrue );
-	return e;
-}
+#include "g_entity_alloc.inc"
 
 extern	void	Vehicle_Remove(gentity_t *ent);
+#include "g_maglock.h"
+#include "g_laser_arm.h"
+#include "g_portal.h"
+#include "g_spotlight.h"
+#include "g_welder.h"
+#include "g_door_camera.h"
+#include "g_crystal_crate.h"
+#include "g_mover_motion.h"
+#include "g_sandbox_charges.h"
+#include "g_target_scriptrunner.h"
+#include "g_space.h"
+#include "g_shipboundary.h"
+#include "g_target_markers.h"
+#include "g_reference_tags.h"
+#include "g_combat_points.h"
+#include "g_sandbox_push.h"
+#include "g_sandbox_teleport.h"
+#include "g_sandbox_vehicle_transport.h"
 
 /*
 =================
@@ -862,7 +650,26 @@ G_FreeEntity
 Marks the entity as free
 =================
 */
+#include "g_bsp_section_wasteland_gun.h"
+#include "g_siege_item.h"
+#include "g_siege_korriban_actor.h"
+extern void Rancor_DropVictim(gentity_t*);
 void G_FreeEntity( gentity_t *ed ) {
+	if (G_SubBSPFreeInProgress(ed)) return;
+	NPC_GalakMech_ClearBeam(ed);
+	G_SceneCameraForget(ed);
+	G_SpaceForget(ed);
+	G_CombatPointForget(ed);G_ReferenceForget(ed);G_ShipBoundaryForget(ed);G_TargetMarkersForget(ed);G_MusicForget(ed);G_SkyPortalForget(ed);
+	G_ScriptRunnerForget(ed);
+	if (G_JAR_RemoveToStandin(ed)) return;
+	G_WastelandGunForget(ed);
+	G_SiegeForget(ed);
+	G_SandboxChargesForget(*ed);
+	G_SubBSPFreeScope subBspFree(ed);
+	if(G_SiegeKorribanRancorHolding(*ed))Rancor_DropVictim(ed);
+	G_MaglockForget(ed);G_LaserArmForget(ed);G_PortalForget(ed);G_SpotlightForget(ed);G_WelderForget(ed);G_DoorCameraForget(ed);G_CrystalCrateForget(ed);G_JAR_MoverMotionForget(ed);
+	G_JAR_WorkshopForget(ed);
+	if(gi.JAR_Log) gi.JAR_Log(2,"entity","free_begin","entity=%d classname=%s npc=%s time=%d",ed->s.number,ed->classname?ed->classname:"",ed->NPC_type?ed->NPC_type:"",level.time);
 	gi.unlinkentity (ed);		// unlink from world
 
 	// Free the Game Element (the entity) and delete the Icarus ID.
@@ -911,18 +718,7 @@ void G_FreeEntity( gentity_t *ed ) {
 		if(ed->client->clientInfo.customJediSoundDir) {
 			gi.Free(ed->client->clientInfo.customJediSoundDir);
 		}
-		if(ed->client->ps.saber[0].name && gi.bIsFromZone(ed->client->ps.saber[0].name, TAG_G_ALLOC) ) {
-			gi.Free(ed->client->ps.saber[0].name);
-		}
-		if(ed->client->ps.saber[0].model && gi.bIsFromZone(ed->client->ps.saber[0].model, TAG_G_ALLOC) ) {
-			gi.Free(ed->client->ps.saber[0].model);
-		}
-		if(ed->client->ps.saber[1].name && gi.bIsFromZone(ed->client->ps.saber[1].name, TAG_G_ALLOC) ) {
-			gi.Free(ed->client->ps.saber[1].name);
-		}
-		if(ed->client->ps.saber[1].model && gi.bIsFromZone(ed->client->ps.saber[1].model, TAG_G_ALLOC) ) {
- 			gi.Free(ed->client->ps.saber[1].model);
-		}
+		for(auto& saber:ed->client->ps.saber)WP_SaberFreeStrings(saber);
 
 		gi.Free(ed->client);
 	}
@@ -1006,7 +802,8 @@ gentity_t *G_TempEntity( const vec3_t origin, int event ) {
 	gentity_t		*e;
 	vec3_t		snapped;
 
-	e = G_Spawn();
+	e = G_TrySpawn(event == EV_STOP_EFFECT ? qtrue : qfalse);
+	if (!e) return NULL;
 	e->s.eType = ET_EVENTS + event;
 
 	e->classname = "tempEntity";
@@ -1164,6 +961,7 @@ void G_Sound( gentity_t *ent, int soundIndex )
 	gentity_t	*te;
 
 	te = G_TempEntity( ent->currentOrigin, EV_GENERAL_SOUND );
+	if (!te) return;
 	te->s.eventParm = soundIndex;
 }
 
@@ -1177,6 +975,7 @@ void G_SoundAtSpot( vec3_t org, int soundIndex, qboolean broadcast )
 	gentity_t	*te;
 
 	te = G_TempEntity( org, EV_GENERAL_SOUND );
+	if (!te) return;
 	te->s.eventParm = soundIndex;
 	if ( broadcast )
 	{
@@ -1196,6 +995,7 @@ void G_SoundBroadcast( gentity_t *ent, int soundIndex )
 	gentity_t	*te;
 
 	te = G_TempEntity( ent->currentOrigin, EV_GLOBAL_SOUND );	//full volume
+	if (!te) return;
 	te->s.eventParm = soundIndex;
 	te->svFlags |= SVF_BROADCAST;
 }
@@ -1370,48 +1170,7 @@ void Svcmd_Use_f( void )
 
 //======================================================
 
-void G_SetActiveState(char *targetstring, qboolean actState)
-{
-	gentity_t	*target = NULL;
-	while( NULL != (target = G_Find(target, FOFS(targetname), targetstring)) )
-	{
-		target->svFlags = actState ? (target->svFlags&~SVF_INACTIVE) : (target->svFlags|SVF_INACTIVE);
-	}
-}
-
-void target_activate_use(gentity_t *self, gentity_t *other, gentity_t *activator)
-{
-	G_ActivateBehavior(self,BSET_USE);
-
-	G_SetActiveState(self->target, ACT_ACTIVE);
-}
-
-void target_deactivate_use(gentity_t *self, gentity_t *other, gentity_t *activator)
-{
-	G_ActivateBehavior(self,BSET_USE);
-
-	G_SetActiveState(self->target, ACT_INACTIVE);
-}
-
-//FIXME: make these apply to doors, etc too?
-/*QUAKED target_activate (1 0 0) (-4 -4 -4) (4 4 4)
-Will set the target(s) to be usable/triggerable
-*/
-void SP_target_activate( gentity_t *self )
-{
-	G_SetOrigin( self, self->s.origin );
-	self->e_UseFunc = useF_target_activate_use;
-}
-
-/*QUAKED target_deactivate (1 0 0) (-4 -4 -4) (4 4 4)
-Will set the target(s) to be non-usable/triggerable
-*/
-void SP_target_deactivate( gentity_t *self )
-{
-	G_SetOrigin( self, self->s.origin );
-	self->e_UseFunc = useF_target_deactivate_use;
-}
-
+#include "g_use_gate_targets.inc"
 
 //======================================================
 
@@ -1625,6 +1384,8 @@ static qboolean CanUseInfrontOfPartOfLevel(gentity_t* ent )	//originally from VV
 }
 
 #define USE_DISTANCE	64.0f
+
+#include "g_vehicle_transport_use.inc"
 extern qboolean eweb_can_be_used( gentity_t *self, gentity_t *other, gentity_t *activator );
 qboolean CanUseInfrontOf(gentity_t *ent)
 {
@@ -1788,6 +1549,8 @@ void TryUse( gentity_t *ent )
 
 	//Trace ahead to find a valid target
 	gi.trace( &trace, src, vec3_origin, vec3_origin, dest, ent->s.number, MASK_OPAQUE|CONTENTS_SOLID|CONTENTS_TERRAIN|CONTENTS_BODY|CONTENTS_ITEM|CONTENTS_CORPSE , G2_NOCOLLIDE, 10);
+    if(ent->s.number==0 && gi.JAR_Log && gi.JAR_LogLevel && gi.JAR_LogLevel()>=3)
+        gi.JAR_Log(3,"input","use_trace","player=%.2f,%.2f,%.2f eye=%.2f,%.2f,%.2f pitch=%.2f yaw=%.2f hit=%d fraction=%.3f classname=%s",ent->currentOrigin[0],ent->currentOrigin[1],ent->currentOrigin[2],src[0],src[1],src[2],ent->client->ps.viewangles[0],ent->client->ps.viewangles[1],trace.entityNum,trace.fraction,trace.entityNum<ENTITYNUM_WORLD && g_entities[trace.entityNum].classname?g_entities[trace.entityNum].classname:"world");
 
 	if ( trace.fraction == 1.0f || trace.entityNum  >= ENTITYNUM_WORLD )
 	{
@@ -1924,12 +1687,7 @@ qboolean G_BoxInBounds( const vec3_t point, const vec3_t mins, const vec3_t maxs
 }
 
 
-void G_SetAngles( gentity_t *ent, const vec3_t angles )
-{
-	VectorCopy( angles, ent->currentAngles );
-	VectorCopy( angles, ent->s.angles );
-	VectorCopy( angles, ent->s.apos.trBase );
-}
+#include "g_entity_angles.inc"
 
 qboolean G_ClearTrace( const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, int ignore, int clipmask )
 {

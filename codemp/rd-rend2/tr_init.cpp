@@ -2134,6 +2134,8 @@ void RE_SetLightStyle(int style, int color)
 void RE_GetBModelVerts(int bmodelIndex, vec3_t *verts, vec3_t normal);
 void RE_WorldEffectCommand(const char *cmd);
 
+static void stub_AutomapElevationAdjustment(float) {}
+
 void stub_RE_AddWeatherZone ( vec3_t mins, vec3_t maxs ) {} // Intentionally left blank. Rend2 reads the zones manually on bsp load
 static void RE_SetRefractionProperties ( float distortionAlpha, float distortionStretch, qboolean distortionPrePost, qboolean distortionNegate ) { }
 
@@ -2221,6 +2223,7 @@ Q_EXPORT refexport_t* QDECL GetRefAPI ( int apiVersion, refimport_t *rimp ) {
 	re.AddRefEntityToScene = RE_AddRefEntityToScene;
 	re.AddMiniRefEntityToScene = RE_AddMiniRefEntityToScene;
 	re.AddPolyToScene = RE_AddPolyToScene;
+	re.AddPortalToScene = RE_AddPortalToScene;
 	re.AddDecalToScene = RE_AddDecalToScene;
 	re.LightForPoint = R_LightForPoint;
 	re.AddLightToScene = RE_AddLightToScene;
@@ -2252,7 +2255,7 @@ Q_EXPORT refexport_t* QDECL GetRefAPI ( int apiVersion, refimport_t *rimp ) {
 	re.SetRefractionProperties = RE_SetRefractionProperties;
 	re.GetDistanceCull = GetDistanceCull;
 	re.GetRealRes = GetRealRes;
-	// R_AutomapElevationAdjustment
+	re.AutomapElevationAdjustment = stub_AutomapElevationAdjustment;
 	re.InitializeWireframeAutomap = stub_InitializeWireframeAutomap;
 	re.AddWeatherZone = stub_RE_AddWeatherZone;
 	re.WorldEffectCommand = RE_WorldEffectCommand;
@@ -2303,6 +2306,10 @@ Q_EXPORT refexport_t* QDECL GetRefAPI ( int apiVersion, refimport_t *rimp ) {
 	re.G2API_GetRagBonePos					= G2API_GetRagBonePos;
 	re.G2API_GetSurfaceIndex				= G2API_GetSurfaceIndex;
 	re.G2API_GetSurfaceName					= G2API_GetSurfaceName;
+	re.G2API_JAR_PoseBounds = G2API_JAR_PoseBounds;
+	re.G2API_JAR_PoseGeometry = G2API_JAR_PoseGeometry;
+	re.G2API_JAR_ApplyFace = G2API_JAR_ApplyFace;
+	re.SetReflectionProbes = RE_SetReflectionProbes;
 	re.G2API_GetSurfaceOnOff				= G2API_GetSurfaceOnOff;
 	re.G2API_GetSurfaceRenderStatus			= G2API_GetSurfaceRenderStatus;
 	re.G2API_GetTime						= G2API_GetTime;

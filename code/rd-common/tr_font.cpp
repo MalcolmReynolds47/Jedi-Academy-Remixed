@@ -268,6 +268,7 @@ public:
 	int				m_numVariants;
 	int				m_handle;
 	qboolean		m_isVariant;
+    bool m_variantsChecked=false;
 
 	CFontInfo(const char *fontName);
 //	CFontInfo(int fill) { memset(this, fill, sizeof(*this)); }	// wtf?
@@ -1332,7 +1333,7 @@ static CFontInfo *RE_Font_GetVariant(CFontInfo *font, float *scale) {
 	if (variants > 0) {
 		CFontInfo *variant;
 		int requestedSize = font->GetPointSize() * *scale *
-			r_fontSharpness->value * (glConfig.vidHeight / SCREEN_HEIGHT);
+			r_fontSharpness->value * (float(glConfig.vidHeight) / SCREEN_HEIGHT);
 
 		if (requestedSize <= font->GetPointSize())
 			return font;
@@ -2143,7 +2144,8 @@ int RE_RegisterFont(const char *psName) {
 	if (oriFontHandle) {
 		CFontInfo *oriFont = GetFont_Actual(oriFontHandle);
 
-		if (oriFont->GetNumVariants() == 0) {
+		if (!oriFont->m_variantsChecked) {
+            oriFont->m_variantsChecked=true;
 			for (int i = 0; i < MAX_FONT_VARIANTS; i++) {
 				const char *variantName = va( "%s_sharp%i", psName, i + 1 );
 				const char *fontDatPath = FontDatPath( variantName );

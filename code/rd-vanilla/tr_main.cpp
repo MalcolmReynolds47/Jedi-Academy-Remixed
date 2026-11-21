@@ -27,6 +27,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../server/exe_headers.h"
 
 #include "tr_local.h"
+#include "../rd-common/tr_bsp_far.h"
 
 #if !defined(G2_H_INC)
 	#include "../ghoul2/G2.h"
@@ -513,7 +514,25 @@ static void SetFarClip( void )
 	// Bring in the zFar to the distanceCull distance
 	// The sky renders at zFar so need to move it out a little
 	// ...and make sure there is a minimum zfar to prevent problems
-	tr.viewParms.zFar = Com_Clamp(2048.0f, tr.distanceCull * (1.732), sqrtf( farthestCornerDistance ));
+	float farDepth = sqrtf(farthestCornerDistance);
+	if (r_drawentities->integer)
+	{
+		for (int entity = 0; entity < tr.refdef.num_entities; ++entity)
+		{
+			const refEntity_t &instance = tr.refdef.entities[entity].e;
+			if (instance.reType != RT_MODEL || (tr.viewParms.isPortal && (instance.renderfx & RF_FIRST_PERSON)))
+				continue;
+			const model_t *model = R_GetModelByHandle(instance.hModel);
+			if (!model || model->type != MOD_BRUSH || !model->bspInstance)
+				continue;
+			const float depth = R_BSPFarDepth(model->bmodel->bounds, instance.origin, instance.axis,
+				tr.viewParms.ori.origin, tr.viewParms.ori.axis[0],
+				r_nocull->integer == 1 ? nullptr : tr.viewParms.frustum);
+			if (depth > farDepth)
+				farDepth = depth;
+		}
+	}
+	tr.viewParms.zFar = Com_Clamp(2048.0f, tr.distanceCull * (1.732), farDepth);
 }
 
 
@@ -715,6 +734,8 @@ Returns qtrue if it should be mirrored
 qboolean R_GetPortalOrientations( drawSurf_t *drawSurf, int entityNum,
 							 orientation_t *surface, orientation_t *camera,
 							 vec3_t pvsOrigin, qboolean *mirror ) {
+ if(drawSurf->surface&&*drawSurf->surface==SF_POLY){auto*p=reinterpret_cast<const srfPoly_t*>(drawSurf->surface);if(p->jarPortal){jar::portal::Orientations(*p->jarPortal,*surface,*camera,pvsOrigin);*mirror=p->jarPortal->mirror?qtrue:qfalse;return qtrue;}}
+
 	int			i;
 	cplane_t	originalPlane, plane;
 	trRefEntity_t	*e;
@@ -824,6 +845,8 @@ qboolean R_GetPortalOrientations( drawSurf_t *drawSurf, int entityNum,
 
 static qboolean IsMirror( const drawSurf_t *drawSurf, int entityNum )
 {
+ if(drawSurf->surface&&*drawSurf->surface==SF_POLY){auto*p=reinterpret_cast<const srfPoly_t*>(drawSurf->surface);if(p->jarPortal)return p->jarPortal->mirror?qtrue:qfalse;}
+
 	int			i;
 	cplane_t	originalPlane, plane;
 	trRefEntity_t	*e;
@@ -968,7 +991,7 @@ static qboolean SurfIsOffscreen( const drawSurf_t *drawSurf, vec4_t clipDest[128
 
 	// mirrors can early out at this point, since we don't do a fade over distance
 	// with them (although we could)
-	if ( IsMirror( drawSurf, entityNum ) )
+	if ( (*drawSurf->surface==SF_POLY&&reinterpret_cast<const srfPoly_t*>(drawSurf->surface)->jarPortal) || IsMirror( drawSurf, entityNum ) )
 	{
 		return qfalse;
 	}
@@ -981,6 +1004,19 @@ static qboolean SurfIsOffscreen( const drawSurf_t *drawSurf, vec4_t clipDest[128
 	return qfalse;
 }
 
+static void R_ProjectPortablePanelPoint(const float* point, float* clip) {
+	vec4_t eye;
+	R_TransformModelToClip(point, tr.viewParms.world.modelMatrix, tr.viewParms.projectionMatrix, eye, clip);
+}
+
+static bool R_PortablePanelVisible(const jar::portal::View& panel) {
+	return jar::portal::PanelVisible(panel, tr.viewParms.ori.origin, R_ProjectPortablePanelPoint);
+}
+
+static float R_PortablePanelCoverage(const jar::portal::View& panel) {
+	return jar::portal::PanelCoverage(panel, tr.viewParms.ori.origin, R_ProjectPortablePanelPoint);
+}
+
 /*
 ========================
 R_MirrorViewBySurface
@@ -989,7 +1025,7 @@ Returns qtrue if another view has been rendered
 ========================
 */
 int	recursivePortalCount;
-qboolean R_MirrorViewBySurface (drawSurf_t *drawSurf, int entityNum) {
+qboolean R_MirrorViewBySurface (drawSurf_t *drawSurf, int entityNum, int monitorSlot = 0) {
 	vec4_t			clipDest[128];
 	viewParms_t		newParms;
 	viewParms_t		oldParms;
@@ -1002,12 +1038,14 @@ qboolean R_MirrorViewBySurface (drawSurf_t *drawSurf, int entityNum) {
 		return qfalse;
 	}
 
-	if ( r_noportals->integer || r_fastsky->integer ) {
+	const auto* panel = *drawSurf->surface == SF_POLY ?
+		reinterpret_cast<const srfPoly_t*>(drawSurf->surface)->jarPortal : nullptr;
+	const bool monitor = panel && !panel->mirror;
+	if (r_noportals->integer || (monitor ? !R_PortalMonitorReady(monitorSlot) : r_fastsky->integer != 0))
 		return qfalse;
-	}
 
 	// trivially reject portal/mirror
-	if ( SurfIsOffscreen( drawSurf, clipDest ) ) {
+	if (panel ? !R_PortablePanelVisible(*panel) : SurfIsOffscreen(drawSurf, clipDest)) {
 		return qfalse;
 	}
 
@@ -1019,6 +1057,16 @@ qboolean R_MirrorViewBySurface (drawSurf_t *drawSurf, int entityNum) {
 	if ( !R_GetPortalOrientations( drawSurf, entityNum, &surface, &camera,
 		newParms.pvsOrigin, &newParms.isMirror ) ) {
 		return qfalse;		// bad portal, no portalentity
+	}
+
+	if (monitor) {
+		newParms.portalMonitor = monitorSlot + 1;
+		newParms.viewportX = newParms.viewportY = 0;
+		newParms.viewportWidth = newParms.viewportHeight = JAR_PORTAL_CAMERA_SIZE;
+		jar::portal::MonitorView(*panel, newParms.ori, newParms.pvsOrigin, newParms.fovX, newParms.fovY);
+		R_RenderView(&newParms);
+		tr.viewParms = oldParms;
+		return qtrue;
 	}
 
 	R_MirrorPoint (oldParms.ori.origin, &surface, &camera, newParms.ori.origin );
@@ -1106,108 +1154,15 @@ DRAWSURF SORTING
 R_Radix
 ===============
 */
-static QINLINE void R_Radix( int byte, int size, drawSurf_t *source, drawSurf_t *dest )
-{
-  int           count[ 256 ] = { 0 };
-  int           index[ 256 ];
-  int           i;
-  unsigned char *sortKey = NULL;
-  unsigned char *end = NULL;
-
-  sortKey = ( (unsigned char *)&source[ 0 ].sort ) + byte;
-  end = sortKey + ( size * sizeof( drawSurf_t ) );
-  for( ; sortKey < end; sortKey += sizeof( drawSurf_t ) )
-    ++count[ *sortKey ];
-
-  index[ 0 ] = 0;
-
-  for( i = 1; i < 256; ++i )
-    index[ i ] = index[ i - 1 ] + count[ i - 1 ];
-
-  sortKey = ( (unsigned char *)&source[ 0 ].sort ) + byte;
-  for( i = 0; i < size; ++i, sortKey += sizeof( drawSurf_t ) )
-    dest[ index[ *sortKey ]++ ] = source[ i ];
-}
-
-/*
-===============
-R_RadixSort
-
-Radix sort with 4 byte size buckets
-===============
-*/
-static void R_RadixSort( drawSurf_t *source, int size )
-{
-  static drawSurf_t scratch[ MAX_DRAWSURFS ];
-#ifdef Q3_LITTLE_ENDIAN
-  R_Radix( 0, size, source, scratch );
-  R_Radix( 1, size, scratch, source );
-  R_Radix( 2, size, source, scratch );
-  R_Radix( 3, size, scratch, source );
-#else
-  R_Radix( 3, size, source, scratch );
-  R_Radix( 2, size, scratch, source );
-  R_Radix( 1, size, source, scratch );
-  R_Radix( 0, size, scratch, source );
-#endif //Q3_LITTLE_ENDIAN
-}
-
-//==========================================================================================
-
-/*
-=================
-R_AddDrawSurf
-=================
-*/
-void R_AddDrawSurf( const surfaceType_t *surface, const shader_t *shader, int fogIndex, int dlightMap )
-{
-	int			index;
-
-	// instead of checking for overflow, we just mask the index
-	// so it wraps around
-	index = tr.refdef.numDrawSurfs & DRAWSURF_MASK;
-
-	if ( tr.refdef.doLAGoggles )
-	{
-		fogIndex = tr.world->numfogs;
-	}
-
-	if ( (shader->surfaceFlags & SURF_FORCESIGHT) && !(tr.refdef.rdflags & RDF_ForceSightOn) )
-	{	//if shader is only seen with ForceSight and we don't have ForceSight on, then don't draw
-		return;
-	}
-
-	// the sort data is packed into a single 32 bit value so it can be
-	// compared quickly during the qsorting process
-	tr.refdef.drawSurfs[index].sort = (shader->sortedIndex << QSORT_SHADERNUM_SHIFT)
-		| tr.shiftedEntityNum | ( fogIndex << QSORT_FOGNUM_SHIFT ) | (int)dlightMap;
-	tr.refdef.drawSurfs[index].surface = (surfaceType_t *)surface;
-	tr.refdef.numDrawSurfs++;
-}
-
-/*
-=================
-R_DecomposeSort
-=================
-*/
-void R_DecomposeSort( unsigned sort, int *entityNum, shader_t **shader,
-					 int *fogNum, int *dlightMap ) {
-	*fogNum = ( sort >> QSORT_FOGNUM_SHIFT ) & 31;
-	*shader = tr.sortedShaders[ ( sort >> QSORT_SHADERNUM_SHIFT ) & (MAX_SHADERS-1) ];
-	*entityNum = ( sort >> QSORT_REFENTITYNUM_SHIFT ) & REFENTITYNUM_MASK;
-	*dlightMap = sort & 3;
-}
 
 /*
 =================
 R_SortDrawSurfs
 =================
 */
+#include "../rd-common/tr_portal_sort.inc"
+
 void R_SortDrawSurfs( drawSurf_t *drawSurfs, int numDrawSurfs ) {
-	shader_t		*shader;
-	int				fogNum;
-	int				entityNum;
-	int				dlighted;
 
 	// it is possible for some views to not have any surfaces
 	if ( numDrawSurfs < 1 ) {
@@ -1226,29 +1181,12 @@ void R_SortDrawSurfs( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	// sort the drawsurfs by sort type, then orientation, then shader
 	R_RadixSort( drawSurfs, numDrawSurfs );
 
-	// check for any pass through drawing, which
-	// may cause another view to be rendered first
-	for ( int i = 0 ; i < numDrawSurfs ; i++ ) {
-		R_DecomposeSort( (drawSurfs+i)->sort, &entityNum, &shader, &fogNum, &dlighted );
+	const auto* chosenPortal = tr.viewParms.isPortal ? nullptr : R_SelectPortal(drawSurfs, numDrawSurfs);
+	if (chosenPortal && r_portalOnly->integer)
+		return;
 
-		if ( shader->sort > SS_PORTAL ) {
-			break;
-		}
-
-		// no shader should ever have this sort type
-		if ( shader->sort == SS_BAD ) {
-			Com_Error (ERR_DROP, "Shader '%s'with sort == SS_BAD", shader->name );
-		}
-
-		// if the mirror was completely clipped away, we may need to check another surface
-		if ( R_MirrorViewBySurface( (drawSurfs+i), entityNum) ) {
-			// this is a debug option to see exactly what is being mirrored
-			if ( r_portalOnly->integer ) {
-				return;
-			}
-			break;		// only one mirror view at a time
-		}
-	}
+	if (!tr.viewParms.isPortal) R_AddPortableMonitors(drawSurfs, numDrawSurfs);
+	R_PortablePortalShaders(drawSurfs, numDrawSurfs, chosenPortal, !tr.viewParms.isPortal);
 
 	R_AddDrawSurfCmd( drawSurfs, numDrawSurfs );
 }
@@ -1274,15 +1212,14 @@ void R_AddEntitySurfaces (void) {
 		ent->needDlights = qfalse;
 
 		// preshift the value we are going to OR into the drawsurf sort
-		tr.shiftedEntityNum = tr.currentEntityNum << QSORT_REFENTITYNUM_SHIFT;
+		tr.shiftedEntityNum = uint64_t(tr.currentEntityNum) << QSORT_REFENTITYNUM_SHIFT;
 
 		if ((ent->e.renderfx & RF_ALPHA_FADE))
 		{
 			// we need to make sure this is not sorted before the world..in fact we
 			// want this to be sorted quite late...like how about last.
-			// I don't want to use the highest bit, since no doubt someone fumbled
-			// handling that as an unsigned quantity somewhere
-			tr.shiftedEntityNum |= 0x80000000;
+			// Sorting and backend comparisons preserve all 64 unsigned bits.
+			tr.shiftedEntityNum |= (uint64_t(1) << 63);
 		}
 		//
 		// the weapon model must be handled special --
@@ -1529,6 +1466,7 @@ void R_RenderView (viewParms_t *parms) {
 	tr.viewParms = *parms;
 	tr.viewParms.frameSceneNum = tr.frameSceneNum;
 	tr.viewParms.frameCount = tr.frameCount;
+	tr.viewParms.riftFogRoom = R_RiftFogRoomAtPoint(tr.viewParms.ori.origin);
 
 	firstDrawSurf = tr.refdef.numDrawSurfs;
 

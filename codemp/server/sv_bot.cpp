@@ -622,6 +622,7 @@ int SV_BotLibSetup( void ) {
 		return -1;
 	}
 
+	botlib_export->BotLibVarSet("maxentities", va("%i", MAX_GENTITIES));
 	return botlib_export->BotLibSetup();
 }
 

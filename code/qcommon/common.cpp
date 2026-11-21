@@ -1,3 +1,5 @@
+#include "qcommon/jar_live_randomizer.h"
+#include "qcommon/jar_diagnostics.h"
 /*
 ===========================================================================
 Copyright (C) 1999 - 2005, Id Software, Inc.
@@ -153,6 +155,7 @@ void QDECL Com_Printf( const char *fmt, ... ) {
 		return;
 	}
 
+	JAR_Log(1,"console","print","%s",msg);
 	CL_ConsolePrint( msg );
 
 	p = msg;
@@ -316,6 +319,8 @@ void NORETURN QDECL Com_Error( int code, const char *fmt, ... ) {
 	Q_vsnprintf (com_errorMessage, sizeof(com_errorMessage), fmt, argptr);
 	va_end (argptr);
 
+	JAR_Log(0,"error","Com_Error","code=%d message=%s",code,com_errorMessage);
+	JAR_LogFlush();
 	if ( code != ERR_DISCONNECT ) {
 		Cvar_Get("com_errorMessage", "", CVAR_ROM);	//give com_errorMessage a default so it won't come back to life after a resetDefaults
 		Cvar_Set("com_errorMessage", com_errorMessage);
@@ -1108,12 +1113,17 @@ void Com_Init( char *commandLine ) {
 		NET_Init();
 
 		FS_InitFilesystem ();	//uses z_malloc
+		JAR_DiagnosticsInit();
 		//re.R_InitWorldEffects();   // this doesn't do much but I want to be sure certain variables are intialized.
 
 		Com_ExecuteCfg();
 
 		// override anything from the config files with command line args
 		Com_StartupVariable( NULL );
+
+		JAR_LogSetLevel(Cvar_VariableIntegerValue("jar_logLevel"));
+		JAR_DiagnosticsSnapshot("config_loaded");
+        JAR_LiveInit();
 
 		// allocate the stack based hunk allocator
 		Com_InitHunkMemory();
@@ -1242,6 +1252,8 @@ Writes key bindings and archived cvars to config file if modified
 ===============
 */
 void Com_WriteConfiguration( void ) {
+	extern bool UI_JAR_DisplayTrialActive();
+	if (UI_JAR_DisplayTrialActive()) return;
 	// if we are quiting without fully initializing, make sure
 	// we don't write out anything
 	if ( !com_fullyInitialized ) {
@@ -1567,6 +1579,7 @@ void Com_Frame( void ) {
 			Sys_SetProcessorAffinity();
 		}
 
+		JAR_DiagnosticsFrame(com_frameNumber, com_frameTime);
 		com_frameNumber++;
 	}
 	catch ( int code )

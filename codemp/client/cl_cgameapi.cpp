@@ -24,6 +24,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "qcommon/stringed_ingame.h"
 #include "qcommon/timing.h"
 #include "client.h"
+#include "qcommon/jar_mp_hull_trace.h"
+#include "game/jar_mp_prop.h"
+#include "../../code/client/jar_soundscape.h"
 #include "cl_uiapi.h"
 #include "botlib/botlib.h"
 #include "snd_ambient.h"
@@ -36,6 +39,16 @@ extern botlib_export_t *botlib_export;
 // cgame interface
 static cgameExport_t *cge; // cgame export table
 static vm_t *cgvm; // cgame vm, valid for legacy and new api
+
+static void CL_S_Respatialize(int entityNum,const vec3_t head,matrix3_t axis,int inwater){
+	if (cls.state==CA_ACTIVE && cl.snap.valid) {
+		vec3_t ear;
+		VectorCopy(cl.snap.ps.origin,ear);
+		ear[2]+=cl.snap.ps.viewheight;
+		CL_JAR_UpdateSoundscape(cl.serverTime,ear,entityNum);
+	}
+	S_Respatialize(entityNum,head,axis,inwater);
+}
 
 //
 // cgame vmMain calls
@@ -809,6 +822,30 @@ static qboolean CL_G2API_OverrideServer( void *serverInstance ) {
 	return re->G2API_OverrideServerWithClientData( g2, 0 );
 }
 
+#include "cl_jar_face.inc"
+
+static int CL_JAR_SetReflectionProbes(const jarProbe_t* probes,int count){
+	return re && re->SetReflectionProbes ? re->SetReflectionProbes(probes,count) : JAR_PROBE_NO_WORLD;
+}
+static void CL_JAR_AddPortalToScene(const jarPortablePortalView_t* view){
+	if (re && re->AddPortalToScene) re->AddPortalToScene(view);
+}
+
+static qboolean CL_JAR_TracePropHull(trace_t* trace,const entityState_t* state,
+ const vec3_t origin,const vec3_t angles,const vec3_t start,const vec3_t end,
+ const vec3_t mins,const vec3_t maxs){
+ if(!trace||!state||!JAR_MP_ModelHullState(state))return qfalse;
+ const int offset=cl.gameState.stringOffsets[CS_MODELS+state->modelindex];
+ if(offset<=0||offset>=cl.gameState.dataCount)return qfalse;
+ const char* model=cl.gameState.stringData+offset;
+ return JAR_MP_TraceModelHull(*trace,model,*state,origin,angles,start,end,mins,maxs,CONTENTS_SOLID,true)
+  ?qtrue:qfalse;
+}
+static qboolean CL_JAR_GhoulPoseBounds(void*instance,int frame,int*frames,vec3_t low,vec3_t high){
+ if(!instance){if(frames)*frames=0;return qfalse;}
+ return re->G2API_JAR_PoseBounds(*static_cast<CGhoul2Info_v*>(instance),frame,frames,low,high);
+}
+
 static void CL_G2API_GetSurfaceName( void *ghoul2, int surfNumber, int modelIndex, char *fillBuf ) {
 	if ( !ghoul2 ) return;
 	CGhoul2Info_v &g2 = *((CGhoul2Info_v *)ghoul2);
@@ -987,6 +1024,20 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 		CL_CM_LoadMap( (const char *)VMA(1), (qboolean)args[2] );
 		return 0;
 
+	case CG_CM_BSPMODELINFO:
+		return CM_BSPModelInfo((const char*)VMA(1),(int*)VMA(2),(int*)VMA(3));
+	case CG_CM_HOTHSECTIONSKY:
+		return CM_HothSectionSky(args[1], (const float*)VMA(2));
+	case CG_CM_RIFTSECTIONAIR:
+		return CM_RiftSectionAir(args[1], (const float*)VMA(2));
+	case CG_CM_KORRIBANSECTIONFOG:
+		return CM_KorribanSectionFog(args[1]);
+	case CG_CM_YAVINSECTIONSKY:
+		return CM_YavinSectionSky(args[1], (const float*)VMA(2));
+	case CG_R_ADDPORTALTOSCENE:
+		CL_JAR_AddPortalToScene((const jarPortablePortalView_t*)VMA(1));
+		return 0;
+
 	case CG_CM_NUMINLINEMODELS:
 		return CM_NumInlineModels();
 
@@ -1060,7 +1111,7 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 		return 0;
 
 	case CG_S_RESPATIALIZE:
-		S_Respatialize( args[1], (const float *)VMA(2), (vec3_t *)VMA(3), args[4] );
+		CL_S_Respatialize( args[1], (const float *)VMA(2), (vec3_t *)VMA(3), args[4] );
 		return 0;
 
 	case CG_S_SHUTUP:
@@ -1749,7 +1800,7 @@ void CL_BindCGame( void ) {
 		cgi.S_GetVoiceVolume					= CL_S_GetVoiceVolume;
 		cgi.S_MuteSound							= S_MuteSound;
 		cgi.S_RegisterSound						= S_RegisterSound;
-		cgi.S_Respatialize						= S_Respatialize;
+		cgi.S_Respatialize						= CL_S_Respatialize;
 		cgi.S_Shutup							= CL_S_Shutup;
 		cgi.S_StartBackgroundTrack				= S_StartBackgroundTrack;
 		cgi.S_StartLocalSound					= S_StartLocalSound;
@@ -1909,6 +1960,16 @@ void CL_BindCGame( void ) {
 		cgi.G2API_CleanEntAttachments			= CL_G2API_CleanEntAttachments;
 		cgi.G2API_OverrideServer				= CL_G2API_OverrideServer;
 		cgi.G2API_GetSurfaceName				= CL_G2API_GetSurfaceName;
+		cgi.JAR_GhoulPoseBounds = CL_JAR_GhoulPoseBounds;
+		cgi.JAR_TracePropHull = CL_JAR_TracePropHull;
+		cgi.JAR_ApplyFace = CL_JAR_ApplyFace;
+		cgi.JAR_SetReflectionProbes = CL_JAR_SetReflectionProbes;
+		cgi.CM_BSPModelInfo = CM_BSPModelInfo;
+		cgi.CM_HothSectionSky = CM_HothSectionSky;
+		cgi.CM_RiftSectionAir = CM_RiftSectionAir;
+		cgi.CM_KorribanSectionFog = CM_KorribanSectionFog;
+		cgi.CM_YavinSectionSky = CM_YavinSectionSky;
+		cgi.R_AddPortalToScene = CL_JAR_AddPortalToScene;
 
 		cgi.ext.R_Font_StrLenPixels				= re->ext.Font_StrLenPixels;
 
@@ -1933,6 +1994,7 @@ void CL_BindCGame( void ) {
 }
 
 void CL_UnbindCGame( void ) {
+	CL_JAR_ResetFaces();
 	CGVM_Shutdown();
 	VM_Free( cgvm );
 	cgvm = NULL;

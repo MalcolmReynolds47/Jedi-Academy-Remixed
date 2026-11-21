@@ -1,3 +1,4 @@
+#include "qcommon/jar_live_randomizer.h"
 /*
 ===========================================================================
 Copyright (C) 1999 - 2005, Id Software, Inc.
@@ -25,10 +26,14 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // active (after loading) gameplay
 
 #include "cg_headers.h"
+#include "../game/g_workshop.h"
+#include "../../shared/qcommon/jar_tool_style.h"
 
 #include "cg_media.h"
 #include "../game/objectives.h"
 #include "../game/g_vehicles.h"
+#include "../game/g_siege_korriban_actor.h"
+#include "qcommon/jar_force_enlightenment.h"
 
 extern vmCvar_t	cg_debugHealthBars;
 
@@ -135,7 +140,7 @@ static void CG_DrawForcePower(const centity_t *cent,const int xPos,const int yPo
 	vec4_t		calcColor;
 	float		value,extra=0,inc,percent;
 
-	if ( !cent->gent->client->ps.forcePowersKnown )
+	if ( !jar::enlightenment::Known(cent->gent->client->ps) )
 	{
 		return;
 	}
@@ -604,7 +609,7 @@ static void CG_DrawArmor(const int x,const int y,const int w,const int h)
 #define MAX_VHUD_ARMOR_TICS 5
 #define MAX_VHUD_AMMO_TICS 5
 
-static void CG_DrawVehicleSheild( const centity_t *cent, const Vehicle_t *pVeh )
+static void CG_DrawVehicleHull( const Vehicle_t *pVeh )
 {
 	int xPos,yPos,width,height,i;
 	vec4_t	color,calcColor;
@@ -615,8 +620,13 @@ static void CG_DrawVehicleSheild( const centity_t *cent, const Vehicle_t *pVeh )
 	//riding some kind of living creature
 	if ( pVeh->m_pVehicleInfo->type == VH_ANIMAL || pVeh->m_pVehicleInfo->type == VH_FLIER )
 	{
-		maxHealth = 100.0f;
-		currValue = pVeh->m_pParentEntity->health;
+		const auto* hull = pVeh->m_pParentEntity;
+		maxHealth = hull->client ? hull->client->ps.stats[STAT_MAX_HEALTH] : 0;
+		if ( maxHealth <= 0 )
+		{
+			maxHealth = pVeh->m_pVehicleInfo->armor;
+		}
+		currValue = hull->health;
 	}
 	else //normal vehicle
 	{
@@ -823,12 +833,18 @@ static void CG_DrawVehicleSpeed( const centity_t *cent, const Vehicle_t *pVeh, c
 
 }
 
-static void CG_DrawVehicleArmor( const centity_t *cent, const Vehicle_t *pVeh )
+static void CG_DrawVehicleShields( const Vehicle_t *pVeh )
 {
+	const int maxShields = pVeh->m_pVehicleInfo->shields;
+	if ( maxShields <= 0 )
+	{
+		return;
+	}
+
 	int xPos,yPos,width,height,i;
 	qhandle_t	background;
 	char itemName[64];
-	float inc, currValue,maxArmor;
+	float currValue = pVeh->m_iShields;
 	vec4_t	color,calcColor;
 
 	if (cgi_UI_GetMenuItemInfo(
@@ -845,13 +861,7 @@ static void CG_DrawVehicleArmor( const centity_t *cent, const Vehicle_t *pVeh )
 		CG_DrawPic( xPos, yPos, width, height, background );
 	}
 
-	maxArmor = pVeh->m_iArmor;
-	currValue = pVeh->m_pVehicleInfo->armor;
-
-	// Print all the tics of the shield graphic
-	// Look at the amount of health left and show only as much of the graphic as there is health.
-	// Use alpha to fade out partial section of health
-	inc = (float) maxArmor / MAX_VHUD_ARMOR_TICS;
+	const float inc = float(maxShields) / MAX_VHUD_ARMOR_TICS;
 	for (i=1;i<=MAX_VHUD_ARMOR_TICS;i++)
 	{
 		Com_sprintf( itemName, sizeof(itemName), "armor_tic%d",	i );
@@ -1111,11 +1121,11 @@ static void CG_DrawVehicleHud( const centity_t *cent, const Vehicle_t *pVeh )
 		CG_DrawPic( xPos, yPos, width, height, background );
 	}
 
-	CG_DrawVehicleSheild( cent, pVeh );
+	CG_DrawVehicleHull( pVeh );
 
 	CG_DrawVehicleSpeed( cent, pVeh, "swoopvehiclehud" );
 
-	CG_DrawVehicleArmor( cent, pVeh );
+	CG_DrawVehicleShields( pVeh );
 
 	CG_DrawVehicleAmmo( cent, pVeh );
 
@@ -1168,7 +1178,7 @@ static void CG_DrawTauntaunHud( const centity_t *cent, const Vehicle_t *pVeh )
 		CG_DrawPic( xPos, yPos, width, height, background );
 	}
 
-	CG_DrawVehicleSheild( cent, pVeh );
+	CG_DrawVehicleHull( pVeh );
 
 	CG_DrawVehicleSpeed( cent, pVeh, "tauntaunhud" );
 
@@ -1779,7 +1789,7 @@ static void CG_DrawSimpleForcePower( const centity_t *cent )
 	char		num[16] = { 0 };
 	qboolean	flash = qfalse;
 
-	if ( !cent->gent || !cent->gent->client->ps.forcePowersKnown )
+	if ( !cent->gent || !jar::enlightenment::Known(cent->gent->client->ps) )
 	{
 		return;
 	}
@@ -2541,7 +2551,7 @@ CROSSHAIR
 CG_DrawCrosshair
 =================
 */
-static void CG_DrawCrosshair( vec3_t worldPoint )
+static void CG_DrawCrosshair( vec3_t worldPoint,int targetNum )
 {
 	float		w, h;
 	qhandle_t	hShader;
@@ -2770,6 +2780,17 @@ static void CG_DrawCrosshair( vec3_t worldPoint )
 		cgi_R_DrawStretchPic( x + cg.refdef.x + 0.5 * (640 - w),
 			y + cg.refdef.y + 0.5 * (480 - h),
 			w, h, 0, 0, 1, 1, hShader );
+		if ( targetNum>0&&targetNum<ENTITYNUM_WORLD )
+		{
+			auto& target=cg_entities[targetNum];
+			if ( target.gent&&target.gent->health>0&&target.gent->max_health>0&&
+			     G_SiegeKorribanRancor(*target.gent)&&!target.gent->client->ps.powerups[PW_CLOAKED]&&
+			     !(cgi_CM_PointContents(worldPoint,0)&CONTENTS_FOG) )
+			{
+				cgi_R_SetColor(nullptr);
+				CG_DrawHealthBar(&target,x+cg.refdef.x+320,y+cg.refdef.y+240+h*.5f+8,50,5);
+			}
+		}
 	}
 
 	if ( cg.forceCrosshairStartTime && cg_crosshairForceHint.integer ) // drawing extra bits
@@ -2929,11 +2950,21 @@ static void CG_ScanForCrosshairEntity( qboolean scanAll )
 	int			content;
 	int			ignoreEnt = cg.snap->ps.clientNum;
 	Vehicle_t *pVeh = NULL;
+	const bool physgunAim = cg.weaponSelect == WP_PHYSGUN && G_JAR_WorkshopToolHint();
 
 	//FIXME: debounce this to about 10fps?
 
 	cg_forceCrosshair = qfalse;
-	if ( cg_entities[0].gent && cg_entities[0].gent->client ) // <-Mike said it should always do this   //if (cg_crosshairForceHint.integer &&
+	if (physgunAim)
+	{
+		vec3_t forward;
+		G_JAR_WorkshopViewRay(start,forward);
+		VectorMA(start,JAR_TOOL_AIM_RANGE,forward,end);
+		gi.trace(&trace,start,nullptr,nullptr,end,ignoreEnt,MASK_SHOT|CONTENTS_ITEM,G2_NOCOLLIDE,0);
+		if (trace.startsolid || trace.allsolid) trace.entityNum = ENTITYNUM_NONE;
+		else if (trace.entityNum < ENTITYNUM_WORLD) traceEnt = &g_entities[trace.entityNum];
+	}
+	else if ( cg_entities[0].gent && cg_entities[0].gent->client ) // <-Mike said it should always do this   //if (cg_crosshairForceHint.integer &&
 	{//try to check for force-affectable stuff first
 		vec3_t d_f, d_rt, d_up;
 
@@ -2963,7 +2994,7 @@ static void CG_ScanForCrosshairEntity( qboolean scanAll )
 				// Check for mind trickable-guys
 				if ( traceEnt->client )
 				{//is a client
-					if ( cg_entities[0].gent->client->ps.forcePowerLevel[FP_TELEPATHY] && traceEnt->health > 0 && VALIDSTRING(traceEnt->behaviorSet[BSET_MINDTRICK]) )
+					if ( jar::enlightenment::Rank(cg_entities[0].gent->client->ps,FP_TELEPATHY) && traceEnt->health > 0 && VALIDSTRING(traceEnt->behaviorSet[BSET_MINDTRICK]) )
 					{//I have the ability to mind-trick and he is alive and he has a mind trick script
 						//NOTE: no need to check range since it's always 2048
 						cg_forceCrosshair = qtrue;
@@ -2976,16 +3007,16 @@ static void CG_ScanForCrosshairEntity( qboolean scanAll )
 					{//it's a func_door
 						if ( traceEnt->spawnflags & 2/*MOVER_FORCE_ACTIVATE*/ )
 						{//it's force-usable
-							if ( cg_entities[0].gent->client->ps.forcePowerLevel[FP_PULL] || cg_entities[0].gent->client->ps.forcePowerLevel[FP_PUSH] )
+							if ( jar::enlightenment::Rank(cg_entities[0].gent->client->ps,FP_PULL) || jar::enlightenment::Rank(cg_entities[0].gent->client->ps,FP_PUSH) )
 							{//player has push or pull
 								float maxRange;
-								if ( cg_entities[0].gent->client->ps.forcePowerLevel[FP_PULL] > cg_entities[0].gent->client->ps.forcePowerLevel[FP_PUSH] )
+								if ( jar::enlightenment::Rank(cg_entities[0].gent->client->ps,FP_PULL) > jar::enlightenment::Rank(cg_entities[0].gent->client->ps,FP_PUSH) )
 								{//use the better range
-									maxRange = forcePushPullRadius[cg_entities[0].gent->client->ps.forcePowerLevel[FP_PULL]];
+									maxRange = forcePushPullRadius[jar::enlightenment::Rank(cg_entities[0].gent->client->ps,FP_PULL)];
 								}
 								else
 								{//use the better range
-									maxRange = forcePushPullRadius[cg_entities[0].gent->client->ps.forcePowerLevel[FP_PUSH]];
+									maxRange = forcePushPullRadius[jar::enlightenment::Rank(cg_entities[0].gent->client->ps,FP_PUSH)];
 								}
 								if ( maxRange >= trace.fraction * 2048 )
 								{//actually close enough to use one of our force powers on it
@@ -2999,13 +3030,13 @@ static void CG_ScanForCrosshairEntity( qboolean scanAll )
 						if ( (traceEnt->spawnflags & 1/*F_PUSH*/) && (traceEnt->spawnflags & 2/*F_PULL*/) )
 						{//push or pullable
 							float maxRange;
-							if ( cg_entities[0].gent->client->ps.forcePowerLevel[FP_PULL] > cg_entities[0].gent->client->ps.forcePowerLevel[FP_PUSH] )
+							if ( jar::enlightenment::Rank(cg_entities[0].gent->client->ps,FP_PULL) > jar::enlightenment::Rank(cg_entities[0].gent->client->ps,FP_PUSH) )
 							{//use the better range
-								maxRange = forcePushPullRadius[cg_entities[0].gent->client->ps.forcePowerLevel[FP_PULL]];
+								maxRange = forcePushPullRadius[jar::enlightenment::Rank(cg_entities[0].gent->client->ps,FP_PULL)];
 							}
 							else
 							{//use the better range
-								maxRange = forcePushPullRadius[cg_entities[0].gent->client->ps.forcePowerLevel[FP_PUSH]];
+								maxRange = forcePushPullRadius[jar::enlightenment::Rank(cg_entities[0].gent->client->ps,FP_PUSH)];
 							}
 							if ( maxRange >= trace.fraction * 2048 )
 							{//actually close enough to use one of our force powers on it
@@ -3014,14 +3045,14 @@ static void CG_ScanForCrosshairEntity( qboolean scanAll )
 						}
 						else if ( (traceEnt->spawnflags & 1/*F_PUSH*/) )
 						{//pushable only
-							if ( forcePushPullRadius[cg_entities[0].gent->client->ps.forcePowerLevel[FP_PUSH]] >= trace.fraction * 2048 )
+							if ( forcePushPullRadius[jar::enlightenment::Rank(cg_entities[0].gent->client->ps,FP_PUSH)] >= trace.fraction * 2048 )
 							{//actually close enough to use force push on it
 								cg_forceCrosshair = qtrue;
 							}
 						}
 						else if ( (traceEnt->spawnflags & 2/*F_PULL*/) )
 						{//pullable only
-							if ( forcePushPullRadius[cg_entities[0].gent->client->ps.forcePowerLevel[FP_PULL]] >= trace.fraction * 2048 )
+							if ( forcePushPullRadius[jar::enlightenment::Rank(cg_entities[0].gent->client->ps,FP_PULL)] >= trace.fraction * 2048 )
 							{//actually close enough to use force pull on it
 								cg_forceCrosshair = qtrue;
 							}
@@ -3031,7 +3062,7 @@ static void CG_ScanForCrosshairEntity( qboolean scanAll )
 			}
 		}
 	}
-	if ( !cg_forceCrosshair )
+	if ( !physgunAim && !cg_forceCrosshair )
 	{
 		if ( cg_dynamicCrosshair.integer )
 		{//100% accurate
@@ -3108,7 +3139,7 @@ static void CG_ScanForCrosshairEntity( qboolean scanAll )
 	}
 */
 	//draw crosshair at endpoint
-	CG_DrawCrosshair( trace.endpos );
+	CG_DrawCrosshair( trace.endpos,trace.entityNum );
 
 	g_crosshairEntNum = trace.entityNum;
 	g_crosshairEntDist = 4096*trace.fraction;
@@ -3480,6 +3511,7 @@ CG_DrawAmmoWarning
 =================
 */
 static void CG_DrawAmmoWarning( void ) {
+    if(G_JAR_WorkshopToolHint())return; // Tools never require ammo.
 	char text[1024]={0};
 	int			w;
 
@@ -3906,7 +3938,6 @@ static void CG_Draw2DScreenTints( void )
 CG_Draw2D
 =================
 */
-extern void CG_SaberClashFlare( void );
 static void CG_Draw2D( void )
 {
 	char	text[1024]={0};
@@ -3931,6 +3962,14 @@ static void CG_Draw2D( void )
 	}
 
 	CG_Draw2DScreenTints();
+ const char*toolHint=G_JAR_WorkshopToolHint();
+ const bool undoPopup=gi.cvar("jar_undoPopupUntil","0",0)->integer>cg.time;
+ if(const char*hint=undoPopup?"UNDO":toolHint){
+  vec4_t panel={.08f,.08f,.08f,.86f},color={.95f,.95f,.95f,1};CG_FillRect(8,8,530,46,panel);
+  cgi_R_Font_DrawString(16,14,hint,color,cgs.media.qhFontSmall,-1,.56f);
+  const char*status=gi.cvar(undoPopup?"jar_undoPopupStatus":"jar_workshopStatus","",0)->string;
+  char line[100];Q_strncpyz(line,status,sizeof(line));cgi_R_Font_DrawString(16,34,line,color,cgs.media.qhFontSmall,-1,.5f);
+ }
 
 	//end credits
 	if (cg_endcredits.integer)
@@ -3960,8 +3999,7 @@ static void CG_Draw2D( void )
 	CG_DrawCaptionText();
 
 	if ( in_camera )
-	{//still draw the saber clash flare, but nothing else
-		CG_SaberClashFlare();
+	{ // Cinematic captions above remain visible; the clash overlay is removed.
 		return;
 	}
 
@@ -4021,7 +4059,6 @@ static void CG_Draw2D( void )
 
 		CG_UseIcon();
 	}
-	CG_SaberClashFlare();
 
 	float y = 0;
 	if (cg_drawSnapshot.integer) {
@@ -4292,6 +4329,11 @@ void CG_DrawActive( stereoFrame_t stereoView ) {
 		VectorCopy( baseOrg, cg.refdef.vieworg );
 	}
 
+    // Live scene-only brightness before the HUD. Uses each renderer's existing
+    // blended 2D path; no hardware gamma, texture rebuild or video restart.
+    vec4_t brightnessColor;
+    if (jar::SceneBrightnessOverlay(jar_sceneBrightness.value,brightnessColor))
+        CG_FillRect(0,0,SCREEN_WIDTH,SCREEN_HEIGHT,brightnessColor);
 	// draw status bar and other floating elements
 	CG_Draw2D();
 

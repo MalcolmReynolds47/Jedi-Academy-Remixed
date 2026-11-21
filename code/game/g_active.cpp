@@ -22,13 +22,24 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "g_local.h"
+#include "g_randomizer.h"
+#include "g_workshop.h"
+#include "g_contact_trigger.h"
+#include "g_sandbox_push.h"
+#include "g_sandbox_teleport.h"
+#include "g_subbsp_ownership.h"
+#include "g_actor_lifetime.h"
+#include "g_space.h"
+#include "g_local.h"
 #include "g_functions.h"
 #include "../cgame/cg_local.h"
 #include "Q3_Interface.h"
 #include "wp_saber.h"
 #include "g_vehicles.h"
+#include "g_sandbox_vehicle_transport.h"
 #include "b_local.h"
 #include "g_navigator.h"
+#include "qcommon/jar_force_enlightenment.h"
 
 #ifdef _DEBUG
 	#include <float.h>
@@ -42,6 +53,7 @@ extern qboolean Q3_TaskIDPending( gentity_t *ent, taskID_t taskType );
 extern void G_MaintainFormations(gentity_t *self);
 extern void BG_CalculateOffsetAngles( gentity_t *ent, usercmd_t *ucmd );//in bg_pangles.cpp
 extern void TryUse( gentity_t *ent );
+extern bool G_TryUseVehicleTransportMarker(gentity_t& rider);
 extern void ChangeWeapon( gentity_t *ent, int newWeapon );
 extern void ScoreBoardReset(void);
 extern void WP_SaberReflectCheck( gentity_t *self, usercmd_t *ucmd  );
@@ -625,7 +637,7 @@ void P_WorldEffects( gentity_t *ent ) {
 		gi.WE_IsOutsideCausingPain(ent->currentOrigin) &&
 		TIMER_Done(ent, "AcidPainDebounce"))
 	{
-		if (ent->NPC && ent->client && (ent->client->ps.forcePowersKnown&(1<< FP_PROTECT)))
+		if (ent->NPC && ent->client && (jar::enlightenment::Known(ent->client->ps)&(1<< FP_PROTECT)))
 		{
 			if (!(ent->client->ps.forcePowersActive & (1<<FP_PROTECT)))
 			{
@@ -651,38 +663,7 @@ void P_WorldEffects( gentity_t *ent ) {
 		}
 	}
 
-	//in space?
-	if (ent->client->inSpaceIndex && ent->client->inSpaceIndex != ENTITYNUM_NONE)
-	{ //we're in space, check for suffocating and for exiting
-        gentity_t *spacetrigger = &g_entities[ent->client->inSpaceIndex];
-
-		if (!spacetrigger->inuse ||
-			!G_PointInBounds(ent->client->ps.origin, spacetrigger->absmin, spacetrigger->absmax))
-		{ //no longer in space then I suppose
-            ent->client->inSpaceIndex = 0;
-		}
-		else
-		{ //check for suffocation
-            if (ent->client->inSpaceSuffocation < level.time)
-			{ //suffocate!
-				if (ent->health > 0)
-				{ //if they're still alive..
-					G_Damage(ent, spacetrigger, spacetrigger, NULL, ent->client->ps.origin, Q_irand(20, 40), DAMAGE_NO_ARMOR, MOD_SUICIDE);
-
-					if (ent->health > 0)
-					{ //did that last one kill them?
-						//play the choking sound
-						G_SoundOnEnt( ent, CHAN_VOICE, va( "*choke%d.wav", Q_irand( 1, 3 ) ) );
-
-						//make them grasp their throat
-						NPC_SetAnim( ent, SETANIM_BOTH, BOTH_CHOKE1, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
-					}
-				}
-
-				ent->client->inSpaceSuffocation = level.time + Q_irand(1000, 2000);
-			}
-		}
-	}
+	G_SpaceEffects(ent);
 
 
 }
@@ -707,609 +688,7 @@ void G_SetClientSound( gentity_t *ent ) {
 //==============================================================
 extern void G_Knockdown( gentity_t *self, gentity_t *attacker, const vec3_t pushDir, float strength, qboolean breakSaberLock );
 extern void G_StartMatrixEffect( gentity_t *ent, int meFlags = 0, int length = 1000, float timeScale = 0.0f, int spinTime = 0 );
-void G_GetMassAndVelocityForEnt( gentity_t *ent, float *mass, vec3_t velocity )
-{
-	if( ent->client )
-	{
-		VectorCopy( ent->client->ps.velocity, velocity );
-		*mass = ent->mass;
-	}
-	else
-	{
-		VectorCopy( ent->s.pos.trDelta, velocity );
-		if ( ent->s.pos.trType == TR_GRAVITY )
-		{
-			velocity[2] -= 0.25f * g_gravity->value;
-		}
-		if( !ent->mass )
-		{
-			*mass = 1;
-		}
-		else if ( ent->mass <= 10 )
-		{
-			*mass = 10;
-		}
-		else
-		{
-			*mass = ent->mass;///10;
-		}
-	}
-}
-
-void DoImpact( gentity_t *self, gentity_t *other, qboolean damageSelf, trace_t *trace )
-{
-	float magnitude, my_mass;
-	bool	thrown = false;
-	vec3_t	velocity;
-
-	Vehicle_t *pSelfVeh = NULL;
-	Vehicle_t *pOtherVeh = NULL;
-
-	// See if either of these guys are vehicles, if so, keep a pointer to the vehicle npc.
-	if ( self->client && self->client->NPC_class == CLASS_VEHICLE )
-	{
-		pSelfVeh = self->m_pVehicle;
-	}
-	if ( other->client && other->client->NPC_class == CLASS_VEHICLE )
-	{
-		pOtherVeh = other->m_pVehicle;
-	}
-
-	G_GetMassAndVelocityForEnt( self, &my_mass, velocity );
-
-	if ( pSelfVeh )
-	{
-		magnitude = VectorLength( velocity ) * pSelfVeh->m_pVehicleInfo->mass / 50.0f;
-	}
-	else
-	{
-		magnitude = VectorLength( velocity ) * my_mass / 50;
-	}
-
-	//if vehicle hit another vehicle, factor in their data, too
-	// TODO: Bring this back in later on, it's not critical right now...
-/*	if ( self->client && self->client->NPC_class == CLASS_VEHICLE )
-	{//we're in a vehicle
-		if ( other->client && other->client->ps.vehicleIndex != VEHICLE_NONE )
-		{//they're in a vehicle
-			float	o_mass;
-			vec3_t	o_velocity;
-
-			G_GetMassAndVelocityForEnt( other, &o_mass, o_velocity );
-
-			//now combine
-			if ( DotProduct( o_velocity, velocity ) < 0 )
-			{//were heading towards each other, this is going to be a STRONG impact...
-				vec3_t velocityMod;
-
-				//incorportate mass into each velocity to get directional force
-				VectorScale( velocity, my_mass/50, velocityMod );
-				VectorScale( o_velocity, o_mass/50, o_velocity );
-				//figure out the overall magnitude of those 2 directed forces impacting
-				magnitude = (DotProduct( o_velocity, velocityMod ) * -1.0f)/500.0f;
-			}
-		}
-	}*/
-
-
-
-	// Check For Vehicle On Vehicle Impact (Ramming)
-	//-----------------------------------------------
-	if ( pSelfVeh &&
-		 pSelfVeh->m_pVehicleInfo->type!=VH_ANIMAL &&
-		 pOtherVeh &&
-		 pSelfVeh->m_pVehicleInfo==pOtherVeh->m_pVehicleInfo
-		)
-	{
-		gentity_t*	attacker	= self;
-		Vehicle_t*	attackerVeh = pSelfVeh;
-		gentity_t*	victim		= other;
-		Vehicle_t*	victimVeh	= pOtherVeh;
-
-		// Is The Attacker Actually Not Attacking?
-		//-----------------------------------------
-		if (!(attackerVeh->m_ulFlags&VEH_STRAFERAM))
-		{
-			// Ok, So Is The Victim Actually Attacking?
-			//------------------------------------------
-			if (victimVeh->m_ulFlags&VEH_STRAFERAM)
-			{
-				// Ah, Ok.  Swap Who Is The Attacker Then
-				//----------------------------------------
-				attacker	= other;
-				attackerVeh = pOtherVeh;
-				victim		= self;
-				victimVeh	= pSelfVeh;
-			}
-			else
-			{
-				// No Attackers, So Stop
-				//-----------------------
-				attacker = victim = 0;
-			}
-		}
-
-		if (attacker && victim)
-		{
-		//	float		maxMoveSpeed	= pSelfVeh->m_pVehicleInfo->speedMax;
-		//	float		minLockingSpeed = maxMoveSpeed * 0.75;
-
-			vec3_t		attackerMoveDir;
-
-			vec3_t		victimMoveDir;
-			vec3_t		victimTowardAttacker;
-			vec3_t		victimRight;
-			float		victimRightAccuracy;
-
-			VectorCopy(attacker->client->ps.velocity,	attackerMoveDir);
-			VectorCopy(victim->client->ps.velocity,		victimMoveDir);
-
-			AngleVectors(victim->currentAngles, 0, victimRight, 0);
-
-			VectorSubtract(victim->currentOrigin, attacker->currentOrigin, victimTowardAttacker);
-			/*victimTowardAttackerDistance = */VectorNormalize(victimTowardAttacker);
-
-			victimRightAccuracy = DotProduct(victimTowardAttacker, victimRight);
-
-			if (
-				fabsf(victimRightAccuracy)>0.25 						// Must Be Exactly Right Or Left
-			//	&& victimTowardAttackerDistance<100.0f 					// Must Be Close Enough
-			//	&& attackerMoveSpeed>minLockingSpeed					// Must be moving fast enough
-			//	&& fabsf(attackerMoveSpeed - victimMoveSpeed)<100	 	// Both must be going about the same speed
-				)
-			{
-				thrown = true;
-
-				vec3_t	victimRight;
-				vec3_t	victimAngles;
-				VectorCopy(victim->currentAngles, victimAngles);
-				victimAngles[2] = 0;
-				AngleVectors(victimAngles, 0, victimRight, 0);
-
-				if (attackerVeh->m_fStrafeTime<0)
-				{
-					VectorScale(victimRight, -1.0f, victimRight);
-				}
-				if ( !(victim->flags&FL_NO_KNOCKBACK) )
-				{
-					G_Throw(victim, victimRight, 250);
-				}
-//				if (false)
-//				{
-//					VectorMA(victim->currentOrigin, 250.0f, victimRight, victimRight);
-//					CG_DrawEdge(victim->currentOrigin, victimRight, EDGE_IMPACT_POSSIBLE);
-//				}
-				if (victimVeh->m_pVehicleInfo->iImpactFX)
-				{
-					G_PlayEffect(victimVeh->m_pVehicleInfo->iImpactFX, victim->currentOrigin, trace->plane.normal );
-				}
-			}
-		}
-	}
-
-
- 	if ( !self->client || self->client->ps.lastOnGround+300<level.time || ( self->client->ps.lastOnGround+100 < level.time ) )
-	{
-		vec3_t dir1, dir2;
-		float force = 0, dot;
-		qboolean vehicleHitOwner = qfalse;
-
-		if ( other->material == MAT_GLASS || other->material == MAT_GLASS_METAL || other->material == MAT_GRATE1 || ((other->svFlags&SVF_BBRUSH)&&(other->spawnflags&8/*THIN*/)) )//(other->absmax[0]-other->absmin[0]<=32||other->absmax[1]-other->absmin[1]<=32||other->absmax[2]-other->absmin[2]<=32)) )
-		{//glass and thin breakable brushes (axially aligned only, unfortunately) take more impact damage
-			magnitude *= 2;
-		}
-
-		// See if the vehicle has crashed into the ground.
-		if ( pSelfVeh && pSelfVeh->m_pVehicleInfo->type!=VH_ANIMAL)
-		{
- 			if ((magnitude >= 80) && (self->painDebounceTime < level.time))
-			{
-
-				// Setup Some Variables
-				//----------------------
-				vec3_t	vehFwd;
-				VectorCopy(velocity, vehFwd);
-				float	vehSpeed					= VectorNormalize(vehFwd);
-				float	vehToughnessAgainstOther	= pSelfVeh->m_pVehicleInfo->toughness;
-				float	vehHitPercent				= fabsf(DotProduct(vehFwd, trace->plane.normal));
-				int		vehDFlags					= DAMAGE_NO_ARMOR;
-				bool	vehPilotedByPlayer			= (pSelfVeh->m_pPilot && pSelfVeh->m_pPilot->s.number<MAX_CLIENTS);
-				bool	vehInTurbo					= (pSelfVeh->m_iTurboTime>level.time);
-
-				self->painDebounceTime				= level.time + 200;
-
-
-				// Modify Magnitude By Hit Percent And Toughness Against Other
-				//-------------------------------------------------------------
-				if (pSelfVeh->m_ulFlags & VEH_OUTOFCONTROL)
-				{
-					vehToughnessAgainstOther *= 0.01f;		// If Out Of Control, No Damage Resistance
-				}
-				else
-				{
- 					if (vehPilotedByPlayer)
-					{
-						vehToughnessAgainstOther *= 1.5f;
-					}
-					if (other && other->client)
-					{
-						vehToughnessAgainstOther *= 15.0f;	// Very Tough against other clients (NPCS, Player, etc)
-					}
-				}
-				if (vehToughnessAgainstOther>0.0f)
-				{
-					magnitude *= (vehHitPercent / vehToughnessAgainstOther);
-				}
-				else
-				{
-					magnitude *= vehHitPercent;
-				}
-
-
-				// If We Hit Architecture
-				//------------------------
-				if (!other || !other->client)
-				{
-					// Turbo Hurts
-					//-------------
-					if (vehInTurbo)
-					{
-						magnitude *= 5.0f;
-					}
-
-					else if (trace->plane.normal[2]>0.75f && vehHitPercent<0.2f)
-					{
-						magnitude /= 10.0f;
-					}
-
-
-					// If No Pilot, Blow This Thing Now
-					//----------------------------------
-					if (vehHitPercent>0.9f && !pSelfVeh->m_pPilot && vehSpeed>1000.0f)
-					{
-						vehDFlags |= DAMAGE_IMPACT_DIE;
-					}
-
-					// If Out Of Control, And We Hit A Wall Or Landed Or Head On
-					//------------------------------------------------------------
-					if ((pSelfVeh->m_ulFlags&VEH_OUTOFCONTROL) && (vehHitPercent>0.5f || trace->plane.normal[2]<0.5f || velocity[2]<-50.0f))
-					{
-						vehDFlags |= DAMAGE_IMPACT_DIE;
-					}
-
-					// If This Is A Direct Impact (Debounced By 4 Seconds)
-					//-----------------------------------------------------
-					if (vehHitPercent>0.9f && (level.time - self->lastImpact)>2000 && vehSpeed>300.0f)
-					{
-						self->lastImpact = level.time;
-
-						// The Player Has Harder Requirements to Explode
-						//-----------------------------------------------
-						if (vehPilotedByPlayer)
-						{
-							if ((vehHitPercent>0.99f && vehSpeed>1000.0f && !Q_irand(0,30)) ||
-								(vehHitPercent>0.999f && vehInTurbo))
-							{
-								vehDFlags |= DAMAGE_IMPACT_DIE;
-							}
-						}
-						else if (player && G_IsRidingVehicle(player) &&
-							(Distance(self->currentOrigin, player->currentOrigin)<800.0f) &&
-							(vehInTurbo || !Q_irand(0,1) || vehHitPercent>0.999f))
-						{
-							vehDFlags |= DAMAGE_IMPACT_DIE;
-						}
-					}
-
-					// Make Sure He Dies This Time.  I will accept no excuses.
-					//---------------------------------------------------------
-					if (vehDFlags&DAMAGE_IMPACT_DIE)
-					{
-						// If close enough To The PLayer
- 						if (player &&
-							G_IsRidingVehicle(player) &&
-							self->owner &&
-							Distance(self->currentOrigin, player->currentOrigin)<500.0f)
-						{
-				 			player->lastEnemy = self->owner;
-							G_StartMatrixEffect(player, MEF_LOOK_AT_ENEMY|MEF_NO_RANGEVAR|MEF_NO_VERTBOB|MEF_NO_SPIN, 1000);
-						}
-						magnitude = 100000.0f;
-					}
-				}
-
-				if (magnitude>10.0f)
-				{
-					// Play The Impact Effect
-					//------------------------
-					if (pSelfVeh->m_pVehicleInfo->iImpactFX && vehSpeed>100.0f)
-					{
-						G_PlayEffect( pSelfVeh->m_pVehicleInfo->iImpactFX, self->currentOrigin, trace->plane.normal );
-					}
-
-					// Set The Crashing Flag And Pain Debounce Time
-					//----------------------------------------------
-					pSelfVeh->m_ulFlags		|= VEH_CRASHING;
-				}
-
-				G_Damage( self, player, player, NULL, self->currentOrigin, magnitude, vehDFlags, MOD_FALLING );//FIXME: MOD_IMPACT
-			}
-
-			if ( self->owner == other || self->activator == other )
-			{//hit owner/activator
-				if ( self->m_pVehicle && !self->m_pVehicle->m_pVehicleInfo->Inhabited( self->m_pVehicle ) )
-				{//empty swoop
-					if ( self->client->respawnTime - level.time < 1000 )
-					{//just spawned in a second ago
-						//don't actually damage or throw him...
-						vehicleHitOwner = qtrue;
-					}
-				}
-			}
-			//if 2 vehicles on same side hit each other, tone it down
-			//NOTE: we do this here because we still want the impact effect
-			if ( pOtherVeh )
-			{
-				if ( self->client->playerTeam == other->client->playerTeam )
-				{
-					magnitude /= 25;
-				}
-			}
-		}
-		else if ( self->client
-			&& (PM_InKnockDown( &self->client->ps )||(self->client->ps.eFlags&EF_FORCE_GRIPPED))
-			&& magnitude >= 120 )
-		{//FORCE-SMACKED into something
-			if ( TIMER_Done( self, "impactEffect" ) )
-			{
-				G_PlayEffect( G_EffectIndex( "env/impact_dustonly" ), trace->endpos, trace->plane.normal );
-				G_Sound( self, G_SoundIndex( va( "sound/weapons/melee/punch%d", Q_irand( 1, 4 ) ) ) );
-				TIMER_Set( self, "impactEffect", 1000 );
-			}
-		}
-
-		//damage them
-		if ( magnitude >= 100 && other->s.number < ENTITYNUM_WORLD )
-		{
-			VectorCopy( velocity, dir1 );
-			VectorNormalize( dir1 );
-			if( VectorCompare( other->currentOrigin, vec3_origin ) )
-			{//a brush with no origin
-				VectorCopy ( dir1, dir2 );
-			}
-			else
-			{
-				VectorSubtract( other->currentOrigin, self->currentOrigin, dir2 );
-				VectorNormalize( dir2 );
-			}
-
-			dot = DotProduct( dir1, dir2 );
-
-			if ( dot >= 0.2 )
-			{
-				force = dot;
-			}
-			else
-			{
-				force = 0;
-			}
-
-			force *= (magnitude/50);
-
-			int cont = gi.pointcontents( other->absmax, other->s.number );
-			if( (cont&CONTENTS_WATER) )
-			{//water absorbs 2/3 velocity
-				force *= 0.33333f;
-			}
-
-			if ( self->NPC && other->s.number == ENTITYNUM_WORLD )
-			{//NPCs take less damage
-				force *= 0.5f;
-			}
-
-			if ( self->s.number >= MAX_CLIENTS && self->client && (PM_InKnockDown( &self->client->ps )||self->client->ps.eFlags&EF_FORCE_GRIPPED) )
-			{//NPC: I was knocked down or being gripped, impact should be harder
-				//FIXME: what if I was just thrown - force pushed/pulled or thrown from a grip?
-				force *= 10;
-			}
-
-			//FIXME: certain NPCs/entities should be TOUGH - like Ion Cannons, AT-STs, Mark1 droids, etc.
-			if ( pOtherVeh )
-			{//if hit another vehicle, take their toughness into account, too
-				force /= pOtherVeh->m_pVehicleInfo->toughness;
-			}
-
-			if( ( (force >= 1 || pSelfVeh) && other->s.number>=MAX_CLIENTS ) || force >= 10)
-			{
-	/*
-				dprint("Damage other (");
-				dprint(loser.classname);
-				dprint("): ");
-				dprint(ftos(force));
-				dprint("\n");
-	*/
-				if ( other->svFlags & SVF_GLASS_BRUSH )
-				{
-					other->splashRadius = (float)(self->maxs[0] - self->mins[0])/4.0f;
-				}
-
-				if ( pSelfVeh )
-				{//if in a vehicle when land on someone, always knockdown, throw, damage
-					if ( !vehicleHitOwner )
-					{//didn't hit owner
-						// If the player was hit don't make the damage so bad...
-						if ( other && other->s.number<MAX_CLIENTS )
-						{
-							force *= 0.5f;
-						}
-						//Hmm, maybe knockdown?
-						if ( !(other->flags&FL_NO_KNOCKBACK) )
-						{
-							G_Throw( other, dir2, force );
-						}
-						G_Knockdown( other, self, dir2, force, qtrue );
-						G_Damage( other, self, self, velocity, self->currentOrigin, force, DAMAGE_NO_ARMOR|DAMAGE_EXTRA_KNOCKBACK, MOD_IMPACT );
-					}
-				}
-				else if ( self->forcePushTime > level.time - 1000//was force pushed/pulled in the last 1600 milliseconds
-					&& self->forcePuller == other->s.number )//hit the person who pushed/pulled me
-				{//ignore the impact
-				}
-				else if ( other->takedamage )
-				{
-					if ( !self->client || other->s.number<MAX_CLIENTS || !other->client )
-					{//aw, fuck it, clients no longer take impact damage from other clients, unless you're the player
-						if ( other->client //he's a client
-							&& self->client //I'm a client
-							&& other->client->ps.forceGripEntityNum == self->s.number )//he's force-gripping me
-						{//don't damage the other guy if he's gripping me
-						}
-						else
-						{
-							G_Damage( other, self, self, velocity, self->currentOrigin, floor(force), DAMAGE_NO_ARMOR, MOD_IMPACT );
-						}
-					}
-					else
-					{
-						GEntity_PainFunc( other, self, self, self->currentOrigin, force, MOD_IMPACT );
-						//Hmm, maybe knockdown?
-						if (!thrown)
-						{
-							if ( !(other->flags&FL_NO_KNOCKBACK) )
-							{
-								G_Throw( other, dir2, force );
-							}
-						}
-					}
-					if ( other->health > 0 )
-					{//still alive?
-						//TODO: if someone was thrown through the air (in a knockdown or being gripped)
-						//		and they hit me hard enough, knock me down
-						if ( other->client )
-						{
-							if ( self->client )
-							{
-                                if ( PM_InKnockDown( &self->client->ps ) || (self->client->ps.eFlags&EF_FORCE_GRIPPED) )
-								{
-									G_Knockdown( other, self, dir2, Q_irand( 200, 400 ), qtrue );
-								}
-							}
-							else if ( self->forcePuller != ENTITYNUM_NONE
-								&& g_entities[self->forcePuller].client
-								&& self->mass > Q_irand( 50, 100 ) )
-							{
-								G_Knockdown( other, &g_entities[self->forcePuller], dir2, Q_irand( 200, 400 ), qtrue );
-							}
-						}
-					}
-				}
-				else
-				{
-					//Hmm, maybe knockdown?
-					if (!thrown)
-					{
-						if ( !(other->flags&FL_NO_KNOCKBACK) )
-						{
-							G_Throw( other, dir2, force );
-						}
-					}
-				}
-			}
-		}
-
-		if ( damageSelf && self->takedamage && !(self->flags&FL_NO_IMPACT_DMG))
-		{
-			//Now damage me
-			//FIXME: more lenient falling damage, especially for when driving a vehicle
-			if ( pSelfVeh && self->client->ps.forceJumpZStart )
-			{//we were force-jumping
-				if ( self->currentOrigin[2] >= self->client->ps.forceJumpZStart )
-				{//we landed at same height or higher than we landed
-					magnitude = 0;
-				}
-				else
-				{//FIXME: take off some of it, at least?
-					magnitude = (self->client->ps.forceJumpZStart-self->currentOrigin[2])/3;
-				}
-			}
-
-			if( ( magnitude >= 100 + self->health
-					&& self->s.number >= MAX_CLIENTS
-					&& self->s.weapon != WP_SABER )
-				|| self->client->NPC_class == CLASS_VEHICLE
-				|| ( magnitude >= 700 ) )//health here is used to simulate structural integrity
-			{
-				if ( (self->s.weapon == WP_SABER || self->s.number<MAX_CLIENTS || (self->client&&(self->client->NPC_class==CLASS_BOBAFETT||self->client->NPC_class==CLASS_ROCKETTROOPER))) && self->client && self->client->ps.groundEntityNum < ENTITYNUM_NONE && magnitude < 1000 )
-				{//players and jedi take less impact damage
-					//allow for some lenience on high falls
-					magnitude /= 2;
-				}
-				//drop it some (magic number... sigh)
-				magnitude /= 40;
-				//If damage other, subtract half of that damage off of own injury
-				if ( other->bmodel && other->material != MAT_GLASS )
-				{//take off only a little because we broke architecture (not including glass), that should hurt
-					magnitude = magnitude - force/8;
-				}
-				else
-				{//take off half damage we did to it
-					magnitude = magnitude - force/2;
-				}
-
-				if ( pSelfVeh )
-				{
-					//FIXME: if hit another vehicle, take their toughness into
-					//			account, too?  Or should their toughness only matter
-					//			when they hit me?
-					magnitude /= pSelfVeh->m_pVehicleInfo->toughness * 1000.0f;
-					if ( other->bmodel && other->material != MAT_GLASS )
-					{//broke through some architecture, take a good amount of damage
-					}
-					else if ( pOtherVeh )
-					{//they're tougher
-						//magnitude /= 4.0f;//FIXME: get the toughness of other from vehicles.cfg
-					}
-					else
-					{//take some off because of give
-						//NOTE: this covers all other entities and impact with world...
-						//FIXME: certain NPCs/entities should be TOUGH - like Ion Cannons, AT-STs, Mark1 droids, etc.
-						magnitude /= 10.0f;
-					}
-					if ( magnitude < 1.0f )
-					{
-						magnitude = 0;
-					}
-				}
-				if ( magnitude >= 1 )
-				{
-	//FIXME: Put in a thingtype impact sound function
-	/*
-					dprint("Damage self (");
-					dprint(self.classname);
-					dprint("): ");
-					dprint(ftos(magnitude));
-					dprint("\n");
-	*/
-					if ( self->NPC && self->s.weapon == WP_SABER )
-					{//FIXME: for now Jedi take no falling damage, but really they should if pushed off?
-						magnitude = 0;
-					}
-
-					G_Damage( self, NULL, NULL, NULL, self->currentOrigin, magnitude/2, DAMAGE_NO_ARMOR, MOD_FALLING );//FIXME: MOD_IMPACT
-				}
-			}
-		}
-
-		//FIXME: slow my velocity some?
-
-
-
-		/*
-		if(self.flags&FL_ONGROUND)
-			self.last_onground=time;
-		*/
-	}
-}
+#include "g_impact.inc"
 
 /*
 ==============
@@ -1317,6 +696,8 @@ ClientImpacts
 ==============
 */
 void ClientImpacts( gentity_t *ent, pmove_t *pm ) {
+	if (G_JAR_IsActorStandin(ent)) return; // No physical interaction with mover callbacks.
+	const G_ActorLifetime mover(*ent);
 	int		i, j;
 	trace_t	trace;
 	gentity_t	*other;
@@ -1332,15 +713,22 @@ void ClientImpacts( gentity_t *ent, pmove_t *pm ) {
 			continue;	// duplicated
 		}
 		other = &g_entities[ pm->touchents[i] ];
+		const G_ActorLifetime obstacle(*other);
+		G_JAR_WorkshopTouch(ent,other);
+		if (!mover.Current()) return;
+		if (other->s.number!=ENTITYNUM_WORLD && !obstacle.Current()) continue;
 
 		if ( ( ent->NPC != NULL ) && ( ent->e_TouchFunc != touchF_NULL ) ) {	// last check unneccessary
 			GEntity_TouchFunc( ent, other, &trace );
+			if (!mover.Current()) return;
+			if (other->s.number!=ENTITYNUM_WORLD && !obstacle.Current()) continue;
 		}
 
 		if ( other->e_TouchFunc == touchF_NULL ) {	// not needed, but I'll leave it I guess (cache-hit issues)
 			continue;
 		}
 		GEntity_TouchFunc( other, ent, &trace );
+		if (!mover.Current()) return;
 	}
 
 }
@@ -1356,6 +744,7 @@ This version checks at 6 unit steps between last and current origins
 ============
 */
 void	G_TouchTriggersLerped( gentity_t *ent ) {
+	if (G_JAR_IsActorStandin(ent)) return;
 	int			i, num;
 	float		dist, curDist = 0;
 	gentity_t	*touch[MAX_GENTITIES], *hit;
@@ -1395,6 +784,10 @@ void	G_TouchTriggersLerped( gentity_t *ent ) {
 	{
 		return;
 	}
+	G_TeleportRefreshArrival(*ent,ent->lastOrigin);
+	const int teleportBit=ent->client->ps.eFlags&EF_TELEPORT_BIT;
+	const auto teleported=[&]{return ent->inuse&&ent->client&&
+		(ent->client->ps.eFlags&EF_TELEPORT_BIT)!=teleportBit&&G_TeleportArrivalPending(*ent);};
 	memset (touched, qfalse, sizeof(touched) );
 
 	for ( curDist = 0; !done && ent->maxs[1]>0; curDist += (float)ent->maxs[1]/2.0f )
@@ -1408,8 +801,10 @@ void	G_TouchTriggersLerped( gentity_t *ent ) {
 		{
 			VectorMA( ent->lastOrigin, curDist, diff, end );
 		}
-		VectorSubtract( end, range, mins );
-		VectorAdd( end, range, maxs );
+		for (int axis = 0; axis < 3; ++axis) {
+			mins[axis] = end[axis] + std::min(-range[axis], ent->mins[axis]);
+			maxs[axis] = end[axis] + std::max(range[axis], ent->maxs[axis]);
+		}
 
 		num = gi.EntitiesInBox( mins, maxs, touch, MAX_GENTITIES );
 
@@ -1424,6 +819,19 @@ void	G_TouchTriggersLerped( gentity_t *ent ) {
 				continue;
 			}
 			if ( !( hit->contents & CONTENTS_TRIGGER ) ) {
+				continue;
+			}
+			if (G_ContactKind(*hit)) {
+				G_ContactTouchAt(*hit, ent, end);
+				if(teleported())return;
+				continue;
+			}
+			if (G_PushKind(*hit)==jar::push::Volume) {
+				G_PushTouchAt(*hit, ent, end);
+				continue;
+			}
+			if(G_TeleportKind(*hit)==jar::teleport::Volume){
+				if(G_TeleportTouchAt(*hit,ent,end))return;
 				continue;
 			}
 
@@ -1457,6 +865,7 @@ void	G_TouchTriggersLerped( gentity_t *ent ) {
 
 			if ( hit->e_TouchFunc != touchF_NULL ) {
 				GEntity_TouchFunc(hit, ent, &trace);
+				if(teleported())return;
 			}
 
 			//WTF?  Why would a trigger ever fire off the NPC's touch func??!!!
@@ -1478,6 +887,7 @@ Spectators will only interact with teleporters.
 ============
 */
 void	G_TouchTriggers( gentity_t *ent ) {
+	if (G_JAR_IsActorStandin(ent)) return;
 	int			i, num;
 	gentity_t	*touch[MAX_GENTITIES], *hit;
 	trace_t		trace;
@@ -1492,9 +902,15 @@ void	G_TouchTriggers( gentity_t *ent ) {
 	if ( ent->client->ps.stats[STAT_HEALTH] <= 0 ) {
 		return;
 	}
+	G_TeleportRefreshArrival(*ent,ent->client->ps.origin);
+	const int teleportBit=ent->client->ps.eFlags&EF_TELEPORT_BIT;
+	const auto teleported=[&]{return ent->inuse&&ent->client&&
+		(ent->client->ps.eFlags&EF_TELEPORT_BIT)!=teleportBit&&G_TeleportArrivalPending(*ent);};
 
-	VectorSubtract( ent->client->ps.origin, range, mins );
-	VectorAdd( ent->client->ps.origin, range, maxs );
+	for (int axis = 0; axis < 3; ++axis) {
+		mins[axis] = ent->client->ps.origin[axis] + std::min(-range[axis], ent->mins[axis]);
+		maxs[axis] = ent->client->ps.origin[axis] + std::max(range[axis], ent->maxs[axis]);
+	}
 
 	num = gi.EntitiesInBox( mins, maxs, touch, MAX_GENTITIES );
 
@@ -1509,6 +925,19 @@ void	G_TouchTriggers( gentity_t *ent ) {
 			continue;
 		}
 		if ( !( hit->contents & CONTENTS_TRIGGER ) ) {
+			continue;
+		}
+		if (G_ContactKind(*hit)) {
+			G_ContactTouchAt(*hit, ent, ent->client->ps.origin);
+			if(teleported())return;
+			continue;
+		}
+		if (G_PushKind(*hit)==jar::push::Volume) {
+			G_PushTouchAt(*hit, ent, ent->client->ps.origin);
+			continue;
+		}
+		if(G_TeleportKind(*hit)==jar::teleport::Volume){
+			if(G_TeleportTouchAt(*hit,ent,ent->client->ps.origin))return;
 			continue;
 		}
 
@@ -1530,6 +959,7 @@ void	G_TouchTriggers( gentity_t *ent ) {
 
 		if ( hit->e_TouchFunc != touchF_NULL ) {
 			GEntity_TouchFunc(hit, ent, &trace);
+			if(teleported())return;
 		}
 
 		if ( ( ent->NPC != NULL ) && ( ent->e_TouchFunc != touchF_NULL ) ) {
@@ -1694,7 +1124,7 @@ void ClientTimerActions( gentity_t *ent, int msec ) {
 	{
 		client->timeResidual -= 1000;
 
-		if ( ent->s.weapon != WP_NONE )
+		if ( ent->s.weapon > WP_NONE && ent->s.weapon < WP_NATIVE_WEAPON_COUNT )
 		{
 			ent->client->sess.missionStats.weaponUsed[ent->s.weapon]++;
 		}
@@ -1710,8 +1140,11 @@ void ClientTimerActions( gentity_t *ent, int msec ) {
 
 				gentity_t *tent;
 				tent = G_TempEntity( seekerPos, EV_POWERUP_SEEKER_FIRE );
-				VectorCopy( dir, tent->pos1 );
-				tent->s.eventParm = ent->s.number;
+				if (tent)
+				{
+					VectorCopy( dir, tent->pos1 );
+					tent->s.eventParm = ent->s.number;
+				}
 			}
 		}*/
 		if ( (ent->flags&FL_OVERCHARGED_HEALTH) )
@@ -1948,6 +1381,7 @@ void G_ThrownDeathAnimForDeathAnim( gentity_t *hitEnt, vec3_t impactPoint )
 
 gentity_t *G_KickTrace( gentity_t *ent, vec3_t kickDir, float kickDist, vec3_t kickEnd, int kickDamage, float kickPush, qboolean doSoundOnWalls )
 {
+	if (G_JAR_IsActorStandin(ent)) return NULL; // Keep animation timing without its combat effects.
 	vec3_t	traceOrg, traceEnd, kickMins={-2,-2,-2}, kickMaxs={2,2,2};
 	trace_t	trace;
 	gentity_t	*hitEnt = NULL;
@@ -4749,11 +4183,13 @@ usually be a couple times for each server frame on fast clients.
 ==============
 */
 
-extern int		G_FindLocalInterestPoint( gentity_t *self );
+extern int		G_FindLocalInterestPoint( gentity_t *self, lookMode_t& mode );
 extern float	G_CanJumpToEnemyVeh(Vehicle_t *pVeh, const usercmd_t *pUmcd );
 
 void ClientThink_real( gentity_t *ent, usercmd_t *ucmd )
 {
+	if(G_JAR_WorkshopNativeInput(ent,ucmd))return;
+	const G_ActorLifetime actor(*ent);
 	gclient_t	*client;
 	pmove_t		pm;
 	vec3_t		oldOrigin;
@@ -4811,10 +4247,12 @@ extern cvar_t	*g_skippingcin;
 			{//no target
 				//FIXME: what about sightalerts and missiles?
 				newLookTarget = ENTITYNUM_NONE;
-				newLookTarget = G_FindLocalInterestPoint( ent );
+				lookMode_t interestMode=LM_INTEREST;
+				newLookTarget = G_FindLocalInterestPoint( ent, interestMode );
+				if(!ent->inuse||!ent->client)return;
 				if ( newLookTarget != ENTITYNUM_NONE )
 				{//found something of interest
-					ent->client->renderInfo.lookMode = LM_INTEREST;
+					ent->client->renderInfo.lookMode = interestMode;
 				}
 				else
 				{//okay, no interesting things and no enemies, so look for items
@@ -4933,7 +4371,8 @@ extern cvar_t	*g_skippingcin;
 		}
 
 		// Transfer over our driver's commands to us (the vehicle).
-		if ( ent->owner && ent->client && ent->client->NPC_class == CLASS_VEHICLE )
+		if ( ent->client && ent->client->NPC_class == CLASS_VEHICLE &&
+			G_VehicleEntityPointer(ent->owner) && ent->owner->client )
 		{
 			memcpy( ucmd, &ent->owner->client->usercmd, sizeof( usercmd_t ) );
 			ucmd->buttons &= ~BUTTON_USE;//Vehicles NEVER try to use ANYTHING!!!
@@ -4950,7 +4389,11 @@ extern cvar_t	*g_skippingcin;
 			|| pVeh->m_iBoarding!=0
 			|| pVeh->m_pVehicleInfo->type!=VH_ANIMAL) )
 	{
+		// The local client alias is assigned later in ClientThink_real.
+		VectorSubtract(ent->client->ps.velocity,pVeh->jarPushDrift,ent->client->ps.velocity);
 		pVeh->m_pVehicleInfo->Update( pVeh, ucmd );
+		if (!actor.Current()) return;
+		VectorAdd(ent->client->ps.velocity,pVeh->jarPushDrift,ent->client->ps.velocity);
 	}
 	else if ( ent->client )
 	{//this is any client that is not a vehicle (OR: is a vehicle and it not being ridden, is not being boarded, or is a TaunTaun...!
@@ -5049,7 +4492,7 @@ extern cvar_t	*g_skippingcin;
 					}
 					else if ( ent->s.number
 						&& ent->NPC
-						&& ent->client->ps.forcePowerLevel[FP_LEVITATION] > FORCE_LEVEL_0 )//ent->s.weapon == WP_SABER )
+						&& jar::enlightenment::Rank(ent->client->ps,FP_LEVITATION) > FORCE_LEVEL_0 )//ent->s.weapon == WP_SABER )
 					{//force-jumper landed on someone
 						//don't jump off, too many ledges, plus looks weird
 						if ( groundEnt->client->playerTeam != ent->client->playerTeam )
@@ -5211,18 +4654,7 @@ extern cvar_t	*g_skippingcin;
 		client->ps.pm_type = PM_NORMAL;
 	}
 
-	//FIXME: if global gravity changes this should update everyone's personal gravity...
-	if ( !(ent->svFlags & SVF_CUSTOM_GRAVITY) )
-	{
-		if (ent->client->inSpaceIndex)
-		{ //in space, so no gravity...
-			client->ps.gravity = 0.0f;
-		}
-		else
-		{
-			client->ps.gravity = g_gravity->value;
-		}
-	}
+	G_SpaceGravity(ent,g_gravity->value);
 
 	if (!USENEWNAVSYSTEM || ent->s.number==0)
 	{
@@ -5381,6 +4813,8 @@ extern cvar_t	*g_skippingcin;
 
 	//remember your last angles
 	VectorCopy ( ent->client->ps.viewangles, ent->lastAngles );
+	// Tools consume their triggers before native Pmove can spend ammo or emit a shot.
+	G_JAR_WorkshopInput(ent,ucmd);
 	// set up for pmove
 	oldEventSequence = client->ps.eventSequence;
 
@@ -5405,6 +4839,8 @@ extern cvar_t	*g_skippingcin;
 
 	// perform a pmove
 	Pmove( &pm );
+	if (pm.moverRemoved || !actor.Current())
+		return;
 	pm.gent = 0;
 
 	ProcessGenericCmd(ent, pm.cmd.generic_cmd);
@@ -5450,13 +4886,16 @@ extern cvar_t	*g_skippingcin;
 
 	VectorCopyM( ucmd->angles, client->pers.cmd_angles );
 
+	const int teleportBeforeContacts=client->ps.eFlags&EF_TELEPORT_BIT;
 	// execute client events
 	ClientEvents( ent, oldEventSequence );
+	if (!actor.Current()) return;
 
 	if ( pm.useEvent )
 	{
 		//TODO: Use
 		TryUse( ent );
+		if (!actor.Current()) return;
 	}
 
 	// link entity now, after any personal teleporters have been used
@@ -5465,10 +4904,14 @@ extern cvar_t	*g_skippingcin;
 	if ( !ent->client->noclip )
 	{
 		G_TouchTriggersLerped( ent );
+		if (!actor.Current()) return;
 	}
 
 	// touch other objects
-	ClientImpacts( ent, &pm );
+	if((client->ps.eFlags&EF_TELEPORT_BIT)==teleportBeforeContacts||!G_TeleportArrivalPending(*ent)){
+		ClientImpacts(ent,&pm);
+		if (!actor.Current()) return;
+	}
 
 	// swap and latch button actions
 	client->oldbuttons = client->buttons;
@@ -5552,6 +4995,8 @@ void ClientThink( int clientNum, usercmd_t *ucmd ) {
 	usercmd_t sav_ucmd = {0};
 
 	ent = g_entities + clientNum;
+	if (!ent->inuse || !ent->client) return;
+	const G_ActorLifetime actor(*ent);
 
 	if ( ent->s.number<MAX_CLIENTS )
 	{
@@ -5561,7 +5006,7 @@ void ClientThink( int clientNum, usercmd_t *ucmd ) {
 			qboolean freed = qfalse;
 			if ( controlled->NPC
 				&& controlled->NPC->controlledTime
-				&& ent->client->ps.forcePowerLevel[FP_TELEPATHY] > FORCE_LEVEL_3 )
+				&& jar::enlightenment::Rank(ent->client->ps,FP_TELEPATHY) > FORCE_LEVEL_3 )
 			{//An NPC I'm controlling with mind trick
 				if ( controlled->NPC->controlledTime < level.time )
 				{//time's up!
@@ -5630,6 +5075,11 @@ void ClientThink( int clientNum, usercmd_t *ucmd ) {
 
 	// Rider logic.
 	// NOTE: Maybe this should be extracted into a RiderUpdate() within the vehicle.
+	if(ent->s.number==0&&(ucmd->buttons&BUTTON_USE)&&ent->s.m_iVehicleNum){
+		const auto life=G_EntityLifetime(ent);
+		if(G_TryUseVehicleTransportMarker(*ent))ucmd->buttons&=~BUTTON_USE;
+		if(!ent->inuse||!ent->client||G_EntityLifetime(ent)!=life)return;
+	}
 	if ( ( pVeh = G_IsRidingVehicle( ent ) ) != 0  )
 	{
 		// If we're still in the vehicle...
@@ -5668,12 +5118,14 @@ void ClientThink( int clientNum, usercmd_t *ucmd ) {
 	{
 		ClientThink_real( ent, ucmd );
 	}
+	if (!actor.Current()) return;
 
 	// If a vehicle, make sure to attach our driver and passengers here (after we pmove, which is done in Think_Real))
-	if ( ent->client && ent->client->NPC_class == CLASS_VEHICLE )
+	if ( ent->client->NPC_class == CLASS_VEHICLE && ent->m_pVehicle && ent->m_pVehicle->m_pVehicleInfo )
 	{
 		pVeh = ent->m_pVehicle;
 		pVeh->m_pVehicleInfo->AttachRiders( pVeh );
+		if (!actor.Current()) return;
 	}
 
 
@@ -5698,6 +5150,9 @@ void ClientEndPowerUps( gentity_t *ent )
 		return;
 	}
 	// turn off any expired powerups
+	if (ent->client->ps.powerups[PW_FORCE_ENLIGHTENMENT] &&
+	    jar::enlightenment::Deadline(ent->client->ps)<=level.time)
+		WP_EndForceEnlightenment(ent);
 	for ( i = 0 ; i < MAX_POWERUPS ; i++ )
 	{
 		if ( ent->client->ps.powerups[ i ] < level.time )

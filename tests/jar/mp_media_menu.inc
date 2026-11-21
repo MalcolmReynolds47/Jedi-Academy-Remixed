@@ -1,0 +1,10 @@
+static void MediaMenuCases(void){
+ args[1]="81";CG_JAR_ContextDown();args[1]="64";args[2]="0";args[3]="1";args[4]="99";args[5]="1";args[6]="0";args[7]="6783";args[8]="1";args[9]="0";args[10]="80";args[11]=args[12]="0";CG_JAR_Selection();
+ char hex[127];JAR_ControllerHex(jarSpeakerChoices[0],hex);args[1]="99";args[2]="9";args[3]=args[4]=args[5]=args[6]=args[7]=args[8]=args[9]="0";args[10]=hex;args[11]=args[12]="0";CG_JAR_Controller();assert(contextControllerKind==9&&!contextController.active);
+ Click(490,55);CG_JAR_Draw();Click(450,155);ContextType("sound/movers/switches/switch1.mp3");CG_JAR_MenuUp();assert(menu&&menuPinned&&contextEditing);CG_JAR_Key(A_ENTER,qtrue);assert(strstr(request,"jar_property controller_text_"));
+ Click(450,180);assert(!strcmp(request,"jar_property controller_asset_prev 99"));Click(550,180);assert(!strcmp(request,"jar_property controller_asset_next 99"));Click(450,210);assert(!strcmp(request,"jar_property controller_mode 99"));Click(450,294);assert(!strcmp(request,"jar_property activate 99"));
+ args[5]="2";args[12]="1";CG_JAR_Controller();assert(contextController.active);CG_JAR_Draw();Click(450,294);assert(!strcmp(request,"jar_property controller_playing 99"));Click(450,322);assert(!strcmp(request,"jar_property controller_enabled 99"));
+ JAR_ControllerHex(jarEffectChoices[0],hex);args[2]="10";args[3]="500";args[5]="0";CG_JAR_Controller();assert(contextControllerKind==10&&contextController.waitMs==500);CG_JAR_Draw();Click(450,238);ContextType("1200");CG_JAR_Key(A_ENTER,qtrue);assert(!strcmp(request,"jar_property controller_delay_1200 99"));Click(450,266);ContextType("100");CG_JAR_Key(A_ENTER,qtrue);assert(!strcmp(request,"jar_property controller_random_100 99"));
+ args[5]="2";args[12]="0";CG_JAR_Controller();CG_JAR_Draw();Click(450,294);assert(!strcmp(request,"jar_property activate 99"));args[12]="1";CG_JAR_Controller();assert(!contextController.active);args[12]="0";
+ CG_JAR_Key(A_ESCAPE,qtrue);puts("MP sound/effect context: asset editor/pickers, pinning, modes, playing state, intervals, validation and commands passed.");
+}

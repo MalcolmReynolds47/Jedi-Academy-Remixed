@@ -26,6 +26,11 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../cgame/cg_local.h"
 #include "Q3_Interface.h"
 #include "b_local.h"
+#include "g_galak_mech.h"
+#include "g_randomizer.h"
+#include "g_workshop.h"
+#include "g_subbsp_ownership.h"
+#include "g_siege_korriban_actor.h"
 #include "anims.h"
 #include "g_functions.h"
 #include "wp_saber.h"
@@ -240,6 +245,8 @@ void G_ClassSetDontFlee( gentity_t *self )
 extern void	Vehicle_Register(gentity_t *ent);
 extern void RT_FlyStart( gentity_t *self );
 extern void SandCreature_ClearTimers( gentity_t *ent );
+#include "g_npc_seeker_init.inc"
+
 void NPC_SetMiscDefaultData( gentity_t *ent )
 {
 	if ( ent->spawnflags & SFB_CINEMATIC )
@@ -420,21 +427,14 @@ void NPC_SetMiscDefaultData( gentity_t *ent )
 			ent->NPC->stats.walkSpeed = 65;
 		}
 	}
+	if (JAR_NpcInitSeeker(ent))return;
+	if(ent->client->NPC_class==CLASS_GALAKMECH){NPC_GalakMech_Init(ent);return;}
 	//***I'm not sure whether I should leave this as a TEAM_ switch, I think NPC_class may be more appropriate - dmv
 	switch(ent->client->playerTeam)
 	{
 	case TEAM_PLAYER:
 		//ent->flags |= FL_NO_KNOCKBACK;
-		if ( ent->client->NPC_class == CLASS_SEEKER )
-		{
-			ent->NPC->defaultBehavior = BS_DEFAULT;
-			ent->client->ps.gravity = 0;
-			ent->svFlags |= SVF_CUSTOM_GRAVITY;
-			ent->client->moveType = MT_FLYSWIM;
-			ent->count = 30; // SEEKER shot ammo count
-			return;
-		}
-		else if ( ent->client->NPC_class == CLASS_JEDI
+		if ( ent->client->NPC_class == CLASS_JEDI
 			|| ent->client->NPC_class == CLASS_KYLE
 			|| ent->client->NPC_class == CLASS_LUKE )
 		{//good jedi
@@ -925,7 +925,7 @@ void NPC_SetWeapons( gentity_t *ent )
 	int			weapons = NPC_WeaponsForTeam( ent->client->playerTeam, ent->spawnflags, ent->NPC_type );
 
 	ent->client->ps.stats[STAT_WEAPONS] = 0;
-	for ( int curWeap = WP_SABER; curWeap < WP_NUM_WEAPONS; curWeap++ )
+	for ( int curWeap = WP_SABER; curWeap < WP_NATIVE_WEAPON_COUNT; curWeap++ )
 	{
 		if ( (weapons & ( 1 << curWeap )) )
 		{
@@ -984,14 +984,17 @@ void NPC_SetFX_SpawnStates( gentity_t *ent )
 extern qboolean	stop_icarus;
 void NPC_Begin (gentity_t *ent)
 {
+	const auto lifetime=G_EntityLifetime(ent);
+	if(gi.JAR_Log) gi.JAR_Log(1,"npc","begin","entity=%d type=%s time=%d",ent->s.number,ent->NPC_type?ent->NPC_type:"",level.time);
 	vec3_t	spawn_origin, spawn_angles;
 	gclient_t	*client;
 	usercmd_t	ucmd;
 	gentity_t	*spawnPoint = NULL;
+	const bool allowOverlap=G_JAR_WorkshopActorSpawn(*ent);
 
 	memset( &ucmd, 0, sizeof( ucmd ) );
 
-	if ( !(ent->spawnflags & SFB_NOTSOLID) )
+	if ( !allowOverlap && !(ent->spawnflags & SFB_NOTSOLID) )
 	{//No NPCs should telefrag
 		if ( Q_stricmp( ent->NPC_type, "nullDriver") == 0 )
 		{//FIXME: should be a better way to check this
@@ -1213,7 +1216,7 @@ void NPC_Begin (gentity_t *ent)
 		if ( Q_stricmp( ent->NPC_type, "nullDriver") == 0 )
 		{//FIXME: should be a better way to check this
 		}
-		else
+		else if (!allowOverlap)
 		{
 			G_KillBox( ent );
 		}
@@ -1269,6 +1272,8 @@ void NPC_Begin (gentity_t *ent)
 	ent->nextthink = level.time + FRAMETIME + Q_irand(0, 100);
 
 	NPC_SetMiscDefaultData( ent );
+	G_JAR_ApplyNpcAllegiance(ent);
+	G_SiegeKorribanRancorAllegiance(*ent);
 	if ( ent->health <= 0 )
 	{
 		//ORIGINAL ID: health will count down towards max_health
@@ -1287,13 +1292,16 @@ void NPC_Begin (gentity_t *ent)
 	VectorClear( ent->NPC->lastClearOrigin );
 
 	//Run a script if you have one assigned to you
-	if ( G_ActivateBehavior( ent, BSET_SPAWN ) )
+	const bool hasSpawnBehavior=G_ActivateBehavior( ent, BSET_SPAWN )!=qfalse;
+	if(G_EntityLifetime(ent)!=lifetime)return;
+	if ( hasSpawnBehavior )
 	{
 		if( ent->m_iIcarusID != IIcarusInterface::ICARUS_INVALID/*ent->taskManager*/ && !stop_icarus )
 		{
 			IIcarusInterface::GetIcarus()->Update( ent->m_iIcarusID );
 		}
 	}
+	if(G_EntityLifetime(ent)!=lifetime)return;
 
 	VectorCopy( ent->currentOrigin, ent->client->renderInfo.eyePoint );
 
@@ -1310,10 +1318,11 @@ void NPC_Begin (gentity_t *ent)
 	}
 
 	ClientThink( ent->s.number, &ucmd );
+	if(G_EntityLifetime(ent)!=lifetime)return;
 
 	gi.linkentity( ent );
 
-	if ( ent->client->playerTeam == TEAM_ENEMY || ent->client->playerTeam == TEAM_FREE )
+	if ( G_JAR_CountCampaignActor(*ent) && (ent->client->playerTeam == TEAM_ENEMY || ent->client->playerTeam == TEAM_FREE) )
 	{//valid enemy spawned
 		if ( !(ent->spawnflags&SFB_CINEMATIC) && ent->NPC->behaviorState != BS_CINEMATIC )
 		{//not a cinematic enemy
@@ -1478,6 +1487,18 @@ gentity_t *NPC_Spawn_Do( gentity_t *ent, qboolean fullSpawnNow )
 		}
 	}
 
+	newent = G_TrySpawn();
+	gentity_t *tempGoal = newent ? G_TrySpawn() : NULL;
+	if (!newent || !tempGoal)
+	{
+		if (newent) G_FreeEntity(newent);
+		if (ent->spawnflags & NSF_DROP_TO_FLOOR) G_SetOrigin(ent, saveOrg);
+		// Keep the count and trigger intact, retry when temporary pressure clears.
+		ent->e_ThinkFunc = thinkF_NPC_Spawn_Go;
+		ent->nextthink = level.time + 1000;
+		return NULL;
+	}
+
 	//Check the spawner's count
 	if( ent->count != -1 )
 	{
@@ -1488,19 +1509,6 @@ gentity_t *NPC_Spawn_Do( gentity_t *ent, qboolean fullSpawnNow )
 			ent->e_UseFunc = useF_NULL;//never again
 			//will be removed below
 		}
-	}
-
-	newent = G_Spawn();
-
-	if ( newent == NULL )
-	{
-		gi.Printf ( S_COLOR_RED"ERROR: NPC G_Spawn failed\n" );
-
-		if ( ent->spawnflags & NSF_DROP_TO_FLOOR )
-		{
-			G_SetOrigin( ent, saveOrg );
-		}
-		return NULL;
 	}
 
 	newent->client = (gclient_t *)gi.Malloc(sizeof(gclient_t), TAG_G_ALLOC, qtrue);
@@ -1519,7 +1527,7 @@ gentity_t *NPC_Spawn_Do( gentity_t *ent, qboolean fullSpawnNow )
 
 	newent->NPC = (gNPC_t*) gi.Malloc(sizeof(gNPC_t), TAG_G_ALLOC, qtrue);
 
-	newent->NPC->tempGoal = G_Spawn();
+	newent->NPC->tempGoal = tempGoal;
 
 	newent->NPC->tempGoal->classname = "NPC_goal";
 	newent->NPC->tempGoal->owner = newent;
@@ -1555,6 +1563,8 @@ gentity_t *NPC_Spawn_Do( gentity_t *ent, qboolean fullSpawnNow )
 		if ( iVehIndex == -1 )
 		{
 			Com_Printf( S_COLOR_RED"ERROR: Attempting to Spawn an unrecognized Vehicle! - %s\n", newent->NPC_type );
+			G_FreeEntity(newent->NPC->tempGoal);
+			newent->NPC->tempGoal = NULL;
 			G_FreeEntity( newent );
 			if ( ent->spawnflags & NSF_DROP_TO_FLOOR )
 			{
@@ -1591,6 +1601,8 @@ gentity_t *NPC_Spawn_Do( gentity_t *ent, qboolean fullSpawnNow )
 
 			default:
 				Com_Printf( S_COLOR_RED"ERROR: Attempting to Spawn an unrecognized Vehicle Type! - %s\n", newent->NPC_type );
+				G_FreeEntity(newent->NPC->tempGoal);
+				newent->NPC->tempGoal = NULL;
 				G_FreeEntity( newent );
 				if ( ent->spawnflags & NSF_DROP_TO_FLOOR )
 				{
@@ -1649,6 +1661,8 @@ gentity_t *NPC_Spawn_Do( gentity_t *ent, qboolean fullSpawnNow )
 	if ( !NPC_ParseParms( ent->NPC_type, newent ) )
 	{
 		gi.Printf ( S_COLOR_RED "ERROR: Couldn't spawn NPC %s\n", ent->NPC_type );
+		G_FreeEntity(newent->NPC->tempGoal);
+		newent->NPC->tempGoal = NULL;
 		G_FreeEntity( newent );
 		if ( ent->spawnflags & NSF_DROP_TO_FLOOR )
 		{
@@ -1759,6 +1773,10 @@ gentity_t *NPC_Spawn_Do( gentity_t *ent, qboolean fullSpawnNow )
 		newent->nextthink = level.time + FRAMETIME;
 	}
 	NPC_DefaultScriptFlags( newent );
+	G_JAR_ApplyNpcIdentity(ent,newent);
+	if ( G_SiegeKorribanRancorSpawner(*ent) ) newent->s.time2=jar::siegeKorriban::rancorTag;
+	G_JAR_EnrollActor(ent,newent);
+	G_JAR_WorkshopConsoleActor(ent,newent);
 
 	gi.linkentity (newent);
 
@@ -1784,7 +1802,9 @@ gentity_t *NPC_Spawn_Do( gentity_t *ent, qboolean fullSpawnNow )
 	}
 	if ( fullSpawnNow )
 	{
+		const auto lifetime=G_EntityLifetime(newent);
 		NPC_Begin( newent );
+		if(G_EntityLifetime(newent)!=lifetime)return nullptr;
 	}
 	return newent;
 }
@@ -2032,6 +2052,8 @@ void SP_NPC_spawner( gentity_t *self)
 	}
 
 	//We have to load the animation.cfg now because spawnscripts are going to want to set anims and we need to know their length and if they're valid
+	const bool sectionRancor=G_SiegeKorribanRancorSpawner(*self);
+	if ( !sectionRancor ) G_JAR_RandomizeNpcSpawner(self);
 	NPC_PrecacheAnimationCFG( self->NPC_type );
 
 	if ( self->targetname )
@@ -2043,7 +2065,7 @@ void SP_NPC_spawner( gentity_t *self)
 	else
 	{
 		//NOTE: auto-spawners never check for shy spawning
-		if ( spawning )
+		if ( spawning || sectionRancor )
 		{//in entity spawn stage - map starting up
 			self->e_ThinkFunc = thinkF_NPC_Spawn_Go;
 			self->nextthink = level.time + START_TIME_REMOVE_ENTS + 50;
@@ -4083,7 +4105,7 @@ NPC_Spawn_f
 
 static void NPC_Spawn_f(void)
 {
-	gentity_t		*NPCspawner = G_Spawn();
+	gentity_t		*NPCspawner = G_TrySpawn();
 	vec3_t			forward, end;
 	trace_t			trace;
 	qboolean		isVehicle = qfalse;
@@ -4141,6 +4163,7 @@ static void NPC_Spawn_f(void)
 	NPCspawner->delay = 0;
 
 	NPCspawner->wait = 500;
+	G_JAR_WorkshopTrackConsole(NPCspawner);
 
 	//NPCspawner->spawnflags |= SFB_NOTSOLID;
 

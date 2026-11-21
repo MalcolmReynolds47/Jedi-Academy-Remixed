@@ -22,6 +22,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "g_local.h"
+#include "jar_mp_number.h"
 #include "ghoul2/G2.h"
 #include "qcommon/q_shared.h"
 
@@ -1530,6 +1531,17 @@ void EWebPain(gentity_t *self, gentity_t *attacker, int damage)
 	}
 }
 
+static char ewebYawBone[] = "cannon_Yrot";
+static char ewebPitchBone[] = "cannon_Xrot";
+
+static qboolean EWebRigAngle(gentity_t *ent, const char *bone, const vec3_t angles)
+{
+	const int up = POSITIVE_Y, right = NEGATIVE_Z, forward = NEGATIVE_X;
+	ent->s.boneOrient = forward | (right << 3) | (up << 6);
+	return trap->G2API_SetBoneAngles(ent->ghoul2, 0, bone, angles, BONE_ANGLES_POSTMULT,
+		up, right, forward, NULL, 100, level.time);
+}
+
 //special routine for tracking angles between client and server
 void EWeb_SetBoneAngles(gentity_t *ent, char *bone, vec3_t angles)
 {
@@ -1537,7 +1549,6 @@ void EWeb_SetBoneAngles(gentity_t *ent, char *bone, vec3_t angles)
 	int *firstFree = NULL;
 	int i = 0;
 	int boneIndex = G_BoneIndex(bone);
-	int flags, up, right, forward;
 	vec3_t *boneVector = &ent->s.boneAngles1;
 	vec3_t *freeBoneVec = NULL;
 
@@ -1606,29 +1617,11 @@ void EWeb_SetBoneAngles(gentity_t *ent, char *bone, vec3_t angles)
 		return;
 	}
 
-	flags = BONE_ANGLES_POSTMULT;
-	up = POSITIVE_Y;
-	right = NEGATIVE_Z;
-	forward = NEGATIVE_X;
-
-	//first 3 bits is forward, second 3 bits is right, third 3 bits is up
-	ent->s.boneOrient = ((forward)|(right<<3)|(up<<6));
-
-	trap->G2API_SetBoneAngles( ent->ghoul2,
-					0,
-					bone,
-					angles,
-					flags,
-					up,
-					right,
-					forward,
-					NULL,
-					100,
-					level.time );
+	EWebRigAngle(ent, bone, angles);
 }
 
 //start an animation on model_root both server side and client side
-void EWeb_SetBoneAnim(gentity_t *eweb, int startFrame, int endFrame)
+static qboolean EWebRigAnim(gentity_t *eweb, int startFrame, int endFrame)
 {
 	//set info on the entity so it knows to start the anim on the client next snapshot.
 	eweb->s.eFlags |= EF_G2ANIMATING;
@@ -1645,15 +1638,30 @@ void EWeb_SetBoneAnim(gentity_t *eweb, int startFrame, int endFrame)
 
 	//now set the animation on the server ghoul2 instance.
 	assert(eweb->ghoul2);
-	trap->G2API_SetBoneAnim(eweb->ghoul2, 0, "model_root", startFrame, endFrame,
+	return trap->G2API_SetBoneAnim(eweb->ghoul2, 0, "model_root", startFrame, endFrame,
 		(BONE_ANIM_OVERRIDE_FREEZE|BONE_ANIM_BLEND), 1.0f, level.time, -1, 100);
+}
+
+void EWeb_SetBoneAnim(gentity_t *eweb, int startFrame, int endFrame)
+{
+	EWebRigAnim(eweb, startFrame, endFrame);
+}
+
+static qboolean EWebBolt(gentity_t *eweb, int index, int direction, vec3_t point, vec3_t axis)
+{
+	mdxaBone_t matrix;
+	if (!eweb->ghoul2 || index < 0 || !trap->G2API_GetBoltMatrix(eweb->ghoul2, 0, index,
+		&matrix, eweb->s.apos.trBase, eweb->r.currentOrigin, level.time, NULL, eweb->modelScale))
+		return qfalse;
+	BG_GiveMeVectorFromMatrix(&matrix, ORIGIN, point);
+	BG_GiveMeVectorFromMatrix(&matrix, direction, axis);
+	return qtrue;
 }
 
 //fire a shot off
 #define EWEB_MISSILE_DAMAGE			20
 void EWebFire(gentity_t *owner, gentity_t *eweb)
 {
-	mdxaBone_t boltMatrix;
 	gentity_t *missile;
 	vec3_t p, d, bPoint;
 
@@ -1664,9 +1672,8 @@ void EWebFire(gentity_t *owner, gentity_t *eweb)
 	}
 
 	//get the muzzle point
-	trap->G2API_GetBoltMatrix(eweb->ghoul2, 0, eweb->genericValue10, &boltMatrix, eweb->s.apos.trBase, eweb->r.currentOrigin, level.time, NULL, eweb->modelScale);
-	BG_GiveMeVectorFromMatrix(&boltMatrix, ORIGIN, p);
-	BG_GiveMeVectorFromMatrix(&boltMatrix, NEGATIVE_Y, d);
+	if (!EWebBolt(eweb, eweb->genericValue10, NEGATIVE_Y, p, d))
+		return;
 
 	//Start the thing backwards into the bounding box so it can't start inside other solid things
 	VectorMA(p, -16.0f, d, bPoint);
@@ -1693,109 +1700,108 @@ void EWebFire(gentity_t *owner, gentity_t *eweb)
 	G_PlayEffectID(G_EffectIndex("turret/muzzle_flash.efx"), p, d);
 }
 
-//lock the owner into place relative to the cannon pos
+// Use the native orbit, allowing a larger prop hull to push the seat outward.
+static float EWebSeatDistance(gentity_t *owner, gentity_t *eweb, const vec3_t point, const vec3_t direction)
+{
+	float exit = 128.0f;
+	for (int axis = 0; axis < 2; ++axis)
+	{
+		const float delta = direction[axis];
+		if (fabsf(delta) < 0.001f)
+			continue;
+		const float edge = delta > 0 ? eweb->r.maxs[axis] - owner->r.mins[axis] :
+			eweb->r.mins[axis] - owner->r.maxs[axis];
+		exit = fminf(exit, (eweb->r.currentOrigin[axis] + edge - point[axis]) / delta);
+	}
+	return fmaxf(32.0f, exit + 2.0f);
+}
+
+typedef enum {
+	EWEB_SEAT_CLEAR,
+	EWEB_SEAT_PATH_BLOCKED,
+	EWEB_SEAT_FLOOR_BLOCKED
+} ewebSeatResult_t;
+
+static ewebSeatResult_t EWebTraceSeat(gentity_t *owner, gentity_t *eweb, qboolean persistent, vec3_t destination)
+{
+	vec3_t p, d, pDown;
+	trace_t tr;
+	if (!EWebBolt(eweb, eweb->genericValue9, NEGATIVE_X, p, d))
+		return EWEB_SEAT_PATH_BLOCKED;
+	const float offset = persistent ? EWebSeatDistance(owner, eweb, p, d) : 32.0f;
+	VectorMA(p, offset, d, p);
+	p[2] = eweb->r.currentOrigin[2] + 4.0f;
+	trap->Trace(&tr, owner->client->ps.origin, owner->r.mins, owner->r.maxs, p,
+		owner->s.number, MASK_PLAYERSOLID, qfalse, 0, 0);
+	if (tr.startsolid || tr.allsolid || tr.fraction != 1.0f)
+		return EWEB_SEAT_PATH_BLOCKED;
+	VectorCopy(p, pDown);
+	pDown[2] -= 7.0f;
+	trap->Trace(&tr, p, owner->r.mins, owner->r.maxs, pDown, owner->s.number, MASK_PLAYERSOLID, qfalse, 0, 0);
+	if (tr.startsolid || tr.allsolid)
+		return EWEB_SEAT_FLOOR_BLOCKED;
+	VectorCopy(tr.endpos, destination);
+	return EWEB_SEAT_CLEAR;
+}
+
+static void EWebApplySeat(gentity_t *owner, vec3_t destination)
+{
+	vec3_t delta;
+	VectorSubtract(owner->client->ps.origin, destination, delta);
+	if (VectorLength(delta) > 1.0f)
+	{
+		vec3_t angles;
+		vectoangles(delta, angles);
+		const qboolean left = AngleSubtract(owner->client->ps.viewangles[YAW], angles[YAW]) > 0.0f;
+		const int opposite = left ? BOTH_STRAFE_RIGHT1 : BOTH_STRAFE_LEFT1;
+		int flags = SETANIM_FLAG_HOLD;
+		if (owner->client->ps.legsAnim == opposite)
+			flags |= SETANIM_FLAG_OVERRIDE;
+		G_SetAnim(owner, &owner->client->pers.cmd, SETANIM_LEGS,
+			left ? BOTH_STRAFE_LEFT1 : BOTH_STRAFE_RIGHT1, flags, 0);
+	}
+	else if (owner->client->ps.legsAnim == BOTH_STRAFE_RIGHT1 || owner->client->ps.legsAnim == BOTH_STRAFE_LEFT1)
+		owner->client->ps.legsTimer = 0;
+	G_SetOrigin(owner, destination);
+	VectorCopy(destination, owner->client->ps.origin);
+}
+
+// Keep the stock holdable's detach behavior separate from the shared seat trace.
 void EWebPositionUser(gentity_t *owner, gentity_t *eweb)
 {
-	mdxaBone_t boltMatrix;
-	vec3_t p, d;
-	trace_t tr;
-
-	trap->G2API_GetBoltMatrix(eweb->ghoul2, 0, eweb->genericValue9, &boltMatrix, eweb->s.apos.trBase, eweb->r.currentOrigin, level.time, NULL, eweb->modelScale);
-	BG_GiveMeVectorFromMatrix(&boltMatrix, ORIGIN, p);
-	BG_GiveMeVectorFromMatrix(&boltMatrix, NEGATIVE_X, d);
-
-	VectorMA(p, 32.0f, d, p);
-	p[2] = eweb->r.currentOrigin[2];
-
-	p[2] += 4.0f;
-
-	trap->Trace(&tr, owner->client->ps.origin, owner->r.mins, owner->r.maxs, p, owner->s.number, MASK_PLAYERSOLID, qfalse, 0, 0);
-
-	if (!tr.startsolid && !tr.allsolid && tr.fraction == 1.0f)
-	{ //all clear, we can move there
-		vec3_t pDown;
-
-		VectorCopy(p, pDown);
-		pDown[2] -= 7.0f;
-		trap->Trace(&tr, p, owner->r.mins, owner->r.maxs, pDown, owner->s.number, MASK_PLAYERSOLID, qfalse, 0, 0);
-
-		if (!tr.startsolid && !tr.allsolid)
-		{
-			VectorSubtract(owner->client->ps.origin, tr.endpos, d);
-			if (VectorLength(d) > 1.0f)
-			{ //we moved, do some animating
-				vec3_t dAng;
-				int aFlags = SETANIM_FLAG_HOLD;
-
-				vectoangles(d, dAng);
-				dAng[YAW] = AngleSubtract(owner->client->ps.viewangles[YAW], dAng[YAW]);
-				if (dAng[YAW] > 0.0f)
-				{
-					if (owner->client->ps.legsAnim == BOTH_STRAFE_RIGHT1)
-					{ //reset to change direction
-						aFlags |= SETANIM_FLAG_OVERRIDE;
-					}
-					G_SetAnim(owner, &owner->client->pers.cmd, SETANIM_LEGS, BOTH_STRAFE_LEFT1, aFlags, 0);
-				}
-				else
-				{
-					if (owner->client->ps.legsAnim == BOTH_STRAFE_LEFT1)
-					{ //reset to change direction
-						aFlags |= SETANIM_FLAG_OVERRIDE;
-					}
-					G_SetAnim(owner, &owner->client->pers.cmd, SETANIM_LEGS, BOTH_STRAFE_RIGHT1, aFlags, 0);
-				}
-			}
-			else if (owner->client->ps.legsAnim == BOTH_STRAFE_RIGHT1 || owner->client->ps.legsAnim == BOTH_STRAFE_LEFT1)
-			{ //don't keep animating in place
-				owner->client->ps.legsTimer = 0;
-			}
-
-			G_SetOrigin(owner, tr.endpos);
-			VectorCopy(tr.endpos, owner->client->ps.origin);
-		}
-	}
-	else
-	{ //can't move here.. stop using the thing I guess
+	vec3_t destination;
+	const ewebSeatResult_t result = EWebTraceSeat(owner, eweb, qfalse, destination);
+	if (result == EWEB_SEAT_CLEAR)
+		EWebApplySeat(owner, destination);
+	else if (result == EWEB_SEAT_PATH_BLOCKED)
 		EWebDisattach(owner, eweb);
-	}
+}
+
+static float EWebTurnYaw(const gentity_t *owner, const gentity_t *eweb, float turnCap)
+{
+	const float ideal = AngleSubtract(owner->client->ps.viewangles[YAW], eweb->s.angles[YAW]);
+	const float incr = AngleSubtract(ideal, eweb->angle);
+	return eweb->angle + Com_Clamp(-turnCap, turnCap, incr);
+}
+
+static float EWebTurnPitch(const gentity_t *owner, const gentity_t *eweb)
+{
+	return AngleSubtract(owner->client->ps.viewangles[PITCH], eweb->s.angles[PITCH]) * 0.8f;
 }
 
 //keep the bone angles updated based on the owner's look dir
 void EWebUpdateBoneAngles(gentity_t *owner, gentity_t *eweb)
 {
-	vec3_t yAng;
-	float ideal;
-	float incr;
-	const float turnCap = 4.0f; //max degrees we can turn per update
-
-	VectorClear(yAng);
-	ideal = AngleSubtract(owner->client->ps.viewangles[YAW], eweb->s.angles[YAW]);
-	incr = AngleSubtract(ideal, eweb->angle);
-
-	if (incr > turnCap)
-	{
-		incr = turnCap;
-	}
-	else if (incr < -turnCap)
-	{
-		incr = -turnCap;
-	}
-
-	eweb->angle += incr;
-
+	vec3_t yAng = {0, 0, 0};
+	eweb->angle = EWebTurnYaw(owner, eweb, 4.0f);
 	yAng[0] = eweb->angle;
-	EWeb_SetBoneAngles(eweb, "cannon_Yrot", yAng);
-
+	EWeb_SetBoneAngles(eweb, ewebYawBone, yAng);
 	EWebPositionUser(owner, eweb);
 	if (!owner->client->ewebIndex)
-	{ //was removed during position function
 		return;
-	}
-
 	VectorClear(yAng);
-	yAng[2] = AngleSubtract(owner->client->ps.viewangles[PITCH], eweb->s.angles[PITCH])*0.8f;
-	EWeb_SetBoneAngles(eweb, "cannon_Xrot", yAng);
+	yAng[2] = EWebTurnPitch(owner, eweb);
+	EWeb_SetBoneAngles(eweb, ewebPitchBone, yAng);
 }
 
 //keep it updated
@@ -2007,6 +2013,8 @@ gentity_t *EWeb_Create(gentity_t *spawner)
 	return ent;
 }
 
+#include "g_jar_native_eweb.inc"
+
 #define EWEB_USE_DEBOUNCE		1000
 //use the e-web
 void ItemUse_UseEWeb(gentity_t *ent)
@@ -2069,7 +2077,8 @@ int Pickup_Powerup( gentity_t *ent, gentity_t *other ) {
 		quantity = ent->item->quantity;
 	}
 
-	other->client->ps.powerups[ent->item->giTag] += quantity * 1000;
+	other->client->ps.powerups[ent->item->giTag] =
+		JAR_NumberDeadline(other->client->ps.powerups[ent->item->giTag], (double)quantity * 1000);
 
 	if (ent->item->giTag == PW_YSALAMIRI)
 	{
@@ -2154,7 +2163,7 @@ void Add_Ammo (gentity_t *ent, int weapon, int count)
 
 	if ( ent->client->ps.ammo[weapon] < max )
 	{
-		ent->client->ps.ammo[weapon] += count;
+		ent->client->ps.ammo[weapon] = JAR_NumberMillis((double)ent->client->ps.ammo[weapon] + count);
 		if ( ent->client->ps.ammo[weapon] > max )
 		{
 			ent->client->ps.ammo[weapon] = max;
@@ -2286,7 +2295,7 @@ int Pickup_Health (gentity_t *ent, gentity_t *other) {
 		quantity = ent->item->quantity;
 	}
 
-	other->health += quantity;
+	other->health = JAR_NumberMillis((double)other->health + quantity);
 
 	if (other->health > max ) {
 		other->health = max;
@@ -2394,291 +2403,7 @@ qboolean CheckItemCanBePickedUpByNPC( gentity_t *item, gentity_t *pickerupper )
 Touch_Item
 ===============
 */
-void Touch_Item (gentity_t *ent, gentity_t *other, trace_t *trace) {
-	int			respawn;
-	qboolean	predict;
-
-	if (ent->genericValue10 > level.time &&
-		other &&
-		other->s.number == ent->genericValue11)
-	{ //this is the ent that we don't want to be able to touch us for x seconds
-		return;
-	}
-
-	if (ent->s.eFlags & EF_ITEMPLACEHOLDER)
-	{
-		return;
-	}
-
-	if (ent->s.eFlags & EF_NODRAW)
-	{
-		return;
-	}
-
-	if (ent->item->giType == IT_WEAPON &&
-		ent->s.powerups &&
-		ent->s.powerups < level.time)
-	{
-		ent->s.generic1 = 0;
-		ent->s.powerups = 0;
-	}
-
-	if (!other->client)
-		return;
-	if (other->health < 1)
-		return;		// dead people can't pickup
-
-	if (ent->item->giType == IT_POWERUP &&
-		(ent->item->giTag == PW_FORCE_ENLIGHTENED_LIGHT || ent->item->giTag == PW_FORCE_ENLIGHTENED_DARK))
-	{
-		if (ent->item->giTag == PW_FORCE_ENLIGHTENED_LIGHT)
-		{
-			if (other->client->ps.fd.forceSide != FORCE_LIGHTSIDE)
-			{
-				return;
-			}
-		}
-		else
-		{
-			if (other->client->ps.fd.forceSide != FORCE_DARKSIDE)
-			{
-				return;
-			}
-		}
-	}
-
-	// the same pickup rules are used for client side and server side
-	if ( !BG_CanItemBeGrabbed( level.gametype, &ent->s, &other->client->ps ) ) {
-		return;
-	}
-
-
-	if ( other->client->NPC_class == CLASS_ATST ||
-		other->client->NPC_class == CLASS_GONK ||
-		other->client->NPC_class == CLASS_MARK1 ||
-		other->client->NPC_class == CLASS_MARK2 ||
-		other->client->NPC_class == CLASS_MOUSE ||
-		other->client->NPC_class == CLASS_PROBE ||
-		other->client->NPC_class == CLASS_PROTOCOL ||
-		other->client->NPC_class == CLASS_R2D2 ||
-		other->client->NPC_class == CLASS_R5D2 ||
-		other->client->NPC_class == CLASS_SEEKER ||
-		other->client->NPC_class == CLASS_REMOTE ||
-		other->client->NPC_class == CLASS_RANCOR ||
-		other->client->NPC_class == CLASS_WAMPA ||
-		//other->client->NPC_class == CLASS_JAWA || //FIXME: in some cases it's okay?
-		other->client->NPC_class == CLASS_UGNAUGHT || //FIXME: in some cases it's okay?
-		other->client->NPC_class == CLASS_SENTRY )
-	{//FIXME: some flag would be better
-		//droids can't pick up items/weapons!
-		return;
-	}
-
-	if ( CheckItemCanBePickedUpByNPC( ent, other ) )
-	{
-		if ( other->NPC && other->NPC->goalEntity && other->NPC->goalEntity->enemy == ent )
-		{//they were running to pick me up, they did, so clear goal
-			other->NPC->goalEntity = NULL;
-			other->NPC->squadState = SQUAD_STAND_AND_SHOOT;
-		}
-	}
-	else if ( !(ent->spawnflags &  ITMSF_ALLOWNPC) )
-	{// NPCs cannot pick it up
-		if ( other->s.eType == ET_NPC )
-		{// Not the player?
-			qboolean dontGo = qfalse;
-			if (ent->item->giType == IT_AMMO &&
-				ent->item->giTag == -1 &&
-				other->s.NPC_class == CLASS_VEHICLE &&
-				other->m_pVehicle &&
-				other->m_pVehicle->m_pVehicleInfo->type == VH_WALKER)
-			{ //yeah, uh, atst gets healed by these things
-                if (other->maxHealth &&
-					other->health < other->maxHealth)
-				{
-					other->health += 80;
-					if (other->health > other->maxHealth)
-					{
-						other->health = other->maxHealth;
-					}
-					G_ScaleNetHealth(other);
-					dontGo = qtrue;
-				}
-			}
-
-			if (!dontGo)
-			{
-				return;
-			}
-		}
-	}
-
-	G_LogPrintf( "Item: %i %s\n", other->s.number, ent->item->classname );
-
-	predict = other->client->pers.predictItemPickup;
-
-	// call the item-specific pickup function
-	switch( ent->item->giType ) {
-	case IT_WEAPON:
-		respawn = Pickup_Weapon(ent, other);
-//		predict = qfalse;
-		predict = qtrue;
-		break;
-	case IT_AMMO:
-		respawn = Pickup_Ammo(ent, other);
-		if (ent->item->giTag == AMMO_THERMAL || ent->item->giTag == AMMO_TRIPMINE || ent->item->giTag == AMMO_DETPACK)
-		{
-			int weapForAmmo = 0;
-
-			if (ent->item->giTag == AMMO_THERMAL)
-			{
-				weapForAmmo = WP_THERMAL;
-			}
-			else if (ent->item->giTag == AMMO_TRIPMINE)
-			{
-				weapForAmmo = WP_TRIP_MINE;
-			}
-			else
-			{
-				weapForAmmo = WP_DET_PACK;
-			}
-
-			if (other && other->client && other->client->ps.ammo[weaponData[weapForAmmo].ammoIndex] > 0 )
-			{
-				other->client->ps.stats[STAT_WEAPONS] |= (1 << weapForAmmo);
-			}
-		}
-//		predict = qfalse;
-		predict = qtrue;
-		break;
-	case IT_ARMOR:
-		respawn = Pickup_Armor(ent, other);
-//		predict = qfalse;
-		predict = qtrue;
-		break;
-	case IT_HEALTH:
-		respawn = Pickup_Health(ent, other);
-//		predict = qfalse;
-		predict = qtrue;
-		break;
-	case IT_POWERUP:
-		respawn = Pickup_Powerup(ent, other);
-		predict = qfalse;
-//		predict = qtrue;
-		break;
-	case IT_TEAM:
-		respawn = Pickup_Team(ent, other);
-		break;
-	case IT_HOLDABLE:
-		respawn = Pickup_Holdable(ent, other);
-		break;
-	default:
-		return;
-	}
-
-	if ( !respawn ) {
-		return;
-	}
-
-	// play the normal pickup sound
-	if (predict) {
-		if (other->client)
-		{
-			BG_AddPredictableEventToPlayerstate( EV_ITEM_PICKUP, ent->s.number, &other->client->ps);
-		}
-		else
-		{
-			G_AddPredictableEvent( other, EV_ITEM_PICKUP, ent->s.number );
-		}
-	} else {
-		G_AddEvent( other, EV_ITEM_PICKUP, ent->s.number );
-	}
-
-	// powerup pickups are global broadcasts
-	if ( /*ent->item->giType == IT_POWERUP ||*/ ent->item->giType == IT_TEAM) {
-		// if we want the global sound to play
-		if (!ent->speed) {
-			gentity_t	*te;
-
-			te = G_TempEntity( ent->s.pos.trBase, EV_GLOBAL_ITEM_PICKUP );
-			te->s.eventParm = ent->s.modelindex;
-			te->r.svFlags |= SVF_BROADCAST;
-		} else {
-			gentity_t	*te;
-
-			te = G_TempEntity( ent->s.pos.trBase, EV_GLOBAL_ITEM_PICKUP );
-			te->s.eventParm = ent->s.modelindex;
-			// only send this temp entity to a single client
-			te->r.svFlags |= SVF_SINGLECLIENT;
-			te->r.singleClient = other->s.number;
-		}
-	}
-
-	// fire item targets
-	G_UseTargets (ent, other);
-
-	// wait of -1 will not respawn
-	if ( ent->wait == -1 ) {
-		ent->r.svFlags |= SVF_NOCLIENT;
-		ent->s.eFlags |= EF_NODRAW;
-		ent->r.contents = 0;
-		ent->unlinkAfterEvent = qtrue;
-		return;
-	}
-
-	// non zero wait overrides respawn time
-	if ( ent->wait ) {
-		respawn = ent->wait;
-	}
-
-	// random can be used to vary the respawn time
-	if ( ent->random ) {
-		respawn += Q_flrand(-1.0f, 1.0f) * ent->random;
-		if ( respawn < 1 ) {
-			respawn = 1;
-		}
-	}
-
-	// dropped items will not respawn
-	if ( ent->flags & FL_DROPPED_ITEM ) {
-		ent->freeAfterEvent = qtrue;
-	}
-
-	// picked up items still stay around, they just don't
-	// draw anything.  This allows respawnable items
-	// to be placed on movers.
-	if (!(ent->flags & FL_DROPPED_ITEM) && (ent->item->giType==IT_WEAPON || ent->item->giType==IT_POWERUP))
-	{
-		ent->s.eFlags |= EF_ITEMPLACEHOLDER;
-		ent->s.eFlags &= ~EF_NODRAW;
-	}
-	else
-	{
-		ent->s.eFlags |= EF_NODRAW;
-		ent->r.svFlags |= SVF_NOCLIENT;
-	}
-	ent->r.contents = 0;
-
-	if (ent->genericValue9)
-	{ //dropped item, should be removed when picked up
-		ent->think = G_FreeEntity;
-		ent->nextthink = level.time;
-		return;
-	}
-
-	// ZOID
-	// A negative respawn times means to never respawn this item (but don't
-	// delete it).  This is used by items that are respawned by third party
-	// events such as ctf flags
-	if ( respawn <= 0 ) {
-		ent->nextthink = 0;
-		ent->think = 0;
-	} else {
-		ent->nextthink = level.time + respawn * 1000;
-		ent->think = RespawnItem;
-	}
-	trap->LinkEntity( (sharedEntity_t *)ent );
-}
+#include "g_jar_native_pickup.inc"
 
 
 //======================================================================
@@ -2690,11 +2415,7 @@ LaunchItem
 Spawns an item and tosses it forward
 ================
 */
-gentity_t *LaunchItem( gitem_t *item, vec3_t origin, vec3_t velocity ) {
-	gentity_t	*dropped;
-
-	dropped = G_Spawn();
-
+static gentity_t *InitLaunchedItem(gentity_t *dropped, gitem_t *item, const vec3_t origin, const vec3_t velocity) {
 	dropped->s.eType = ET_ITEM;
 	dropped->s.modelindex = item - bg_itemlist;	// store item number in modelindex
 	if (dropped->s.modelindex < 0)
@@ -2712,7 +2433,7 @@ gentity_t *LaunchItem( gitem_t *item, vec3_t origin, vec3_t velocity ) {
 
 	dropped->touch = Touch_Item;
 
-	G_SetOrigin( dropped, origin );
+	G_SetOrigin( dropped, (float *)origin );
 	dropped->s.pos.trType = TR_GRAVITY;
 	dropped->s.pos.trTime = level.time;
 	VectorCopy( velocity, dropped->s.pos.trDelta );
@@ -2767,6 +2488,15 @@ gentity_t *LaunchItem( gitem_t *item, vec3_t origin, vec3_t velocity ) {
 	return dropped;
 }
 
+gentity_t *LaunchItem( gitem_t *item, vec3_t origin, vec3_t velocity ) {
+	return InitLaunchedItem(G_Spawn(), item, origin, velocity);
+}
+
+gentity_t *JAR_MP_TryLaunchItem(gitem_t *item, const vec3_t origin, const vec3_t velocity) {
+	gentity_t *dropped = G_TrySpawn();
+	return dropped ? InitLaunchedItem(dropped, item, origin, velocity) : NULL;
+}
+
 /*
 ================
 Drop_Item
@@ -2811,191 +2541,7 @@ Traces down to find where an item should rest, instead of letting them
 free fall from their spawn points
 ================
 */
-void FinishSpawningItem( gentity_t *ent ) {
-	trace_t		tr;
-	vec3_t		dest;
-//	gitem_t		*item;
-
-//	VectorSet( ent->r.mins, -ITEM_RADIUS, -ITEM_RADIUS, -ITEM_RADIUS );
-//	VectorSet( ent->r.maxs, ITEM_RADIUS, ITEM_RADIUS, ITEM_RADIUS );
-
-	if (level.gametype == GT_SIEGE)
-	{ //in siege remove all powerups
-		if (ent->item->giType == IT_POWERUP)
-		{
-			G_FreeEntity(ent);
-			return;
-		}
-	}
-
-	if (level.gametype != GT_JEDIMASTER)
-	{
-		if (HasSetSaberOnly())
-		{
-			if (ent->item->giType == IT_AMMO)
-			{
-				G_FreeEntity( ent );
-				return;
-			}
-
-			if (ent->item->giType == IT_HOLDABLE)
-			{
-				if (ent->item->giTag == HI_SEEKER ||
-					ent->item->giTag == HI_SHIELD ||
-					ent->item->giTag == HI_SENTRY_GUN)
-				{
-					G_FreeEntity( ent );
-					return;
-				}
-			}
-		}
-	}
-	else
-	{ //no powerups in jedi master
-		if (ent->item->giType == IT_POWERUP)
-		{
-			G_FreeEntity(ent);
-			return;
-		}
-	}
-
-	if (level.gametype == GT_HOLOCRON)
-	{
-		if (ent->item->giType == IT_POWERUP)
-		{
-			if (ent->item->giTag == PW_FORCE_ENLIGHTENED_LIGHT ||
-				ent->item->giTag == PW_FORCE_ENLIGHTENED_DARK)
-			{
-				G_FreeEntity(ent);
-				return;
-			}
-		}
-	}
-
-	if (g_forcePowerDisable.integer)
-	{ //if force powers disabled, don't add force powerups
-		if (ent->item->giType == IT_POWERUP)
-		{
-			if (ent->item->giTag == PW_FORCE_ENLIGHTENED_LIGHT ||
-				ent->item->giTag == PW_FORCE_ENLIGHTENED_DARK ||
-				ent->item->giTag == PW_FORCE_BOON)
-			{
-				G_FreeEntity(ent);
-				return;
-			}
-		}
-	}
-
-	if (level.gametype == GT_DUEL || level.gametype == GT_POWERDUEL)
-	{
-		if ( ent->item->giType == IT_ARMOR ||
-			ent->item->giType == IT_HEALTH ||
-			(ent->item->giType == IT_HOLDABLE && (ent->item->giTag == HI_MEDPAC || ent->item->giTag == HI_MEDPAC_BIG)) )
-		{
-			G_FreeEntity(ent);
-			return;
-		}
-	}
-
-	if (level.gametype != GT_CTF &&
-		level.gametype != GT_CTY &&
-		ent->item->giType == IT_TEAM)
-	{
-		int killMe = 0;
-
-		switch (ent->item->giTag)
-		{
-		case PW_REDFLAG:
-			killMe = 1;
-			break;
-		case PW_BLUEFLAG:
-			killMe = 1;
-			break;
-		case PW_NEUTRALFLAG:
-			killMe = 1;
-			break;
-		default:
-			break;
-		}
-
-		if (killMe)
-		{
-			G_FreeEntity( ent );
-			return;
-		}
-	}
-
-	VectorSet (ent->r.mins, -8, -8, -0);
-	VectorSet (ent->r.maxs, 8, 8, 16);
-
-	ent->s.eType = ET_ITEM;
-	ent->s.modelindex = ent->item - bg_itemlist;		// store item number in modelindex
-	ent->s.modelindex2 = 0; // zero indicates this isn't a dropped item
-
-	ent->r.contents = CONTENTS_TRIGGER;
-	ent->touch = Touch_Item;
-	// useing an item causes it to respawn
-	ent->use = Use_Item;
-
-	// create a Ghoul2 model if the world model is a glm
-/*	item = &bg_itemlist[ ent->s.modelindex ];
-	if (!Q_stricmp(&item->world_model[0][strlen(item->world_model[0]) - 4], ".glm"))
-	{
-		trap->G2API_InitGhoul2Model(&ent->s, item->world_model[0], G_ModelIndex(item->world_model[0] ), 0, 0, 0, 0);
-		ent->s.radius = 60;
-	}
-*/
-	if ( ent->spawnflags & ITMSF_SUSPEND ) {
-		// suspended
-		G_SetOrigin( ent, ent->s.origin );
-	} else {
-		// drop to floor
-
-		//if it is directly even with the floor it will return startsolid, so raise up by 0.1
-		//and temporarily subtract 0.1 from the z maxs so that going up doesn't push into the ceiling
-		ent->s.origin[2] += 0.1f;
-		ent->r.maxs[2] -= 0.1f;
-
-		VectorSet( dest, ent->s.origin[0], ent->s.origin[1], ent->s.origin[2] - 4096 );
-		trap->Trace( &tr, ent->s.origin, ent->r.mins, ent->r.maxs, dest, ent->s.number, MASK_SOLID, qfalse, 0, 0 );
-		if ( tr.startsolid ) {
-			trap->Print ("FinishSpawningItem: %s startsolid at %s\n", ent->classname, vtos(ent->s.origin));
-			G_FreeEntity( ent );
-			return;
-		}
-
-		//add the 0.1 back after the trace
-		ent->r.maxs[2] += 0.1f;
-
-		// allow to ride movers
-		ent->s.groundEntityNum = tr.entityNum;
-
-		G_SetOrigin( ent, tr.endpos );
-	}
-
-	// team slaves and targeted items aren't present at start
-	if ( ( ent->flags & FL_TEAMSLAVE ) || ent->targetname ) {
-		ent->s.eFlags |= EF_NODRAW;
-		ent->r.contents = 0;
-		return;
-	}
-
-	// powerups don't spawn in for a while
-	/*
-	if ( ent->item->giType == IT_POWERUP ) {
-		float	respawn;
-
-		respawn = 45 + Q_flrand(-1.0f, 1.0f) * 15;
-		ent->s.eFlags |= EF_NODRAW;
-		ent->r.contents = 0;
-		ent->nextthink = level.time + respawn * 1000;
-		ent->think = RespawnItem;
-		return;
-	}
-	*/
-
-	trap->LinkEntity ((sharedEntity_t *)ent);
-}
+#include "g_jar_native_item_finish.inc"
 
 
 qboolean	itemRegistered[MAX_ITEMS];
@@ -3220,6 +2766,10 @@ void G_RunItem( gentity_t *ent ) {
 	trace_t		tr;
 	int			contents;
 	int			mask;
+
+	if (JAR_MP_RackParent(ent) != ENTITYNUM_NONE) {
+		return; // The parent owns the shelf's interpolated pose.
+	}
 
 	// if groundentity has been set to ENTITYNUM_NONE, it may have been pushed off an edge
 	if ( ent->s.groundEntityNum == ENTITYNUM_NONE ) {

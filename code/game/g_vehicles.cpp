@@ -32,6 +32,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #ifndef _JK2MP
 #include "g_functions.h"
 #include "g_vehicles.h"
+#include "g_shipboundary.h"
 #include "../cgame/cg_local.h"
 #else
 #include "bg_vehicles.h"
@@ -1652,6 +1653,11 @@ bool Initialize( Vehicle_t *pVeh )
 
 
 
+#ifndef _JK2MP
+#include "g_vehicle_turret.inc"
+#include "g_vehicle_shields.h"
+#endif
+
 // Like a think or move command, this updates various vehicle properties.
 #ifdef _JK2MP
 void G_VehicleDamageBoxSizing(Vehicle_t *pVeh); //declared below
@@ -1720,6 +1726,9 @@ static bool Update( Vehicle_t *pVeh, const usercmd_t *pUmcd )
 		}
 	}
 
+#ifndef _JK2MP
+	G_VehicleRechargeShields(*pVeh,*parentPS,pUmcd->serverTime);
+#else
 	//increment shields for rechargable shields
 	if ( pVeh->m_pVehicleInfo->shieldRechargeMS
 		&& parentPS->stats[STAT_ARMOR] > 0 //still have some shields left
@@ -1732,10 +1741,9 @@ static bool Update( Vehicle_t *pVeh, const usercmd_t *pUmcd )
 			parentPS->stats[STAT_ARMOR] = pVeh->m_pVehicleInfo->shields;
 		}
 		pVeh->m_iShields = parentPS->stats[STAT_ARMOR];
-#ifdef _JK2MP
 		G_VehUpdateShields( parent );
-#endif
 	}
+#endif
 
 #ifdef _JK2MP //sometimes this gets out of whack, probably init'ing
 	if (parent && parent->r.ownerNum != parent->s.owner)
@@ -2066,6 +2074,11 @@ static bool Update( Vehicle_t *pVeh, const usercmd_t *pUmcd )
 	{//HMM... can't get a seperate command for each weapon, so do them all...?
 		VEH_TurretThink( pVeh, parent, i );
 	}
+#elif !defined(_JK2MP)
+	for ( i = 0; i < MAX_VEHICLE_TURRETS; ++i )
+	{
+		G_VehicleTurretThink( pVeh, parent, i );
+	}
 #endif
 
 #ifdef _JK2MP
@@ -2086,6 +2099,9 @@ maintainSelfDuringBoarding:
 
 	// Process the orient commands.
 	pVeh->m_pVehicleInfo->ProcessOrientCommands( pVeh );
+#ifndef _JK2MP
+	G_ShipBoundaryGuide(pVeh);
+#endif
 	// Need to copy orientation to our entity's viewangles so that it renders at the proper angle and currentAngles is correct.
 	SetClientViewAngle( parent, pVeh->m_vOrientation );
 	if ( pVeh->m_pPilot )

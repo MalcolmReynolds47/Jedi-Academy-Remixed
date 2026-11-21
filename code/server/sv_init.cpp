@@ -1,3 +1,4 @@
+#include "qcommon/jar_diagnostics.h"
 /*
 ===========================================================================
 Copyright (C) 1999 - 2005, Id Software, Inc.
@@ -177,7 +178,7 @@ void SV_Startup( void ) {
 	}
 
 	svs.clients = (struct client_s *) Z_Malloc ( sizeof(client_t) * 1, TAG_CLIENTS, qtrue );
-	svs.numSnapshotEntities = 2 * 4 * 64;
+	svs.numSnapshotEntities = JAR_SNAPSHOT_HISTORY;
 	svs.initialized = qtrue;
 
 	Cvar_Set( "sv_running", "1" );
@@ -196,6 +197,7 @@ clients along with it.
 */
 void SV_SpawnServer( const char *server, ForceReload_e eForceReload, qboolean bAllowScreenDissolve )
 {
+	JAR_Log(1,"map","load_begin","map=%s reload=%d",server,eForceReload);
 	int			i;
 	int			checksum;
 
@@ -307,6 +309,12 @@ void SV_SpawnServer( const char *server, ForceReload_e eForceReload, qboolean bA
 	// to load during actual gameplay
 	sv.state = SS_LOADING;
 
+#ifndef JK2_MODE
+	// Enable JA:R cheats before game initialization
+	// and before publishing systeminfo, including after reading a save.
+	Cvar_Set( "helpUsObi", "1" );
+#endif
+
 	// load and spawn all other entities
 	SV_InitGameProgs();
 
@@ -363,6 +371,7 @@ void SV_SpawnServer( const char *server, ForceReload_e eForceReload, qboolean bA
 	// and any configstring changes should be reliably transmitted
 	// to all clients
 	sv.state = SS_GAME;
+	JAR_DiagnosticsSnapshot("map_load_end");
 
 	Hunk_SetMark();
 	Z_Validate();
@@ -373,7 +382,7 @@ void SV_SpawnServer( const char *server, ForceReload_e eForceReload, qboolean bA
 }
 
 #define G2_VERT_SPACE_SIZE 256
-#define G2_MINIHEAP_SIZE	G2_VERT_SPACE_SIZE*1024
+#define G2_MINIHEAP_SIZE (G2_VERT_SPACE_SIZE * 1024 * JAR_CAPACITY_MULTIPLIER)
 
 /*
 ===============
@@ -450,6 +459,7 @@ before Sys_Quit or Sys_Error
 */
 void SV_Shutdown( const char *finalmsg ) {
 	int i;
+	qbLoadTransition = qfalse;
 
 	if ( !com_sv_running || !com_sv_running->integer ) {
 		return;

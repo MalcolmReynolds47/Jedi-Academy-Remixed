@@ -26,6 +26,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "client.h"
 #include "cl_cgameapi.h"
 #include "cl_uiapi.h"
+#include "game/bg_jar_physgun_input.h"
 #ifndef _WIN32
 #include <cmath>
 #endif
@@ -1035,7 +1036,7 @@ void CL_JoystickMove( usercmd_t *cmd ) {
 CL_MouseMove
 =================
 */
-void CL_MouseMove( usercmd_t *cmd ) {
+static void CL_MouseMove( usercmd_t *cmd, float* turn ) {
 	float	mx, my;
 	const float	speed = static_cast<float>(frame_msec);
 
@@ -1155,6 +1156,12 @@ void CL_MouseMove( usercmd_t *cmd ) {
 	mx *= cl.cgameSensitivity;
 	my *= cl.cgameSensitivity;
 
+	if (turn) {
+		turn[YAW] = -m_yaw->value * mx;
+		turn[PITCH] = -m_pitch->value * my;
+		return;
+	}
+
 	// add mouse X/Y movement to cmd
 	if ( in_strafe.active )
 		cmd->rightmove = ClampChar( cmd->rightmove + m_side->value * mx );
@@ -1221,7 +1228,7 @@ void CL_CmdButtons( usercmd_t *cmd ) {
 		}
 	}
 
-	if ( Key_GetCatcher( ) ) {
+	if ( Key_GetCatcher( ) && !(Key_GetCatcher()==KEYCATCH_CGAME && Cvar_VariableIntegerValue("jar_mpMenuOpen")) ) {
 		cmd->buttons |= BUTTON_TALK;
 	}
 
@@ -1330,6 +1337,7 @@ void CL_FinishMove( usercmd_t *cmd ) {
 CL_CreateCmd
 =================
 */
+#include "cl_jar_typing.inc"
 usercmd_t CL_CreateCmd( void ) {
 	usercmd_t	cmd;
 	vec3_t		oldAngles;
@@ -1342,15 +1350,30 @@ usercmd_t CL_CreateCmd( void ) {
 	Com_Memset( &cmd, 0, sizeof( cmd ) );
 
 	CL_CmdButtons( &cmd );
+	cmd.buttons &= ~BUTTON_JAR_PHYSGUN_TURN;
+	const bool rotating = cls.state == CA_ACTIVE && cl.snap.valid &&
+		JAR_PhysgunTurnActive(&cl.snap.ps,cmd.buttons,Key_GetCatcher());
+	vec3_t turn{};
 
 	// get basic movement from keyboard
 	CL_KeyMove( &cmd );
 
 	// get basic movement from mouse
-	CL_MouseMove( &cmd );
+	CL_MouseMove( &cmd, rotating ? turn : nullptr );
 
 	// get basic movement from joystick
 	CL_JoystickMove( &cmd );
+	if (rotating) {
+		VectorCopy(oldAngles,cl.viewangles);
+		cmd.buttons &= ~BUTTON_USE;
+	}
+	const int target=rotating?cl.snap.ps.stats[STAT_JAR_PHYSGUN_HOLD]:0;
+	if (target!=cl.physgunTurnTarget) {
+		cl.physgunYawRemainder=cl.physgunPitchRemainder=0;
+		cl.physgunTurnTarget=target;
+	}
+	cl.physgunTurns[cl.cmdNumber & CMD_MASK]=rotating?1+JAR_PackPhysgunTurn(
+		turn[YAW],turn[PITCH],&cl.physgunYawRemainder,&cl.physgunPitchRemainder):0;
 
 	// check to make sure the angles haven't wrapped
 	if ( cl.viewangles[PITCH] - oldAngles[PITCH] > 90 ) {
@@ -1359,6 +1382,7 @@ usercmd_t CL_CreateCmd( void ) {
 		cl.viewangles[PITCH] = oldAngles[PITCH] - 90;
 	}
 
+	JAR_FilterTyping(&cmd,cl.viewangles,oldAngles,Key_GetCatcher(),Cvar_VariableIntegerValue("jar_mpMenuOpen"),Cvar_VariableIntegerValue("jar_mpMenuTyping"));
 	// store out the final values
 	CL_FinishMove( &cmd );
 
@@ -1495,10 +1519,9 @@ During normal gameplay, a client packet will contain something like:
 */
 void CL_WritePacket( void ) {
 	msg_t		buf;
-	byte		data[MAX_MSGLEN];
+	static byte		data[MAX_MSGLEN];
 	int			i, j;
-	usercmd_t	*cmd, *oldcmd;
-	usercmd_t	nullcmd;
+	usercmd_t	previous{};
 	int			packetNum;
 	int			oldPacketNum;
 	int			count, key;
@@ -1507,9 +1530,6 @@ void CL_WritePacket( void ) {
 	if ( clc.demoplaying || cls.state == CA_CINEMATIC ) {
 		return;
 	}
-
-	Com_Memset( &nullcmd, 0, sizeof(nullcmd) );
-	oldcmd = &nullcmd;
 
 	MSG_Init( &buf, data, sizeof(data) );
 
@@ -1574,9 +1594,13 @@ void CL_WritePacket( void ) {
 		// write all the commands, including the predicted command
 		for ( i = 0 ; i < count ; i++ ) {
 			j = (cl.cmdNumber - count + i + 1) & CMD_MASK;
-			cmd = &cl.cmds[j];
-			MSG_WriteDeltaUsercmdKey (&buf, key, oldcmd, cmd);
-			oldcmd = cmd;
+			usercmd_t cmd=cl.cmds[j];
+			if (cl.physgunTurns[j]) {
+				cmd.buttons|=BUTTON_JAR_PHYSGUN_TURN;
+				cmd.angles[ROLL]=cl.physgunTurns[j]-1;
+			}
+			MSG_WriteDeltaUsercmdKey (&buf, key, &previous, &cmd);
+			previous=cmd;
 		}
 
 		if (cl.gcmdSentValue)
@@ -1592,7 +1616,7 @@ void CL_WritePacket( void ) {
 	//
 	packetNum = clc.netchan.outgoingSequence & PACKET_MASK;
 	cl.outPackets[ packetNum ].p_realtime = cls.realtime;
-	cl.outPackets[ packetNum ].p_serverTime = oldcmd->serverTime;
+	cl.outPackets[ packetNum ].p_serverTime = previous.serverTime;
 	cl.outPackets[ packetNum ].p_cmdNumber = cl.cmdNumber;
 	clc.lastPacketSentTime = cls.realtime;
 

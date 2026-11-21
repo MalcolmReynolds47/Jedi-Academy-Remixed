@@ -25,6 +25,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "Q3_Interface.h"
 
 #include "g_local.h"
+#include "g_workshop.h"
+#include "g_randomizer.h"
 #include "wp_saber.h"
 #include "g_functions.h"
 
@@ -880,6 +882,22 @@ static void Svcmd_Difficulty_f(void)
 	}
 }
 
+// Read-only evidence for scripted actors and cutscene progress. No task or
+// entity mutations, and available without enabling gameplay cheats.
+static void JarNpcStatus_f(){
+    if(!gi.JAR_Log)return;
+    gi.JAR_Log(0,"randomizer","npc_status","map=%s camera=%d time=%d playerHealth=%d playerPm=%d",level.mapname,in_camera,level.time,g_entities[0].health,g_entities[0].client?g_entities[0].client->ps.pm_type:-1);
+    for(int i=1;i<ENTITYNUM_MAX_NORMAL;++i){const auto& e=g_entities[i];if(!e.inuse||!e.NPC||!e.client)continue;
+        gi.JAR_Log(0,"randomizer","npc_actor_status","entity=%d type=%s targetname=%s script_targetname=%s display=%s health=%d pm_type=%d team=%d enemyTeam=%d xyz=%.0f,%.0f,%.0f recovery=%d flags=%u icarus=%d nav=%d voice=%d anim=%d upper=%d lower=%d friction=%d bstate=%d temp=%d default=%d torsoMs=%d legsMs=%d parm1=%s",i,e.NPC_type?e.NPC_type:"",e.targetname?e.targetname:"",e.script_targetname?e.script_targetname:"",e.client->clientInfo.name,e.health,e.client->ps.pm_type,e.client->playerTeam,e.client->enemyTeam,e.currentOrigin[0],e.currentOrigin[1],e.currentOrigin[2],G_JAR_IsActorStandin(&e),unsigned(e.flags),e.m_iIcarusID,e.taskID[TID_MOVE_NAV],e.taskID[TID_CHAN_VOICE],e.taskID[TID_ANIM_BOTH],e.taskID[TID_ANIM_UPPER],e.taskID[TID_ANIM_LOWER],e.client->ps.friction,e.NPC->behaviorState,e.NPC->tempBehavior,e.NPC->defaultBehavior,e.client->ps.torsoAnimTimer,e.client->ps.legsAnimTimer,e.parms?e.parms->parm[0]:"");
+    }
+}
+
+static void JarTestActorDelete_f(){
+    if(gi.argc()!=2||!gi.argv(1)[0]){gi.Printf("Usage: jar_test_actor_delete <exact NPC targetname>\n");return;}
+    auto actor=G_Find(nullptr,FOFS(targetname),gi.argv(1));
+    if(actor&&actor->s.number>0&&actor->NPC&&actor->client)G_FreeEntity(actor);
+}
+
 #define CMD_NONE				(0x00000000u)
 #define CMD_CHEAT				(0x00000001u)
 #define CMD_ALIVE				(0x00000002u)
@@ -896,6 +914,9 @@ static int svcmdcmp( const void *a, const void *b ) {
 
 // FIXME some of these should be made CMD_ALIVE too!
 static svcmd_t svcmds[] = {
+	{ "jar_capacity", G_EntityCapacity_f, CMD_NONE },
+	{ "jar_npc_status", JarNpcStatus_f, CMD_NONE },
+	{ "jar_test_actor_delete", JarTestActorDelete_f, CMD_CHEAT },
 	{ "entitylist",					Svcmd_EntityList_f,							CMD_NONE },
 	{ "game_memory",				Svcmd_GameMem_f,							CMD_NONE },
 
@@ -962,6 +983,7 @@ ConsoleCommand
 */
 qboolean	ConsoleCommand( void ) {
 	const char *cmd = gi.argv(0);
+	if (G_JAR_WorkshopCommand(cmd)) return qtrue;
 	const svcmd_t *command = (const svcmd_t *)Q_LinearSearch( cmd, svcmds, numsvcmds, sizeof( svcmds[0] ), svcmdcmp );
 
 	if ( !command )

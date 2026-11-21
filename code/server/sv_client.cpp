@@ -466,6 +466,8 @@ static void SV_UserMove( client_t *cl, msg_t *msg ) {
 	if ( cl->state == CS_PRIMED ) {
 
 		SV_ClientEnterWorld( cl, &cmds[0], eSavedGameJustLoaded );
+		const qboolean hubArrival=sv.hubArrivalPending;
+		sv.hubArrivalPending = qfalse;
 		if ( sv_mapname->string[0]!='_' )
 		{
 			char savename[MAX_QPATH];
@@ -478,7 +480,7 @@ static void SV_UserMove( client_t *cl, msg_t *msg ) {
 					SG_WriteSavegame(savename,qtrue);//can't use va becuase it's nested
 				}
 			}
-			else if ( qbLoadTransition == qtrue )
+			else if ( hubArrival )
 			{
 				Com_sprintf (savename, sizeof(savename), "hub/%s", sv_mapname->string );
 				SG_WriteSavegame( savename, qfalse );//save a full one

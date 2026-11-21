@@ -27,16 +27,16 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // q_shared.h -- included first by ALL program modules.
 // A user mod should never modify this file
 
-#define PRODUCT_NAME			"openjk"
+#define PRODUCT_NAME			"jar_mp"
 
-#define CLIENT_WINDOW_TITLE "OpenJK (MP)"
-#define CLIENT_CONSOLE_TITLE "OpenJK Console (MP)"
-#define HOMEPATH_NAME_UNIX "openjk"
-#define HOMEPATH_NAME_WIN "OpenJK"
+#define CLIENT_WINDOW_TITLE "Jedi Academy Remixed Multiplayer"
+#define CLIENT_CONSOLE_TITLE "JA:R Server"
+#define HOMEPATH_NAME_UNIX "JediAcademyRemixedMP"
+#define HOMEPATH_NAME_WIN "JediAcademyRemixedMP"
 #define HOMEPATH_NAME_MACOSX HOMEPATH_NAME_WIN
 
 #define	BASEGAME "base"
-#define OPENJKGAME "OpenJK"
+#define OPENJKGAME "JediAcademyRemixedMP"
 
 //NOTENOTE: Only change this to re-point ICARUS to a new script directory
 #define Q3_SCRIPT_DIR	"scripts"
@@ -892,21 +892,9 @@ typedef enum {
 #define MAX_TERRAINS		1//32 //rwwRMG: inserted
 #define MAX_LOCATIONS		64
 
-#define	GENTITYNUM_BITS	10		// don't need to send any more
-#define	MAX_GENTITIES	(1<<GENTITYNUM_BITS)
-
-//I am reverting. I guess. For now.
-/*
-#define	GENTITYNUM_BITS		11
-							//rww - I am raising this 1 bit. SP actually has room for 1024 ents - none - world - 1 client.
-							//Which means 1021 useable entities. However we have 32 clients.. so if we keep our limit
-							//at 1024 we are not going to be able to load any SP levels at the edge of the ent limit.
-#define		MAX_GENTITIES	(1024+(MAX_CLIENTS-1))
-							//rww - we do have enough room to send over 2048 ents now. However, I cannot live with the guilt of
-							//actually increasing the entity limit to 2048 (as it would slow down countless things, and
-							//there are tons of ent list traversals all over the place). So I am merely going to give enough
-							//to compensate for our larger maxclients.
-*/
+#include "jar_capacity.h"
+#define GENTITYNUM_BITS JAR_MP_ENTITY_BITS
+#define MAX_GENTITIES JAR_MP_ENTITY_SLOTS
 
 // entitynums are communicated with GENTITY_BITS, so any reserved
 // values thatare going to be communcated over the net need to
@@ -917,11 +905,13 @@ typedef enum {
 
 
 // these are also in be_aas_def.h - argh (rjr)
-#define	MAX_MODELS			512		// these are sent over the net as -12 bits
-#define	MAX_SOUNDS			256		// so they cannot be blindly increased
+#define MAX_MODELS JAR_MP_MODEL_SLOTS
+#define MAX_SOUNDS JAR_MP_SOUND_SLOTS
 #define MAX_ICONS			64		// max registered icons you can have per map
 #define MAX_FX				64		// max effects strings, I'm hoping that 64 will be plenty
 
+// The capsule and box occupy the two handles above the inline BSP range.
+#define CM_MAX_INLINE_MODEL_COUNT 510
 #define MAX_SUB_BSP			32 //rwwRMG - added
 
 /*
@@ -934,7 +924,7 @@ Ghoul2 Insert End
 
 #define MAX_AMBIENT_SETS		256 //rww - ambient soundsets must be sent over in config strings.
 
-#define	MAX_CONFIGSTRINGS	1700 //this is getting pretty high. Try not to raise it anymore than it already is.
+#define MAX_CONFIGSTRINGS JAR_MP_CONFIGSTRINGS
 
 // these are the only configstrings that the system reserves, all the
 // other ones are strictly for servergame to clientgame communication
@@ -943,7 +933,7 @@ Ghoul2 Insert End
 
 #define	RESERVED_CONFIGSTRINGS	2	// game can't modify below this, only the system can
 
-#define	MAX_GAMESTATE_CHARS	16000
+#define MAX_GAMESTATE_CHARS JAR_MP_GAMESTATE_CHARS
 typedef struct gameState_s {
 	int			stringOffsets[MAX_CONFIGSTRINGS];
 	char		stringData[MAX_GAMESTATE_CHARS];
@@ -1034,7 +1024,7 @@ typedef enum {
 #define	MAX_STATS				16
 #define	MAX_PERSISTANT			16
 #define	MAX_POWERUPS			16
-#define	MAX_WEAPONS				19
+#define	MAX_WEAPONS				21
 #define MAX_AMMO_TRANSMIT		16 // This is needed because the ammo array is 19 but only 16 sized array is networked
 #define MAX_AMMO				MAX_WEAPONS
 
@@ -1332,6 +1322,7 @@ typedef struct playerState_s {
 	int			deltaOneBits;
 	int			deltaNumBits;
 #endif
+	vec3_t jarVehicleDrift; // JA:R external momentum; native speed remains throttle.
 } playerState_t;
 
 typedef struct siegePers_s
@@ -1368,6 +1359,9 @@ typedef struct siegePers_s
 #define BUTTON_FORCE_LIGHTNING	1024
 
 #define BUTTON_FORCE_DRAIN		2048
+
+// JA:R uses the existing 16-bit button field for Physgun rotation input.
+#define BUTTON_JAR_PHYSGUN_TURN	4096
 
 // Here's an interesting bit.  The bots in TA used buttons to do additional gestures.
 // I ripped them out because I didn't want too many buttons given the fact that I was already adding some for JK2.
@@ -1725,6 +1719,10 @@ typedef struct entityState_s {
 	float		userFloat3;
 	vec3_t		userVec1;
 	vec3_t		userVec2;
+	// Server-selected rope topology, carried atomically with its endpoints.
+	int jarRopeState; // 0 legacy, 1 unresolved, 2..10 validated bend count + 2.
+	float jarRopeLength;
+	vec3_t jarRopeBends[8];
 } entityState_t;
 
 typedef enum {

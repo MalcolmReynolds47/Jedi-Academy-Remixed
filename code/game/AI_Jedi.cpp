@@ -28,6 +28,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_navigator.h"
 #include "../cgame/cg_local.h"
 #include "g_functions.h"
+#include "qcommon/jar_force_enlightenment.h"
 
 //Externs
 extern qboolean G_ValidEnemy( gentity_t *self, gentity_t *enemy );
@@ -225,7 +226,7 @@ qboolean Jedi_StopKnockdown( gentity_t *self, gentity_t *pusher, const vec3_t pu
 		return qfalse;
 	}
 
-	if ( self->client->ps.forcePowerLevel[FP_LEVITATION] < FORCE_LEVEL_1 )
+	if ( jar::enlightenment::Rank(self->client->ps,FP_LEVITATION) < FORCE_LEVEL_1 )
 	{//only force-users
 		return qfalse;
 	}
@@ -1371,7 +1372,7 @@ static void Jedi_CombatDistance( int enemy_dist )
 		}
 	}
 	if ( NPC->client->ps.forcePowersActive&(1<<FP_GRIP) &&
-		NPC->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_1 )
+		jar::enlightenment::Rank(NPC->client->ps,FP_GRIP) > FORCE_LEVEL_1 )
 	{//when gripping, don't move
 		return;
 	}
@@ -1382,7 +1383,7 @@ static void Jedi_CombatDistance( int enemy_dist )
 	}
 
 	if ( NPC->client->ps.forcePowersActive&(1<<FP_DRAIN) &&
-		NPC->client->ps.forcePowerLevel[FP_DRAIN] > FORCE_LEVEL_1 )
+		jar::enlightenment::Rank(NPC->client->ps,FP_DRAIN) > FORCE_LEVEL_1 )
 	{//when draining, don't move
 		return;
 	}
@@ -1452,7 +1453,7 @@ static void Jedi_CombatDistance( int enemy_dist )
 		}
 		if ( NPC->client->ps.weapon == WP_SABER //using saber
 			&& NPC->client->ps.saberEntityState == SES_LEAVING  //not returning yet
-			&& NPC->client->ps.forcePowerLevel[FP_SABERTHROW] > FORCE_LEVEL_1 //2nd or 3rd level lightsaber
+			&& jar::enlightenment::Rank(NPC->client->ps,FP_SABERTHROW) > FORCE_LEVEL_1 //2nd or 3rd level lightsaber
 			&& !(NPC->client->ps.forcePowersActive&(1 << FP_SPEED))
 			&& !(NPC->client->ps.saberEventFlags&SEF_INWATER) )//saber not in water
 		{//hold it out there
@@ -1517,13 +1518,13 @@ static void Jedi_CombatDistance( int enemy_dist )
 			Jedi_Advance();
 		}
 		int	testlevel;
-		if ( NPC->client->ps.forcePowerLevel[FP_PUSH] < FORCE_LEVEL_1 )
+		if ( jar::enlightenment::Rank(NPC->client->ps,FP_PUSH) < FORCE_LEVEL_1 )
 		{//
 			testlevel = FORCE_LEVEL_1;
 		}
 		else
 		{
-			testlevel = NPC->client->ps.forcePowerLevel[FP_PUSH];
+			testlevel = jar::enlightenment::Rank(NPC->client->ps,FP_PUSH);
 		}
 		if ( enemy_dist < forcePushPullRadius[testlevel] - 16 )
 		{//close enough to push
@@ -1567,7 +1568,7 @@ static void Jedi_CombatDistance( int enemy_dist )
 	}
 	else if ( enemy_dist <= 64
 		&& NPC->max_health - NPC->health > NPC->max_health*0.25f//lost over 1/4 of our health
-		&& NPC->client->ps.forcePowersKnown&(1<<FP_DRAIN) //know how to drain
+		&& jar::enlightenment::Known(NPC->client->ps)&(1<<FP_DRAIN) //know how to drain
 		&& WP_ForcePowerAvailable( NPC, FP_DRAIN, 20 )//have enough power
 		&& !Q_irand( 0, 10 )
 		&& InFront( NPC->enemy->currentOrigin, NPC->currentOrigin, NPC->client->ps.viewangles, 0.2f ) )
@@ -1652,7 +1653,7 @@ static void Jedi_CombatDistance( int enemy_dist )
 				Tavion_SithSwordRecharge();
 				usedForce = qtrue;
 			}
-			else if ( (NPC->client->ps.forcePowersKnown&(1<<FP_HEAL)) != 0
+			else if ( (jar::enlightenment::Known(NPC->client->ps)&(1<<FP_HEAL)) != 0
 				&& (NPC->client->ps.forcePowersActive&(1<<FP_HEAL)) == 0
 				&& Q_irand( 0, 1 ) )
 			{
@@ -1660,21 +1661,21 @@ static void Jedi_CombatDistance( int enemy_dist )
 				usedForce = qtrue;
 				//FIXME: check level of heal and know not to move or attack when healing
 			}
-			else if ( (NPC->client->ps.forcePowersKnown&(1<<FP_PROTECT)) != 0
+			else if ( (jar::enlightenment::Known(NPC->client->ps)&(1<<FP_PROTECT)) != 0
 				&& (NPC->client->ps.forcePowersActive&(1<<FP_PROTECT)) == 0
 				&& Q_irand( 0, 1 ) )
 			{
 				ForceProtect( NPC );
 				usedForce = qtrue;
 			}
-			else if ( (NPC->client->ps.forcePowersKnown&(1<<FP_ABSORB)) != 0
+			else if ( (jar::enlightenment::Known(NPC->client->ps)&(1<<FP_ABSORB)) != 0
 				&& (NPC->client->ps.forcePowersActive&(1<<FP_ABSORB)) == 0
 				&& Q_irand( 0, 1 ) )
 			{
 				ForceAbsorb( NPC );
 				usedForce = qtrue;
 			}
-			else if ( (NPC->client->ps.forcePowersKnown&(1<<FP_RAGE)) != 0
+			else if ( (jar::enlightenment::Known(NPC->client->ps)&(1<<FP_RAGE)) != 0
 				&& (NPC->client->ps.forcePowersActive&(1<<FP_RAGE)) == 0
 				&& Q_irand( 0, 1 ) )
 			{
@@ -1862,7 +1863,7 @@ static void Jedi_CombatDistance( int enemy_dist )
 							&& (((NPCInfo->scriptFlags&SCF_DONT_FIRE)&&Q_stricmp("cultist_lightning",NPC->NPC_type)) || Q_irand( 0, 1 )) )
 						{
 							ForceLightning( NPC );
-							if ( NPC->client->ps.forcePowerLevel[FP_LIGHTNING] > FORCE_LEVEL_1 )
+							if ( jar::enlightenment::Rank(NPC->client->ps,FP_LIGHTNING) > FORCE_LEVEL_1 )
 							{
 								NPC->client->ps.weaponTime = Q_irand( 1000, 3000+(g_spskill->integer*500) );
 								TIMER_Set( NPC, "holdLightning", NPC->client->ps.weaponTime );
@@ -1870,7 +1871,7 @@ static void Jedi_CombatDistance( int enemy_dist )
 							TIMER_Set( NPC, "attackDelay", NPC->client->ps.weaponTime );
 						}
 						else if ( NPC->health < NPC->max_health * 0.75f
-							&& Q_irand( FORCE_LEVEL_0, NPC->client->ps.forcePowerLevel[FP_DRAIN] ) > FORCE_LEVEL_1
+							&& Q_irand( FORCE_LEVEL_0, jar::enlightenment::Rank(NPC->client->ps,FP_DRAIN) ) > FORCE_LEVEL_1
 							&& WP_ForcePowerUsable( NPC, FP_DRAIN, 0 )
 							&& (((NPCInfo->scriptFlags&SCF_DONT_FIRE)&&Q_stricmp("cultist_drain",NPC->NPC_type)) || Q_irand( 0, 1 )) )
 						{
@@ -1987,7 +1988,7 @@ static void Jedi_CombatDistance( int enemy_dist )
 		&& NPC->health < NPC->max_health*0.75f
 		&& !Q_irand( 0, 2 ) )
 	{
-		if ( (NPC->client->ps.forcePowersKnown&(1<<FP_RAGE)) != 0
+		if ( (jar::enlightenment::Known(NPC->client->ps)&(1<<FP_RAGE)) != 0
 			&& (NPC->client->ps.forcePowersActive&(1<<FP_RAGE)) == 0 )
 		{
 			Jedi_Rage();
@@ -2122,7 +2123,7 @@ qboolean Jedi_DodgeEvasion( gentity_t *self, gentity_t *shooter, trace_t *tr, in
 			}
 			//FIXME: check my overall skill (rank) to determine if I should be able to dodge it?
 			//check force speed power level to determine if I should be able to dodge it
-			if ( Q_irand( 0, 3 ) > self->client->ps.forcePowerLevel[FP_SPEED] )
+			if ( Q_irand( 0, 3 ) > jar::enlightenment::Rank(self->client->ps,FP_SPEED) )
 			{//more likely to fail on lower force speed level, but NPCs are generally better at it than the player
 				return qfalse;
 			}
@@ -2139,7 +2140,7 @@ qboolean Jedi_DodgeEvasion( gentity_t *self, gentity_t *shooter, trace_t *tr, in
 			}
 		}
 		//check force speed power level to determine if I should be able to dodge it
-		if ( Q_irand( 1, 10 ) > self->client->ps.forcePowerLevel[FP_SPEED] )
+		if ( Q_irand( 1, 10 ) > jar::enlightenment::Rank(self->client->ps,FP_SPEED) )
 		{//more likely to fail on lower force speed level
 			return qfalse;
 		}
@@ -2650,7 +2651,7 @@ int Jedi_ReCalcParryTime( gentity_t *self, evasionType_t evasionType )
 	}
 	if ( !self->s.number )
 	{//player
-		return parryDebounce[self->client->ps.forcePowerLevel[FP_SABER_DEFENSE]];
+		return parryDebounce[jar::enlightenment::Rank(self->client->ps,FP_SABER_DEFENSE)];
 	}
 	else if ( self->NPC )
 	{
@@ -2801,8 +2802,8 @@ qboolean Jedi_QuickReactions( gentity_t *self )
 {
 	if ( ( self->client->NPC_class == CLASS_JEDI && NPCInfo->rank == RANK_COMMANDER ) ||
 		self->client->NPC_class == CLASS_SHADOWTROOPER || self->client->NPC_class == CLASS_ALORA || self->client->NPC_class == CLASS_TAVION ||
-		(self->client->ps.forcePowerLevel[FP_SABER_DEFENSE]>FORCE_LEVEL_1&&g_spskill->integer>1) ||
-		(self->client->ps.forcePowerLevel[FP_SABER_DEFENSE]>FORCE_LEVEL_2&&g_spskill->integer>0) )
+		(jar::enlightenment::Rank(self->client->ps,FP_SABER_DEFENSE)>FORCE_LEVEL_1&&g_spskill->integer>1) ||
+		(jar::enlightenment::Rank(self->client->ps,FP_SABER_DEFENSE)>FORCE_LEVEL_2&&g_spskill->integer>0) )
 	{
 		return qtrue;
 	}
@@ -4647,7 +4648,7 @@ static void Jedi_FaceEnemy( qboolean doPitch )
 		return;
 
 	if ( NPC->client->ps.forcePowersActive & (1<<FP_GRIP) &&
-		NPC->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_1 )
+		jar::enlightenment::Rank(NPC->client->ps,FP_GRIP) > FORCE_LEVEL_1 )
 	{//don't update?
 		NPCInfo->desiredPitch = NPC->client->ps.viewangles[PITCH];
 		NPCInfo->desiredYaw = NPC->client->ps.viewangles[YAW];
@@ -5812,7 +5813,7 @@ static void Jedi_Combat( void )
 
 	if ( TIMER_Done( NPC, "allyJediDelay" ) )
 	{
-		if ( !(NPC->client->ps.forcePowersActive&(1<<FP_GRIP)) || NPC->client->ps.forcePowerLevel[FP_GRIP] < FORCE_LEVEL_2 )
+		if ( !(NPC->client->ps.forcePowersActive&(1<<FP_GRIP)) || jar::enlightenment::Rank(NPC->client->ps,FP_GRIP) < FORCE_LEVEL_2 )
 		{//not gripping
 			//If we can't get straight at him
 			if ( !Jedi_ClearPathToSpot( enemy_dest, NPC->enemy->s.number ) )
@@ -5957,7 +5958,7 @@ static void Jedi_Combat( void )
 	if ( TIMER_Done( NPC, "allyJediDelay" ) )
 	{
 		if ( ( !NPC->client->ps.saberInFlight || (NPC->client->ps.saberAnimLevel == SS_DUAL && NPC->client->ps.saber[1].Active()) )
-			&& (!(NPC->client->ps.forcePowersActive&(1<<FP_GRIP))||NPC->client->ps.forcePowerLevel[FP_GRIP] < FORCE_LEVEL_2) )
+			&& (!(NPC->client->ps.forcePowersActive&(1<<FP_GRIP))||jar::enlightenment::Rank(NPC->client->ps,FP_GRIP) < FORCE_LEVEL_2) )
 		{//not throwing saber or using force grip
 			//see if we can attack
 			if ( !Jedi_AttackDecide( enemy_dist ) )
@@ -6111,7 +6112,7 @@ void NPC_Jedi_Pain( gentity_t *self, gentity_t *inflictor, gentity_t *other, con
 			|| mod == MOD_FORCE_LIGHTNING
 			|| mod == MOD_FORCE_DRAIN )
 		{//see if we should turn on absorb
-			if ( (self->client->ps.forcePowersKnown&(1<<FP_ABSORB)) != 0
+			if ( (jar::enlightenment::Known(self->client->ps)&(1<<FP_ABSORB)) != 0
 				&& (self->client->ps.forcePowersActive&(1<<FP_ABSORB)) == 0 )
 			{//know absorb and not already using it
 				if ( other->s.number >= MAX_CLIENTS //enemy is an NPC
@@ -6129,7 +6130,7 @@ void NPC_Jedi_Pain( gentity_t *self, gentity_t *inflictor, gentity_t *other, con
 		}
 		else if ( damage > Q_irand( 5, 20 ) )
 		{//respectable amount of normal damage
-			if ( (self->client->ps.forcePowersKnown&(1<<FP_PROTECT)) != 0
+			if ( (jar::enlightenment::Known(self->client->ps)&(1<<FP_PROTECT)) != 0
 				&& (self->client->ps.forcePowersActive&(1<<FP_PROTECT)) == 0 )
 			{//know protect and not already using it
 				if ( other->s.number >= MAX_CLIENTS //enemy is an NPC
@@ -6510,7 +6511,7 @@ void NPC_BSJedi_FollowLeader( void )
 
 	if (!NPC->enemy &&
 		NPC->health < NPC->max_health &&
-		(NPC->client->ps.forcePowersKnown&(1<<FP_HEAL)) != 0  &&
+		(jar::enlightenment::Known(NPC->client->ps)&(1<<FP_HEAL)) != 0  &&
         (NPC->client->ps.forcePowersActive&(1<<FP_HEAL)) == 0 &&
 		TIMER_Done(NPC, "FollowHealDebouncer"))
 	{
@@ -6618,7 +6619,7 @@ static void Jedi_Attack( void )
 	{
 		//FIXME: maybe kick out of saberlock?
 		//maybe if I'm losing I should try to force-push out of it?  Very rarely, though...
-		if ( NPC->client->ps.forcePowerLevel[FP_PUSH] > FORCE_LEVEL_2
+		if ( jar::enlightenment::Rank(NPC->client->ps,FP_PUSH) > FORCE_LEVEL_2
 			&& NPC->client->ps.saberLockTime < level.time + 5000
 			&& !Q_irand( 0, 10 ))
 		{
@@ -6792,7 +6793,7 @@ static void Jedi_Attack( void )
 							{
 								Tavion_SithSwordRecharge();
 							}
-							else if ( (NPC->client->ps.forcePowersKnown&(1<<FP_HEAL)) != 0
+							else if ( (jar::enlightenment::Known(NPC->client->ps)&(1<<FP_HEAL)) != 0
 								&& (NPC->client->ps.forcePowersActive&(1<<FP_HEAL)) == 0 )
 							{
 								ForceHeal( NPC );
@@ -6868,7 +6869,7 @@ static void Jedi_Attack( void )
 	Jedi_Combat();
 
 	if ( !(NPCInfo->scriptFlags&SCF_CHASE_ENEMIES)
-		|| ((NPC->client->ps.forcePowersActive&(1<<FP_HEAL))&&NPC->client->ps.forcePowerLevel[FP_HEAL]<FORCE_LEVEL_2))
+		|| ((NPC->client->ps.forcePowersActive&(1<<FP_HEAL))&&jar::enlightenment::Rank(NPC->client->ps,FP_HEAL)<FORCE_LEVEL_2))
 	{//this is really stupid, but okay...
 		ucmd.forwardmove = 0;
 		ucmd.rightmove = 0;
@@ -6905,7 +6906,7 @@ static void Jedi_Attack( void )
 	}
 
 	if( (NPCInfo->scriptFlags&SCF_DONT_FIRE) //not allowed to attack
-		|| ((NPC->client->ps.forcePowersActive&(1<<FP_HEAL))&&NPC->client->ps.forcePowerLevel[FP_HEAL]<FORCE_LEVEL_3)
+		|| ((NPC->client->ps.forcePowersActive&(1<<FP_HEAL))&&jar::enlightenment::Rank(NPC->client->ps,FP_HEAL)<FORCE_LEVEL_3)
 		|| ((NPC->client->ps.saberEventFlags&SEF_INWATER)&&!NPC->client->ps.saberInFlight) )//saber in water
 	{
 		ucmd.buttons &= ~(BUTTON_ATTACK|BUTTON_ALT_ATTACK|BUTTON_FORCE_FOCUS);
@@ -7125,9 +7126,12 @@ qboolean Kothos_HealRosh( void )
 			}
 			//BEG HACK LINE
 			gentity_t *tent = G_TempEntity( NPC->currentOrigin, EV_KOTHOS_BEAM );
-			tent->svFlags |= SVF_BROADCAST;
-			tent->s.otherEntityNum = NPC->s.number;
-			tent->s.otherEntityNum2 = NPC->client->leader->s.number;
+			if (tent)
+			{
+				tent->svFlags |= SVF_BROADCAST;
+				tent->s.otherEntityNum = NPC->s.number;
+				tent->s.otherEntityNum2 = NPC->client->leader->s.number;
+			}
 			//END HACK LINE
 
 			NPC->client->leader->health += Q_irand( 1+g_spskill->integer*2, 4+g_spskill->integer*3 );//from 1-5 to 4-10
@@ -7258,7 +7262,7 @@ qboolean Jedi_InSpecialMove( void )
 	/*
 	if ( NPC->client->ps.forceGripEntityNum < ENTITYNUM_WORLD
 		&& (NPC->client->ps.forcePowersActive&(1<<FP_GRIP))
-		&& NPC->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_2 )
+		&& jar::enlightenment::Rank(NPC->client->ps,FP_GRIP) > FORCE_LEVEL_2 )
 	{//stop facing the enemy, just use your current angles
 		NPC_UpdateAngles( qtrue, qtrue );
 	}
@@ -7489,7 +7493,7 @@ qboolean Jedi_InSpecialMove( void )
 								case 9:
 								default:
 									ForceLightning( NPC );
-									if ( NPC->client->ps.forcePowerLevel[FP_LIGHTNING] > FORCE_LEVEL_1 )
+									if ( jar::enlightenment::Rank(NPC->client->ps,FP_LIGHTNING) > FORCE_LEVEL_1 )
 									{
 										NPC->client->ps.weaponTime = Q_irand( 3000, 6000 )+(2-g_spskill->integer)*2000;
 										TIMER_Set( NPC, "holdLightning", NPC->client->ps.weaponTime );

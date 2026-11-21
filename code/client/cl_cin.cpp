@@ -62,6 +62,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #define MAX_VIDEO_HANDLES	16
 
+extern void S_JAR_ResetCinematicAudio(int handle);
+extern void S_JAR_RewindCinematicAudio(int handle);
+extern bool S_JAR_CinematicSamples(int handle,const char *name,int frames,float volume);
 extern void S_CIN_StopSound(sfxHandle_t sfxHandle);
 static void RoQ_init( void );
 
@@ -1112,6 +1115,7 @@ static byte* RoQFetchInterlaced( byte *source ) {
 static void RoQReset( void ) {
 
 	if (currentHandle < 0) return;
+	S_JAR_RewindCinematicAudio(currentHandle);
 
 	FS_FCloseFile( cinTable[currentHandle].iFile );
 	FS_FOpenFileRead (cinTable[currentHandle].fileName, &cinTable[currentHandle].iFile, qtrue);
@@ -1182,7 +1186,8 @@ redump:
 		case	ZA_SOUND_MONO:
 			if (!cinTable[currentHandle].silent) {
 				ssize = RllDecodeMonoToStereo( framedata, sbuf, cinTable[currentHandle].RoQFrameSize, 0, (unsigned short)cinTable[currentHandle].roq_flags);
-                S_RawSamples( ssize, 22050, 2, 1, (byte *)sbuf, s_volume->value, qtrue );
+                if(!S_JAR_CinematicSamples(currentHandle,cinTable[currentHandle].fileName,ssize,s_volume->value))
+                    S_RawSamples( ssize, 22050, 2, 1, (byte *)sbuf, s_volume->value, qtrue );
 			}
 			break;
 		case	ZA_SOUND_STEREO:
@@ -1192,7 +1197,8 @@ redump:
 					s_rawend = s_soundtime;
 				}
 				ssize = RllDecodeStereoToStereo( framedata, sbuf, cinTable[currentHandle].RoQFrameSize, 0, (unsigned short)cinTable[currentHandle].roq_flags);
-                S_RawSamples( ssize, 22050, 2, 2, (byte *)sbuf, s_volume->value, qtrue );
+                if(!S_JAR_CinematicSamples(currentHandle,cinTable[currentHandle].fileName,ssize,s_volume->value))
+                    S_RawSamples( ssize, 22050, 2, 2, (byte *)sbuf, s_volume->value, qtrue );
 			}
 			break;
 		case	ROQ_QUAD_INFO:
@@ -1307,6 +1313,7 @@ static void RoQ_init( void )
 ******************************************************************************/
 
 static void RoQShutdown( void ) {
+	S_JAR_ResetCinematicAudio(currentHandle);
 	const char *s;
 
 	if (!cinTable[currentHandle].buf) {
@@ -1361,12 +1368,14 @@ CIN_StopCinematic
 
 e_status CIN_StopCinematic(int handle) {
 
-	if (handle < 0 || handle>= MAX_VIDEO_HANDLES || cinTable[handle].status == FMV_EOF) return FMV_EOF;
+    if(handle<0 || handle>=MAX_VIDEO_HANDLES)return FMV_EOF;
+    if(cinTable[handle].status==FMV_EOF){S_JAR_ResetCinematicAudio(handle);return FMV_EOF;}
 	currentHandle = handle;
 
 	Com_DPrintf("trFMV::stop(), closing %s\n", cinTable[currentHandle].fileName);
 
 	if (!cinTable[currentHandle].buf) {
+		S_JAR_ResetCinematicAudio(handle);
 		if (cinTable[currentHandle].iFile) {
 //			assert( 0 && "ROQ handle leak-prevention WAS needed!");
 			FS_FCloseFile( cinTable[currentHandle].iFile );
@@ -1499,6 +1508,7 @@ int CIN_PlayCinematic( const char *arg, int x, int y, int w, int h, int systemBi
 
 	memset(&cin, 0, sizeof(cinematics_t) );
 	currentHandle = CIN_HandleForVideo();
+	S_JAR_ResetCinematicAudio(currentHandle);
 
 	cin.currentHandle = currentHandle;
 
@@ -1667,7 +1677,7 @@ static void CIN_AddTextCrawl()
 
 	// render it out
 	re.ClearScene();
-	re.AddPolyToScene( cinTable[CL_handle].hCRAWLTEXT, 4, verts );
+	re.AddPolyToScene( cinTable[CL_handle].hCRAWLTEXT, 4, verts, 1 );
 	re.RenderScene( &refdef );
 
 	//time's up

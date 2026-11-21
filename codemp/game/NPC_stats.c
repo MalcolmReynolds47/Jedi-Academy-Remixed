@@ -25,6 +25,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "b_public.h"
 #include "anims.h"
 #include "ghoul2/G2.h"
+#include "g_mp_legacy_droids.inc"
 
 extern qboolean NPCsPrecached;
 
@@ -64,15 +65,18 @@ stringID_table_t ClassTable[] =
 	ENUM2STRING(CLASS_JAN),
 	ENUM2STRING(CLASS_JEDI),
 	ENUM2STRING(CLASS_KYLE),
+	{ "kyle", CLASS_KYLE }, // Retail nullDriver.
 	ENUM2STRING(CLASS_LANDO),
 	ENUM2STRING(CLASS_LIZARD),
 	ENUM2STRING(CLASS_LUKE),
 	ENUM2STRING(CLASS_MARK1),			// droid
 	ENUM2STRING(CLASS_MARK2),			// droid
-	ENUM2STRING(CLASS_GALAKMECH),		// droid
+	ENUM2STRING(CLASS_GALAKMECH),
+	{"CLASS_GALAK_MECH", CLASS_GALAKMECH},		// droid
 	ENUM2STRING(CLASS_MINEMONSTER),
 	ENUM2STRING(CLASS_MONMOTHA),
 	ENUM2STRING(CLASS_MORGANKATARN),
+	{ "CLASS_MORGAN", CLASS_MORGANKATARN }, // Retail morgankatarn.npc alias.
 	ENUM2STRING(CLASS_MOUSE),			// droid
 	ENUM2STRING(CLASS_MURJJ),
 	ENUM2STRING(CLASS_PRISONER),
@@ -595,7 +599,8 @@ void NPC_Precache ( gentity_t *spawner )
 	char	*patch;
 	char	sound[MAX_QPATH];
 	qboolean	md3Model = qfalse;
-	char	playerModel[MAX_QPATH];
+	char	playerModel[MAX_QPATH] = {0};
+	jarDroidParts_t legacyParts = {{0},{0},{0}};
 	char	customSkin[MAX_QPATH];
 	char	sessionName[MAX_QPATH+15];
 
@@ -656,6 +661,7 @@ void NPC_Precache ( gentity_t *spawner )
 			{
 				continue;
 			}
+			Q_strncpyz(legacyParts.head,value,sizeof(legacyParts.head));
 
 			if(!Q_stricmp("none", value))
 			{
@@ -675,6 +681,7 @@ void NPC_Precache ( gentity_t *spawner )
 			{
 				continue;
 			}
+			Q_strncpyz(legacyParts.torso,value,sizeof(legacyParts.torso));
 
 			if(!Q_stricmp("none", value))
 			{
@@ -694,6 +701,7 @@ void NPC_Precache ( gentity_t *spawner )
 			{
 				continue;
 			}
+			Q_strncpyz(legacyParts.legs,value,sizeof(legacyParts.legs));
 			//Q_strncpyz( ri.legsModelName, value, sizeof(ri.legsModelName), qtrue);
 			md3Model = qtrue;
 			continue;
@@ -732,7 +740,7 @@ void NPC_Precache ( gentity_t *spawner )
 				continue;
 			}
 			//playerTeam = TranslateTeamName(value);
-			Com_sprintf(tk, sizeof(tk), "NPC%s", token);
+			Com_sprintf(tk, sizeof(tk), "NPC%s", value);
 			playerTeam = GetIDForString( TeamTable, tk );
 			continue;
 		}
@@ -832,6 +840,8 @@ void NPC_Precache ( gentity_t *spawner )
 			continue;
 		}
 	}
+
+	if(!JAR_MPAdaptDroid(spawner->NPC_type,playerModel,customSkin,&legacyParts,&md3Model))return;
 
 	// If we're not a vehicle, then an error here would be valid...
 	if ( !spawner->client || spawner->client->NPC_class != CLASS_VEHICLE )
@@ -972,7 +982,8 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 	float	f;
 	char	*patch;
 	char	sound[MAX_QPATH];
-	char	playerModel[MAX_QPATH];
+	char	playerModel[MAX_QPATH] = {0};
+	jarDroidParts_t legacyParts = {{0},{0},{0}};
 	char	customSkin[MAX_QPATH];
 	char	sessionName[MAX_QPATH+17];
 	renderInfo_t	*ri = &NPC->client->renderInfo;
@@ -1518,6 +1529,7 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 				{
 					continue;
 				}
+			Q_strncpyz(legacyParts.head,value,sizeof(legacyParts.head));
 
 				if(!Q_stricmp("none", value))
 				{
@@ -1537,6 +1549,7 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 				{
 					continue;
 				}
+			Q_strncpyz(legacyParts.torso,value,sizeof(legacyParts.torso));
 
 				if(!Q_stricmp("none", value))
 				{
@@ -1556,6 +1569,7 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 				{
 					continue;
 				}
+			Q_strncpyz(legacyParts.legs,value,sizeof(legacyParts.legs));
 				/*
 				Q_strncpyz( ri->legsModelName, value, sizeof(ri->legsModelName), qtrue);
 				//Need to do this here to get the right index
@@ -2135,7 +2149,7 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 				{
 					continue;
 				}
-				Com_sprintf(tk, sizeof(tk), "NPC%s", token);
+				Com_sprintf(tk, sizeof(tk), "NPC%s", value);
 				NPC->client->playerTeam = NPC->s.teamowner = (team_t)GetIDForString( TeamTable, tk );//TranslateTeamName(value);
 				continue;
 			}
@@ -2149,7 +2163,7 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 				{
 					continue;
 				}
-				Com_sprintf(tk, sizeof(tk), "NPC%s", token);
+				Com_sprintf(tk, sizeof(tk), "NPC%s", value);
 				NPC->client->enemyTeam = GetIDForString( TeamTable, tk );//TranslateTeamName(value);
 				continue;
 			}
@@ -3494,6 +3508,8 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 		}
 	}
 
+	if(!JAR_MPAdaptDroid(NPCName,playerModel,customSkin,&legacyParts,&md3Model))return qfalse;
+
 /*
 Ghoul2 Insert Start
 */
@@ -3558,56 +3574,4 @@ Ghoul2 Insert End
 
 char npcParseBuffer[MAX_NPC_DATA_SIZE];
 
-void NPC_LoadParms( void )
-{
-	int			len, totallen, npcExtFNLen, fileCnt, i;
-//	const char	*filename = "ext_data/NPC2.cfg";
-	char		/**buffer,*/ *holdChar, *marker;
-	char		npcExtensionListBuf[2048];			//	The list of file names read in
-	fileHandle_t f;
-	len = 0;
-
-	//remember where to store the next one
-	totallen = len;
-	marker = NPCParms+totallen;
-	*marker = 0;
-
-	//now load in the extra .npc extensions
-	fileCnt = trap->FS_GetFileList("ext_data/NPCs", ".npc", npcExtensionListBuf, sizeof(npcExtensionListBuf) );
-
-	holdChar = npcExtensionListBuf;
-	for ( i = 0; i < fileCnt; i++, holdChar += npcExtFNLen + 1 )
-	{
-		npcExtFNLen = strlen( holdChar );
-
-//		Com_Printf( "Parsing %s\n", holdChar );
-
-		len = trap->FS_Open(va( "ext_data/NPCs/%s", holdChar), &f, FS_READ);
-
-		if ( len == -1 )
-		{
-			Com_Printf( "error reading file\n" );
-		}
-		else
-		{
-			if ( totallen + len >= MAX_NPC_DATA_SIZE ) {
-				trap->FS_Close( f );
-				trap->Error( ERR_DROP, "NPC extensions (*.npc) are too large" );
-			}
-			trap->FS_Read(npcParseBuffer, len, f);
-			npcParseBuffer[len] = 0;
-
-			len = COM_Compress( npcParseBuffer );
-
-			strcat( marker, npcParseBuffer );
-			strcat(marker, "\n");
-			len++;
-			trap->FS_Close(f);
-
-			totallen += len;
-			marker = NPCParms+totallen;
-			//*marker = 0; //rww - make sure this is null or strcat will not append to the correct place
-			//rww  12/19/02-actually the probelm was npcParseBuffer not being nul-term'd, which could cause issues in the strcat too
-		}
-	}
-}
+#include "g_npc_load.inc"

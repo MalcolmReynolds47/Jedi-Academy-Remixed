@@ -22,6 +22,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "cg_headers.h"
+#include "../game/g_carried_weapon_art.h"
+#include "../game/g_workshop.h"
 
 #include "cg_media.h"
 #include "FxScheduler.h"
@@ -29,6 +31,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../game/g_vehicles.h"
 
 #include "../game/anims.h"
+#include "qcommon/jar_force_enlightenment.h"
 
 extern void CG_LightningBolt( centity_t *cent, vec3_t origin );
 
@@ -111,11 +114,26 @@ void CG_RegisterWeapon( int weaponNum ) {
 		weaponInfo->weaponMidpoint[i] = mins[i] + 0.5 * ( maxs[i] - mins[i] );
 	}
 
-	// setup the shader we will use for the icon
-	if (weaponData[weaponNum].weaponIcon[0])
+	const auto* carriedArt = jar::carriedWeapon::StockWeaponArt(weaponNum);
+	if (carriedArt)
 	{
-		weaponInfo->weaponIcon = cgi_R_RegisterShaderNoMip( weaponData[weaponNum].weaponIcon);
-		weaponInfo->weaponIconNoAmmo = cgi_R_RegisterShaderNoMip( va("%s_na",weaponData[weaponNum].weaponIcon));
+		weaponInfo->carriedViewModel = cgi_R_RegisterModel(carriedArt->view);
+		weaponInfo->carriedHandsModel = cgi_R_RegisterModel(carriedArt->hands);
+		if (carriedArt->barrel)
+			weaponInfo->carriedBarrelModel = cgi_R_RegisterModel(carriedArt->barrel);
+		// Publish a complete set. The native empty view is still valid.
+		if (!weaponInfo->carriedHandsModel || (carriedArt->barrel && !weaponInfo->carriedBarrelModel))
+			weaponInfo->carriedViewModel = 0;
+	}
+
+	// setup the shader we will use for the icon
+	const char* icon = weaponData[weaponNum].weaponIcon;
+	if (!icon[0] && carriedArt)
+		icon = carriedArt->icon;
+	if (icon[0])
+	{
+		weaponInfo->weaponIcon = cgi_R_RegisterShaderNoMip(icon);
+		weaponInfo->weaponIconNoAmmo = JAR_ToolWeapon(weaponNum)?weaponInfo->weaponIcon:cgi_R_RegisterShaderNoMip(va("%s_na",icon));
 	}
 
 	for ( ammo = bg_itemlist + 1 ; ammo->classname ; ammo++ ) {
@@ -348,7 +366,6 @@ void CG_RegisterWeapon( int weaponNum ) {
 		cgi_R_RegisterShader( "gfx/effects/saberDamageGlow" );
 		cgi_R_RegisterShader( "gfx/effects/solidWhite_cull" );
 		cgi_R_RegisterShader( "gfx/effects/forcePush" );
-		cgi_R_RegisterShader( "gfx/effects/saberFlare" );
 		cgs.media.redSaberGlowShader		= cgi_R_RegisterShader( "gfx/effects/sabers/red_glow" );
 		cgs.media.redSaberCoreShader		= cgi_R_RegisterShader( "gfx/effects/sabers/red_line" );
 		cgs.media.orangeSaberGlowShader		= cgi_R_RegisterShader( "gfx/effects/sabers/orange_glow" );
@@ -644,9 +661,15 @@ void CG_RegisterItemVisuals( int itemNum ) {
 
 	itemInfo->models = cgi_R_RegisterModel( item->world_model );
 
-	if ( item->icon && item->icon[0] )
+	const char* icon = item->icon;
+	if (!icon || !icon[0])
 	{
-		itemInfo->icon = cgi_R_RegisterShaderNoMip( item->icon );
+		if (const auto* art = jar::carriedWeapon::StockPickupArt(*item))
+			icon = art->icon;
+	}
+	if (icon && icon[0])
+	{
+		itemInfo->icon = cgi_R_RegisterShaderNoMip(icon);
 	}
 	else
 	{
@@ -999,7 +1022,7 @@ void CG_AddViewWeapon( playerState_t *ps )
 
 		VectorCopy( cent->gent->client->renderInfo.handLPoint, temp );
 		VectorMA( temp, -5, cg.refdef.viewaxis[0], temp );
-		if ( cent->gent->client->ps.forcePowerLevel[FP_LIGHTNING] > FORCE_LEVEL_2 )
+		if ( jar::enlightenment::Rank(cent->gent->client->ps,FP_LIGHTNING) > FORCE_LEVEL_2 )
 		{//arc
 			//vec3_t	fxAxis[3];
 			//AnglesToAxis( tAng, fxAxis );
@@ -1019,7 +1042,7 @@ void CG_AddViewWeapon( playerState_t *ps )
 
 		VectorCopy( cent->gent->client->renderInfo.handLPoint, temp );
 		VectorMA( temp, -5, cg.refdef.viewaxis[0], temp );
-		if ( cent->gent->client->ps.forcePowerLevel[FP_DRAIN] > FORCE_LEVEL_2 )
+		if ( jar::enlightenment::Rank(cent->gent->client->ps,FP_DRAIN) > FORCE_LEVEL_2 )
 		{//arc
 			//vec3_t	fxAxis[3];
 			//AnglesToAxis( tAng, fxAxis );
@@ -1092,6 +1115,12 @@ void CG_AddViewWeapon( playerState_t *ps )
 	CG_RegisterWeapon( ps->weapon );
 	weapon = &cg_weapons[ps->weapon];
 	wData =  &weaponData[ps->weapon];
+
+	const bool carriedArt = weapon->carriedViewModel && cent->gent &&
+		jar::carriedWeapon::OnFoot(*cent->gent);
+	const qhandle_t viewModel = carriedArt ? weapon->carriedViewModel : weapon->weaponModel;
+	const qhandle_t handsModel = carriedArt ? weapon->carriedHandsModel : weapon->handsModel;
+	const int barrelCount = carriedArt ? int(weapon->carriedBarrelModel != 0) : wData->numBarrels;
 
 	memset (&hand, 0, sizeof(hand));
 
@@ -1179,14 +1208,14 @@ void CG_AddViewWeapon( playerState_t *ps )
 		refEntity_t	gun;
 		memset (&gun, 0, sizeof(gun));
 
-		gun.hModel = weapon->weaponModel;
+		gun.hModel = viewModel;
 		if (!gun.hModel)
 		{
 			return;
 		}
 
 		AnglesToAxis( angles, gun.axis );
-		CG_PositionEntityOnTag( &gun, &hand, weapon->handsModel, "tag_weapon");
+		CG_PositionEntityOnTag( &gun, &hand, handsModel, "tag_weapon");
 
 		gun.renderfx = RF_DEPTHHACK | RF_FIRST_PERSON;
 
@@ -1237,11 +1266,11 @@ void CG_AddViewWeapon( playerState_t *ps )
 		}
 	*/
 		// add the spinning barrel[s]
-		for (int i = 0; (i < wData->numBarrels); i++)
+		for (int i = 0; i < barrelCount; i++)
 		{
 			refEntity_t	barrel;
 			memset( &barrel, 0, sizeof( barrel ) );
-			barrel.hModel = weapon->barrelModel[i];
+			barrel.hModel = carriedArt ? weapon->carriedBarrelModel : weapon->barrelModel[i];
 
 			//VectorCopy( parent->lightingOrigin, barrel.lightingOrigin );
 			//barrel.shadowPlane = parent->shadowPlane;
@@ -1257,10 +1286,10 @@ void CG_AddViewWeapon( playerState_t *ps )
 			AnglesToAxis( angles, barrel.axis );
 			if (!i)
 			{
-				CG_PositionRotatedEntityOnTag( &barrel, &hand, weapon->handsModel, "tag_barrel", NULL );
+				CG_PositionRotatedEntityOnTag( &barrel, &hand, handsModel, "tag_barrel", NULL );
 			} else
 			{
-				CG_PositionRotatedEntityOnTag( &barrel, &hand, weapon->handsModel, va("tag_barrel%d",i+1), NULL );
+				CG_PositionRotatedEntityOnTag( &barrel, &hand, handsModel, va("tag_barrel%d",i+1), NULL );
 			}
 
 			cgi_R_AddRefEntityToScene( &barrel );
@@ -1769,6 +1798,7 @@ CG_DrawWeaponSelect
 extern Vehicle_t *G_IsRidingVehicle( gentity_t *ent );
 extern bool G_IsRidingTurboVehicle( gentity_t *ent );
 
+#include "cg_jar_weaponbar.inc"
 void CG_DrawWeaponSelect( void )
 {
 	int		i;
@@ -1797,6 +1827,7 @@ void CG_DrawWeaponSelect( void )
 	}
 
 	cg.iconSelectTime = cg.weaponSelectTime;
+    if(CG_JAR_DrawWeaponBar())return;
 
 	// showing weapon select clears pickup item display, but not the blend blob
 	//cg.itemPickupTime = 0;
@@ -2069,7 +2100,7 @@ qboolean CG_WeaponSelectable( int i, int original, qboolean dpMode )
 {
 	int	usage_for_weap;
 
-	if (i > MAX_PLAYER_WEAPONS)
+	if (i<0 || (i > MAX_PLAYER_WEAPONS && !JAR_ToolWeapon(i)) || (JAR_ToolWeapon(i) && !gi.cvar("jar_sandbox","0",CVAR_ARCHIVE)->integer))
 	{
 #ifndef FINAL_BUILD
 		Com_Printf("CG_WeaponSelectable() passed illegal index of %d!\n",i);
@@ -2212,6 +2243,7 @@ void CG_NextWeapon_f( void ) {
 		}
 	}
 
+    if(G_JAR_WorkshopCycleWeapon(1))return;
 	original = cg.weaponSelect;
 
 	int firstWeapon = FIRST_WEAPON;
@@ -2416,6 +2448,7 @@ void CG_PrevWeapon_f( void ) {
 		}
 	}
 
+    if(G_JAR_WorkshopCycleWeapon(-1))return;
 	original = cg.weaponSelect;
 
 	int firstWeapon = FIRST_WEAPON;
@@ -2467,6 +2500,7 @@ void CG_ChangeWeapon( int num )
 */
 void CG_ChangeWeapon( int num )
 {
+    if(JAR_ToolWeapon(num) && !gi.cvar("jar_sandbox","0",CVAR_ARCHIVE)->integer)return;
 	gentity_t	*player = &g_entities[0];
 
 	if ( num < WP_NONE || num >= WP_NUM_WEAPONS )

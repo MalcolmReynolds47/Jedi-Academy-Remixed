@@ -1592,7 +1592,8 @@ void CM_TraceThroughPatchCollide( traceWork_t *tw, const struct patchCollide_s *
 			}
 		}
 		else {
-			offset = DotProduct( tw->offsets[ planes->signbits ], plane);
+			offset = tw->workshopHull ? CM_WorkshopHullMin(*tw,plane) :
+				DotProduct(tw->offsets[planes->signbits],plane);
 			plane[3] -= offset;
 			VectorCopy( tw->start, startp );
 			VectorCopy( tw->end, endp );
@@ -1632,8 +1633,12 @@ void CM_TraceThroughPatchCollide( traceWork_t *tw, const struct patchCollide_s *
 			}
 			else {
 				// NOTE: this works even though the plane might be flipped because the bbox is centered
-				offset = DotProduct( tw->offsets[ planes->signbits ], plane);
-				plane[3] += fabs(offset);
+				if (tw->workshopHull) {
+					plane[3] -= CM_WorkshopHullMin(*tw,plane);
+				} else {
+					offset = DotProduct(tw->offsets[planes->signbits],plane);
+					plane[3] += fabs(offset);
+				}
 				VectorCopy( tw->start, startp );
 				VectorCopy( tw->end, endp );
 			}
@@ -1666,6 +1671,7 @@ void CM_TraceThroughPatchCollide( traceWork_t *tw, const struct patchCollide_s *
 				tw->trace.fraction = enterFrac;
 				VectorCopy( bestplane, tw->trace.plane.normal );
 				tw->trace.plane.dist = bestplane[3];
+				if (tw->workshopHull) tw->trace.plane.dist += CM_WorkshopHullMin(*tw,bestplane);
 			}
 		}
 	}
@@ -1713,6 +1719,14 @@ qboolean CM_PositionTestInPatchCollide( traceWork_t *tw, const struct patchColli
 	planes = pc->planes;
 	for ( i = 0 ; i < pc->numPlanes ; i++, planes++ ) {
 		d = DotProduct( tw->start, planes->plane ) - planes->plane[3];
+		if (tw->workshopHull) {
+			vec3_t opposite;
+			VectorNegate(planes->plane,opposite);
+			if (d-CM_WorkshopHullMin(*tw,opposite)<0) cross[i]=BOX_FRONT;
+			else if (d+CM_WorkshopHullMin(*tw,planes->plane)>0) cross[i]=BOX_BACK;
+			else cross[i]=BOX_CROSS;
+			continue;
+		}
 		offset = fabs( DotProduct( tw->offsets[ planes->signbits ], planes->plane ) );
 		if ( d < -offset ) {
 			cross[i] = BOX_FRONT;

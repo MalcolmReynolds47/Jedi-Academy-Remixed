@@ -1,0 +1,7 @@
+static void ActionMenuCases(void){
+ args[1]="81";CG_JAR_ContextDown();args[1]="64";args[2]="0";args[3]="1";args[4]="99";args[5]="1";args[6]="0";args[7]="6783";args[8]="1";args[9]="0";args[10]="80";args[11]=args[12]="0";CG_JAR_Selection();
+ args[1]="99";args[2]="16";args[3]=args[4]=args[5]=args[6]=args[7]=args[8]=args[9]=args[11]=args[12]=args[13]="0";args[10]="-";CG_JAR_Controller();assert(contextControllerKind==16);contextPage=1;CG_JAR_Draw();Click(450,238);assert(!strcmp(request,"jar_property controller_enabled 99"));
+ args[2]="17";args[7]="-50";CG_JAR_Controller();assert(contextControllerKind==17&&contextController.count==-50);CG_JAR_Draw();Click(450,155);assert(contextEditing==207);CG_JAR_Key('-'|K_CHAR_FLAG,qtrue);CG_JAR_Key('2'|K_CHAR_FLAG,qtrue);CG_JAR_Key('5'|K_CHAR_FLAG,qtrue);CG_JAR_Key(A_ENTER,qtrue);assert(!strcmp(request,"jar_property controller_points_-25 99"));
+ args[7]="-32000";CG_JAR_Controller();assert(contextController.count==-32000);args[7]="0";args[2]="18";CG_JAR_Controller();assert(contextControllerKind==18);CG_JAR_Draw();Click(450,155);assert(!strcmp(request,"jar_property controller_flags_1 99"));args[5]="2";CG_JAR_Controller();CG_JAR_Draw();Click(450,155);assert(!strcmp(request,"jar_property controller_flags_0 99"));args[5]="3";CG_JAR_Controller();assert(contextController.flags==2);CG_JAR_Key(A_ESCAPE,qtrue);
+ puts("MP action UI: Give help, signed score input, kill modes, Enabled and echoed bounds passed.");
+}

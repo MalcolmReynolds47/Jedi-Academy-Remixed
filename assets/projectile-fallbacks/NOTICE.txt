@@ -1,0 +1,3 @@
+Original Jedi Academy Remixed effect definitions. GPL-2.0-only, same license as the project.
+References installed Jedi Academy shaders by name; no retail image or shader is copied here.
+The two files fill missing native vehicle effects only. Existing custom effects have priority.

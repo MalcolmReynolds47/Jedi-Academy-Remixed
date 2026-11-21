@@ -24,6 +24,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // cg_event.c -- handle entity events at snapshot or playerstate transitions
 
 #include "cg_local.h"
+#include "game/jar_mp_section_city_event.h"
+#include "game/jar_mp_emplaced.h"
 #include "fx_local.h"
 #include "ui/ui_shared.h"
 #include "ui/ui_public.h"
@@ -1326,20 +1328,9 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 		clientNum = es->number;
 
 		if (!cent->npcClient)
-		{
-			CG_CreateNPCClient(&cent->npcClient); //allocate memory for it
-
-			if (!cent->npcClient)
-			{
-				assert(0);
-				return;
-			}
-
-			memset(cent->npcClient, 0, sizeof(clientInfo_t));
-			cent->npcClient->ghoul2Model = NULL;
-		}
-
-		assert( cent->npcClient );
+			CG_CreateNPCClient(&cent->npcClient);
+		if (!cent->npcClient)
+			return;
 	}
 
 	switch ( event ) {
@@ -2043,6 +2034,12 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 			if ( !weaponInfo->registered )
 			{
 				CG_RegisterWeapon(WP_TURRET);
+			}
+
+			if (JAR_MP_EmplacedState(&cent->currentState)) {
+				if (JAR_MP_ChairState(&cent->currentState))
+					CG_JAR_EmplacedFireEvent(cent, position);
+				break;
 			}
 
 			if (cent->ghoul2)
@@ -3300,7 +3297,8 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 	case EV_DEBRIS:
 		DEBUGNAME("EV_DEBRIS");
 		CG_Chunks(es->owner, es->origin, es->angles, es->origin2, es->angles2, es->speed,
-			es->eventParm, es->trickedentindex, es->modelindex, es->apos.trBase[0]);
+			es->eventParm, es->trickedentindex, es->modelindex, es->apos.trBase[0],
+			es->generic1 == JAR_MP_CITY_BRUSH_MARKER ? es->apos.trDelta : NULL);
 		break;
 
 	case EV_MISC_MODEL_EXP:

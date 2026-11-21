@@ -28,6 +28,9 @@ endif(BuildSPGame)
 
 #    Add Modular Renderer project
 add_subdirectory("${SPDir}/rd-vanilla")
+if(BuildSPRend2)
+	add_subdirectory("${SPDir}/rd-rend2")
+endif()
 
 #    Add Engine Project
 if(BuildSPEngine OR BuildJK2SPEngine)
@@ -116,6 +119,7 @@ if(BuildSPEngine OR BuildJK2SPEngine)
 		"${SPDir}/client/keycodes.h"
 
 		"${SPDir}/client/cl_cgame.cpp"
+		"${SPDir}/client/jar_soundscape.cpp"
 		"${SPDir}/client/cl_cin.cpp"
 		"${SPDir}/client/cl_console.cpp"
 		"${SPDir}/client/cl_input.cpp"
@@ -160,12 +164,16 @@ if(BuildSPEngine OR BuildJK2SPEngine)
 
 		"${SPDir}/qcommon/cmd.cpp"
 		"${SPDir}/qcommon/common.cpp"
+		"${SPDir}/qcommon/jar_diagnostics.cpp"
+	"${SPDir}/qcommon/jar_live_randomizer.cpp"
+		"${SPDir}/qcommon/jar_diagnostics_engine.cpp"
 		"${SPDir}/qcommon/cvar.cpp"
 
 		"${SPDir}/qcommon/files.cpp"
 
 		"${SPDir}/qcommon/md4.cpp"
 		"${SPDir}/qcommon/msg.cpp"
+		"${SPDir}/qcommon/snapshot_codec.cpp"
 		"${SPDir}/qcommon/net_chan.cpp"
 
 		"${SPDir}/qcommon/q_shared.cpp"
@@ -303,6 +311,7 @@ if(BuildSPEngine OR BuildJK2SPEngine)
 		"${SPDir}/ui/ui_atoms.cpp"
 		"${SPDir}/ui/ui_connect.cpp"
 		"${SPDir}/ui/ui_main.cpp"
+		"${SPDir}/ui/ui_jar.cpp"
 		"${SPDir}/ui/ui_saber.cpp"
 		"${SPDir}/ui/ui_shared.cpp"
 		"${SPDir}/ui/ui_syscalls.cpp"
@@ -445,7 +454,13 @@ if(BuildSPEngine OR BuildJK2SPEngine)
 		endif(SPEngineLibraries)
 	endfunction(add_sp_project)
 	if(BuildSPEngine)
-		add_sp_project(${SPEngine} "SP Client" ${SPDir} ${JKAInstallDir} ${JKASPClientComponent})
+		if(WIN32)
+			add_sp_project(${SPEngine} "SP Client" ${SPDir} ${JARRuntimeInstallDir} ${JKASPClientComponent})
+			target_compile_definitions(${SPEngine} PRIVATE JAR_SP_ICON)
+			set_target_properties(${SPEngine} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/engine")
+		else()
+			add_sp_project(${SPEngine} "SP Client" ${SPDir} ${JKAInstallDir} ${JKASPClientComponent})
+		endif()
 	endif(BuildSPEngine)
 	if(BuildJK2SPEngine)
 		set(SPEngineDefines ${SPEngineDefines} "JK2_MODE")

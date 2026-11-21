@@ -23,7 +23,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #pragma once
 
-#define	CGAME_API_VERSION		2
+#include "qcommon/jar_probe.h"
+#include "../../shared/qcommon/jar_portal_limits.h"
+#define	CGAME_API_VERSION		15
 
 #define	CMD_BACKUP			64
 #define	CMD_MASK			(CMD_BACKUP - 1)
@@ -32,7 +34,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // needs to be larger than PACKET_BACKUP
 
 
-#define	MAX_ENTITIES_IN_SNAPSHOT	256
+#define MAX_ENTITIES_IN_SNAPSHOT JAR_MP_SNAPSHOT_ENTITIES
 
 // snapshots are a view of the server at a given time
 
@@ -435,7 +437,13 @@ typedef enum cgameImportLegacy_e {
 	CG_RE_INIT_RENDERER_TERRAIN,
 	CG_R_WEATHER_CONTENTS_OVERRIDE,
 	CG_R_WORLDEFFECTCOMMAND,
-	CG_WE_ADDWEATHERZONE
+	CG_WE_ADDWEATHERZONE,
+	CG_CM_BSPMODELINFO,
+	CG_CM_HOTHSECTIONSKY,
+	CG_CM_RIFTSECTIONAIR,
+	CG_CM_KORRIBANSECTIONFOG,
+	CG_CM_YAVINSECTIONSKY,
+	CG_R_ADDPORTALTOSCENE
 } cgameImportLegacy_t;
 
 typedef enum cgameExportLegacy_e {
@@ -717,6 +725,17 @@ typedef struct cgameImport_s {
 	struct {
 		float			(*R_Font_StrLenPixels)					( const char *text, const int iFontIndex, const float scale );
 	} ext;
+	qboolean (*JAR_GhoulPoseBounds)(void*,int,int*,vec3_t,vec3_t);
+	qboolean (*CM_BSPModelInfo)(const char*,int*,int*);
+	void (*JAR_ApplyFace)(void*,int,int,int,float,qboolean);
+	int (*JAR_SetReflectionProbes)(const jarProbe_t*, int);
+	qboolean (*JAR_TracePropHull)(trace_t*,const entityState_t*,const vec3_t origin,const vec3_t angles,
+		const vec3_t start,const vec3_t end,const vec3_t mins,const vec3_t maxs);
+	qboolean (*CM_HothSectionSky)(int modelIndex, const vec3_t localPoint);
+	qboolean (*CM_RiftSectionAir)(int modelIndex, const vec3_t localPoint);
+	qboolean (*CM_KorribanSectionFog)(int modelIndex);
+	qboolean (*CM_YavinSectionSky)(int modelIndex, const vec3_t localPoint);
+	void (*R_AddPortalToScene)(const jarPortablePortalView_t* view);
 } cgameImport_t;
 
 typedef struct cgameExport_s {

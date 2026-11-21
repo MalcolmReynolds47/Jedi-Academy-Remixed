@@ -1018,6 +1018,9 @@ static qboolean BG_ParseVehicleParm( vehicleInfo_t *vehicle, const char *parmNam
 	return qtrue;
 }
 
+#include "qcommon/jar_vehicle_variants.h"
+#include "qcommon/jar_vehicle_variant_apply.inc"
+
 int VEH_LoadVehicle( const char *vehicleName )
 {//load up specified vehicle and save in array: g_vehicleInfo
 	const char	*token;
@@ -1036,6 +1039,7 @@ int VEH_LoadVehicle( const char *vehicleName )
 	char		weapMuzzle10[128] = { 0 };
 	char		*value = NULL;
 	const char	*p = NULL;
+	const char *jarVariantSkin = NULL;
 	vehicleInfo_t	*vehicle = NULL;
 
 	// Load the vehicle parms if no vehicles have been loaded yet.
@@ -1054,23 +1058,9 @@ int VEH_LoadVehicle( const char *vehicleName )
 #endif
 
 	vehicle = &g_vehicleInfo[numVehicles];
-	// look for the right vehicle
-	while ( p )
-	{
-		token = COM_ParseExt( &p, qtrue );
-		if ( token[0] == 0 )
-		{
-			COM_EndParseSession(  );
-			return VEHICLE_NONE;
-		}
-
-		if ( !Q_stricmp( token, vehicleName ) )
-		{
-			break;
-		}
-
-		SkipBracedSection( &p );
-	}
+	// Explicit definitions take precedence; missing retail color choices use
+	// the qualified stock swoop block and the exact requested stock skin.
+	p = JAR_ResolveVehicleBlock(VehicleParms,vehicleName,&jarVariantSkin);
 
 	if ( !p )
 	{
@@ -1092,6 +1082,7 @@ int VEH_LoadVehicle( const char *vehicleName )
 	}
 
 	BG_VehicleSetDefaults( vehicle );
+	JAR_ApplyVehicleVariant(vehicle,vehicleName,jarVariantSkin);
 	// parse the vehicle info block
 	while ( 1 )
 	{
@@ -1425,7 +1416,7 @@ int VEH_VehicleIndexForName( const char *vehicleName )
 	//haven't loaded it yet
 	if ( v >= MAX_VEHICLES )
 	{//no more room!
-		Com_Printf( S_COLOR_RED"ERROR: Too many Vehicles (max 64), aborting load on %s!\n", vehicleName );
+		Com_Printf( S_COLOR_RED"ERROR: Too many Vehicles (max %d), aborting load on %s!\n", MAX_VEHICLES, vehicleName );
 		return VEHICLE_NONE;
 	}
 	//we have room for another one, load it up and return the index
@@ -1713,3 +1704,41 @@ void AttachRidersGeneric( Vehicle_t *pVeh )
 
 #endif // _JK2MP
 
+
+#ifndef _JK2MP
+#include <vector>
+#include <string>
+#include <set>
+#include <algorithm>
+#include <cctype>
+static void JarVehicleName(std::string& name){std::transform(name.begin(),name.end(),name.begin(),[](unsigned char c){return char(std::tolower(c));});}
+void G_JAR_GetVehicleShots(std::vector<int>& out) {
+    if(numVehicles==0)BG_VehicleLoadParms();
+    std::set<std::string> names;const char *p=VehWeaponParms;COM_BeginParseSession();
+    while(p){std::string name=COM_ParseExt(&p,qtrue);if(name.empty())break;JarVehicleName(name);names.insert(name);SkipBracedSection(&p);}
+    COM_EndParseSession();out.clear();
+    for(const auto& name:names){const int index=VEH_VehWeaponIndexForName(name.c_str());
+        if(index>0&&index<MAX_VEH_WEAPONS&&g_vehWeaponInfo[index].bIsProjectile&&g_vehWeaponInfo[index].fSpeed>0)out.push_back(index);
+        else if(gi.JAR_Log)gi.JAR_Log(1,"randomizer","projectile_catalog_entry","name=vehicle-%s status=unsupported reason=registry-cap-or-nonprojectile-definition",name.c_str());}
+}
+#endif
+
+#ifndef _JK2MP
+// Saved configstrings replace those allocated during BSP spawning. Rebind only
+// resource fields, preserving registry order and all vehicle/weapon identities.
+void G_JAR_RefreshVehicleResources(){
+    const char *p=VehWeaponParms;std::set<std::string> seen;COM_BeginParseSession();
+    while(p){std::string name=COM_ParseExt(&p,qtrue);if(name.empty())break;
+        JarVehicleName(name);const bool first=seen.insert(name).second;int index=0;
+        if(first)for(int i=1;i<numVehicleWeapons;++i)if(g_vehWeaponInfo[i].name&&!Q_stricmp(name.c_str(),g_vehWeaponInfo[i].name)){index=i;break;}
+        if(strcmp(COM_ParseExt(&p,qtrue),"{"))break;
+        while(p){std::string key=COM_ParseExt(&p,qtrue);if(key.empty()||key=="}")break;
+            char value[1024];Q_strncpyz(value,COM_ParseExt(&p,qfalse),sizeof(value));
+            auto field=FindVehWeaponParm(key.c_str());
+            if(index&&field&&(field->type==VF_MODEL||field->type==VF_MODEL_CLIENT||field->type==VF_EFFECT||field->type==VF_EFFECT_CLIENT||field->type==VF_SOUND||field->type==VF_SOUND_CLIENT))BG_ParseVehWeaponParm(&g_vehWeaponInfo[index],key.c_str(),value);
+            SkipRestOfLine(&p);
+        }
+    }
+    COM_EndParseSession();
+}
+#endif

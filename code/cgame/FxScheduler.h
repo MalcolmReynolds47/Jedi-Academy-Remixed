@@ -574,7 +574,7 @@ class PagedPoolAllocator
 //-----------------------------------------------------------------
 // needs to be in global space now (loadsave stuff)
 
-#define MAX_LOOPED_FX 32
+#define MAX_LOOPED_FX (32 * JAR_CAPACITY_MULTIPLIER)
 // We hold a looped effect here
 struct SLoopedEffect
 {

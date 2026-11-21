@@ -28,19 +28,21 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 	#define XSTRING( a ) STRING( a )
 #endif
 
+#include "../../shared/qcommon/jar_release.h"
+
 // Current version of the multi player game
-#define VERSION_MAJOR_RELEASE		1
-#define VERSION_MINOR_RELEASE		0
-#define VERSION_EXTERNAL_BUILD		1
-#define VERSION_INTERNAL_BUILD		0
+#define VERSION_MAJOR_RELEASE JAR_VERSION_MAJOR
+#define VERSION_MINOR_RELEASE JAR_VERSION_MINOR
+#define VERSION_EXTERNAL_BUILD JAR_VERSION_PATCH
+#define VERSION_INTERNAL_BUILD JAR_VERSION_BUILD
 
 #define VERSION_STRING XSTRING(VERSION_MAJOR_RELEASE) ", " XSTRING(VERSION_MINOR_RELEASE) ", " XSTRING(VERSION_EXTERNAL_BUILD) ", " XSTRING(VERSION_INTERNAL_BUILD) // "a, b, c, d"
 #define VERSION_STRING_DOTTED XSTRING(VERSION_MAJOR_RELEASE) "." XSTRING(VERSION_MINOR_RELEASE) "." XSTRING(VERSION_EXTERNAL_BUILD) "." XSTRING(VERSION_INTERNAL_BUILD) // "a.b.c.d"
 
 #if defined(_DEBUG)
-	#define	JK_VERSION		"(debug)OpenJK-MP: " GIT_TAG
+	#define	JK_VERSION		"(debug)Jedi Academy Remixed Multiplayer " JAR_RELEASE_STRING ": " GIT_TAG
 	#define JK_VERSION_OLD	"(debug)JAmp: v" VERSION_STRING_DOTTED
 #else
-	#define	JK_VERSION		"OpenJK-MP: " GIT_TAG
+	#define	JK_VERSION		"Jedi Academy Remixed Multiplayer " JAR_RELEASE_STRING ": " GIT_TAG
 	#define JK_VERSION_OLD	"JAmp: v" VERSION_STRING_DOTTED
 #endif

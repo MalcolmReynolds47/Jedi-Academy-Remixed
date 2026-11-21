@@ -141,8 +141,27 @@ typedef enum
 
 	//rww - added for sky portals
 	thinkF_G_PortalifyEntities,
+	thinkF_scene_camera_think, // Append only: saved callback IDs.
+	thinkF_portable_shield_think,
+	thinkF_portable_sliding_door_think,
+	thinkF_portable_button_think,
+	thinkF_portable_bobbing_think,
+	thinkF_factory_flag_think,
+	thinkF_section_traffic_think,
+	thinkF_wasteland_gun_respawn,
+	thinkF_siege_item_think,
+	thinkF_siege_korriban_round_think,
 
 } thinkFunc_t;
+extern void scene_camera_think(gentity_t*);
+extern void portable_sliding_door_think(gentity_t*);
+extern void portable_button_think(gentity_t*);
+extern void portable_bobbing_think(gentity_t*);
+extern void factory_flag_think(gentity_t*);
+extern void section_traffic_think(gentity_t*);
+extern void wasteland_gun_respawn(gentity_t*);
+extern void siege_item_think(gentity_t*);
+extern void siege_korriban_round_think(gentity_t*);
 
 // THINK functions...
 //
@@ -327,7 +346,24 @@ typedef enum
 	touchF_prox_mine_stick,
 	touchF_func_rotating_touch,
 	touchF_TouchTieBomb,
+	touchF_space_touch, // Append only: callback IDs are serialized.
+	touchF_bidirectional_touch,
+	touchF_shipboundary_touch,
+	touchF_portable_shield_touch, // Append only.
+	touchF_factory_flag_touch,
+	touchF_siege_item_touch,
 } touchFunc_t;
+
+extern void portable_shield_touch(gentity_t*,gentity_t*,trace_t*);
+extern void factory_flag_touch(gentity_t*,gentity_t*,trace_t*);
+extern void siege_item_touch(gentity_t*,gentity_t*,trace_t*);
+extern void shipboundary_touch(gentity_t*,gentity_t*,trace_t*);
+extern void shipboundary_use(gentity_t*,gentity_t*,gentity_t*);
+extern void bidirectional_touch(gentity_t*,gentity_t*,trace_t*);
+extern void marker_use(gentity_t*,gentity_t*,gentity_t*);
+extern void bidirectional_use(gentity_t*,gentity_t*,gentity_t*);
+extern void space_touch(gentity_t*,gentity_t*,trace_t*);
+extern void space_use(gentity_t*,gentity_t*,gentity_t*);
 
 // TOUCH functions...
 //
@@ -434,7 +470,47 @@ typedef enum
 	useF_misc_weapon_shooter_use,
 	useF_eweb_use,
 	useF_TieFighterUse,
+	useF_space_use, // Append only: callback IDs are serialized.
+	useF_bidirectional_use,
+	useF_marker_use,
+	useF_shipboundary_use,
+	useF_cloudlayer_use,
+	useF_weather_use,
+	useF_portable_portal_use,
+	useF_skyportal_use,
+	useF_scene_camera_use,
+	useF_portable_rail_use,
+	useF_reflection_probe_use,
+	useF_portable_always_use,
+	useF_portable_start_use,
+	useF_portable_visible_use,
+	useF_portable_sliding_door_use,
+	useF_portable_button_use,
+	useF_portable_bobbing_use,
+	useF_factory_flag_use,
+	useF_siege_item_use,
+	useF_siege_objective_use,
+	useF_siege_end_use,
+	useF_siege_checkpoint_use,
 } useFunc_t;
+
+extern void portable_start_use(gentity_t*,gentity_t*,gentity_t*);
+extern void portable_visible_use(gentity_t*,gentity_t*,gentity_t*);
+extern void portable_sliding_door_use(gentity_t*,gentity_t*,gentity_t*);
+extern void portable_button_use(gentity_t*,gentity_t*,gentity_t*);
+extern void portable_bobbing_use(gentity_t*,gentity_t*,gentity_t*);
+extern void factory_flag_use(gentity_t*,gentity_t*,gentity_t*);
+extern void siege_item_use(gentity_t*,gentity_t*,gentity_t*);
+extern void siege_objective_use(gentity_t*,gentity_t*,gentity_t*);
+extern void siege_end_use(gentity_t*,gentity_t*,gentity_t*);
+extern void siege_checkpoint_use(gentity_t*,gentity_t*,gentity_t*);
+extern void portable_always_use(gentity_t*,gentity_t*,gentity_t*);
+extern void reflection_probe_use(gentity_t*,gentity_t*,gentity_t*);
+extern void skyportal_use(gentity_t*,gentity_t*,gentity_t*);
+extern void scene_camera_use(gentity_t*,gentity_t*,gentity_t*);
+extern void portable_portal_use(gentity_t*,gentity_t*,gentity_t*);
+extern void weather_use(gentity_t*,gentity_t*,gentity_t*);
+extern void cloudlayer_use(gentity_t*,gentity_t*,gentity_t*);
 
 // USE functions...
 //
@@ -549,6 +625,7 @@ typedef enum
 	painF_CrystalCratePain,
 	painF_TurretPain,
 	painF_eweb_pain,
+	painF_portable_shield_pain,
 } painFunc_t;
 
 // PAIN functions...
@@ -607,7 +684,10 @@ typedef enum
 	dieF_misc_panel_turret_die,
 	dieF_thermal_die,
 	dieF_eweb_die,
+	dieF_portable_shield_die,
+	dieF_siege_item_die,
 } dieFunc_t;
+extern void siege_item_die(gentity_t*,gentity_t*,gentity_t*,int,int,int,int);
 
 // DIE functions...
 //

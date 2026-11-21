@@ -23,6 +23,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "g_local.h"
+#include "g_jar_sandbox.h"
+#include "qcommon/jar_combat.h"
 #include "ghoul2/G2.h"
 #include "bg_saga.h"
 
@@ -2132,6 +2134,8 @@ qboolean ClientUserinfoChanged( int clientNum ) {
 	if ( !strcmp( s, "localhost" ) && !(ent->r.svFlags & SVF_BOT) )
 		client->pers.localClient = qtrue;
 
+	client->pers.jarContinuousFists=JAR_FistsSelected(Info_ValueForKey(userinfo,"jar_continuousFists"));
+
 	// check the item prediction
 	s = Info_ValueForKey( userinfo, "cg_predictItems" );
 	if ( !atoi( s ) )	client->pers.predictItemPickup = qfalse;
@@ -3104,6 +3108,7 @@ void ClientSpawn(gentity_t *ent) {
 
 	index = ent - g_entities;
 	client = ent->client;
+	JAR_MP_ClientReset(index);
 
 	//first we want the userinfo so we can see if we should update this client's saber -rww
 	trap->GetUserinfo( index, userinfo, sizeof( userinfo ) );
@@ -3221,11 +3226,13 @@ void ClientSpawn(gentity_t *ent) {
 		}
 		else
 		{
+			spawnPoint = JAR_MP_SelectPortableStart(ent, client->pers.teamState.state == TEAM_BEGIN,
+				playerMins, playerMaxs, spawn_origin, spawn_angles);
 			// the first spawn should be at a good looking spot
 			if ( !client->pers.initialSpawn && client->pers.localClient ) {
 				client->pers.initialSpawn = qtrue;
-				spawnPoint = SelectInitialSpawnPoint( spawn_origin, spawn_angles, client->sess.sessionTeam, !!(ent->r.svFlags & SVF_BOT) );
-			} else {
+				if (!spawnPoint) spawnPoint = SelectInitialSpawnPoint( spawn_origin, spawn_angles, client->sess.sessionTeam, !!(ent->r.svFlags & SVF_BOT) );
+			} else if (!spawnPoint) {
 				// don't spawn near existing origin if possible
 				spawnPoint = SelectSpawnPoint (
 					client->ps.origin,
@@ -3899,6 +3906,7 @@ void ClientDisconnect( int clientNum ) {
 	gentity_t	*ent;
 	gentity_t	*tent;
 	int			i;
+	JAR_MP_Disconnect(clientNum);
 
 	// cleanup if we are kicking a bot that
 	// hasn't spawned yet

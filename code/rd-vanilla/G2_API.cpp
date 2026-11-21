@@ -334,8 +334,8 @@ int	G2API_GetTime(int argTime) // this may or may not return arg depending on gh
 
 
 // must be a power of two
-#define MAX_G2_MODELS (512)
-#define G2_MODEL_BITS (9)
+#define MAX_G2_MODELS (1 << JAR_GHOUL2_BITS)
+#define G2_MODEL_BITS JAR_GHOUL2_BITS
 #define G2_INDEX_MASK (MAX_G2_MODELS-1)
 
 void RemoveBoneCache(CBoneCache *boneCache);
@@ -439,6 +439,7 @@ class Ghoul2InfoArray : public IGhoul2InfoArray
 	std::list<int>			mFreeIndecies;
 	void DeleteLow(int idx)
 	{
+		if(ri.JAR_Log) ri.JAR_Log(1,"ghoul2","slot_free_begin","renderer=classic slot=%d handle=%d data=%p size=%zu capacity=%zu",idx,mIds[idx],mInfos[idx].data(),mInfos[idx].size(),mInfos[idx].capacity());
 		{
 			size_t	model;
 			for (model=0; model< mInfos[idx].size(); model++)
@@ -448,8 +449,9 @@ class Ghoul2InfoArray : public IGhoul2InfoArray
 			}
 		}
 		mInfos[idx].clear();
+		if(ri.JAR_Log) ri.JAR_Log(1,"ghoul2","slot_free_end","slot=%d data=%p capacity=%zu",idx,mInfos[idx].data(),mInfos[idx].capacity());
 
-		if ((mIds[idx]>>G2_MODEL_BITS)>(1<<(31-G2_MODEL_BITS)))
+		if (mIds[idx] > INT_MAX - MAX_G2_MODELS)
 		{
 			mIds[idx]=MAX_G2_MODELS+idx; //rollover reset id to minimum value
 			mFreeIndecies.push_back(idx);
@@ -603,13 +605,13 @@ public:
 	{
 		if (mFreeIndecies.empty())
 		{
-			assert(0);
-			Com_Error(ERR_FATAL, "Out of ghoul2 info slots");
+			Com_Error(ERR_DROP, "JA:R: skeletal model capacity exhausted (%d slots)", MAX_G2_MODELS);
 
 		}
 		// gonna pull from the front, doing a
 		int idx=*mFreeIndecies.begin();
 		mFreeIndecies.erase(mFreeIndecies.begin());
+		if(ri.JAR_Log) ri.JAR_Log(1,"ghoul2","slot_allocated","renderer=classic slot=%d handle=%d data=%p size=%zu capacity=%zu available=%zu",idx,mIds[idx],mInfos[idx].data(),mInfos[idx].size(),mInfos[idx].capacity(),mFreeIndecies.size());
 		return mIds[idx];
 	}
 	bool IsValid(int handle) const
@@ -647,6 +649,8 @@ public:
 		assert(mIds[handle&G2_INDEX_MASK]==handle); // not a valid handle, could be old or garbage
 		assert (!(handle<=0||(handle&G2_INDEX_MASK)<0||(handle&G2_INDEX_MASK)>=MAX_G2_MODELS||mIds[handle&G2_INDEX_MASK]!=handle));
 
+		if(ri.JAR_Log && (handle<=0 || mIds[handle&G2_INDEX_MASK]!=handle))
+			ri.JAR_Log(0,"ghoul2","invalid_handle","handle=%d slot=%d expected=%d",handle,handle&G2_INDEX_MASK,mIds[handle&G2_INDEX_MASK]);
 		return mInfos[handle&G2_INDEX_MASK];
 	}
 	const std::vector<CGhoul2Info> &Get(int handle) const
@@ -713,6 +717,7 @@ void TestAllGhoul2Anims()
 
 void RestoreGhoul2InfoArray()
 {
+	if(ri.JAR_Log) ri.JAR_Log(1,"ghoul2","restore_begin","renderer=classic singleton=%p",singleton);
 	if (singleton == NULL)
 	{
 		// Create the ghoul2 info array
@@ -729,6 +734,7 @@ void RestoreGhoul2InfoArray()
 		size_t read =
 #endif // _DEBUG
 			singleton->Deserialize ((const char *)data, size);
+		if(ri.JAR_Log) ri.JAR_Log(1,"ghoul2","restore_end","singleton=%p bytes=%zu",singleton,size);
 		R_Free ((void *)data);
 #ifdef _DEBUG
 		assert (read == size);
@@ -738,6 +744,7 @@ void RestoreGhoul2InfoArray()
 
 void SaveGhoul2InfoArray()
 {
+	if(ri.JAR_Log) ri.JAR_Log(1,"ghoul2","persist_begin","renderer=classic singleton=%p",singleton);
 	size_t size = singleton->GetSerializedSize();
 	void *data = R_Malloc (size, TAG_GHOUL2, qfalse);
 #ifdef _DEBUG
@@ -772,6 +779,11 @@ int G2API_InitGhoul2Model(CGhoul2Info_v &ghoul2, const char *fileName, int, qhan
 						  qhandle_t customShader, int modelFlags, int lodBias)
 {
 	int				model = -1;
+	if(ri.JAR_Log) ri.JAR_Log(1,"ghoul2","model_init_begin","renderer=classic owner=%p file=%s models=%d data=%p",&ghoul2,fileName?fileName:"",ghoul2.size(),ghoul2.size()?&ghoul2[0]:nullptr);
+	if(ri.JAR_Log && ghoul2.IsValid()) {
+		const auto& models=TheGhoul2InfoArray().Get(ghoul2.DiagnosticHandle());
+		ri.JAR_Log(1,"ghoul2","vector_state","owner=%p handle=%d data=%p size=%zu capacity=%zu",&ghoul2,ghoul2.DiagnosticHandle(),models.data(),models.size(),models.capacity());
+	}
 
 	G2ERROR(fileName&&fileName[0],"NULL filename");
 
@@ -797,7 +809,9 @@ int G2API_InitGhoul2Model(CGhoul2Info_v &ghoul2, const char *fileName, int, qhan
 		Q_strncpyz(info.mFileName, fileName, sizeof(info.mFileName));
 		info.mModelindex = 0;
 		if(G2_TestModelPointers(&info)) {
-		ghoul2.push_back(CGhoul2Info());
+		if(ri.JAR_Log) ri.JAR_Log(1,"ghoul2","model_grow_begin","renderer=classic owner=%p file=%s models=%d",&ghoul2,fileName,ghoul2.size());
+			ghoul2.push_back(CGhoul2Info());
+			if(ri.JAR_Log) ri.JAR_Log(1,"ghoul2","model_grow_end","owner=%p data=%p models=%d",&ghoul2,&ghoul2[0],ghoul2.size());
 		} else {
 			return -1;
 		}
@@ -822,6 +836,7 @@ int G2API_InitGhoul2Model(CGhoul2Info_v &ghoul2, const char *fileName, int, qhan
 
 		ghoul2[model].mModelBoltLink = -1;
 	}
+	if(ri.JAR_Log) ri.JAR_Log(1,"ghoul2","model_init_end","owner=%p file=%s model=%d info=%p bone_cache=%p",&ghoul2,fileName,ghoul2[model].mModelindex,&ghoul2[model],ghoul2[model].mBoneCache);
 	return ghoul2[model].mModelindex;
 }
 
@@ -1656,6 +1671,9 @@ int G2API_AddBoltSurfNum(CGhoul2Info *ghlInfo, const int surfIndex)
 
 qboolean G2API_AttachG2Model(CGhoul2Info *ghlInfo, CGhoul2Info *ghlInfoTo, int toBoltIndex, int toModel)
 {
+	if (!ghlInfo || !ghlInfoTo || toModel < 0 || toModel > MODEL_AND ||
+		toBoltIndex < 0 || toBoltIndex > BOLT_AND || toBoltIndex >= int(ghlInfoTo->mBltlist.size()))
+		return qfalse;
 	qboolean ret=qfalse;
 	if (G2_SetupModelPointers(ghlInfo)&&G2_SetupModelPointers(ghlInfoTo))
 	{
@@ -1692,6 +1710,10 @@ qboolean G2API_DetachG2Model(CGhoul2Info *ghlInfo)
 
 qboolean G2API_AttachEnt(int *boltInfo, CGhoul2Info *ghlInfoTo, int toBoltIndex, int entNum, int toModelNum)
 {
+	int packed;
+	if (!boltInfo || !ghlInfoTo || !jar::PackEntityBolt(packed, entNum, toModelNum, toBoltIndex) ||
+		toBoltIndex >= int(ghlInfoTo->mBltlist.size()))
+		return qfalse;
 	qboolean ret=qfalse;
 	G2ERROR(boltInfo,"NULL boltInfo");
 	if (boltInfo&&G2_SetupModelPointers(ghlInfoTo))
@@ -1700,10 +1722,7 @@ qboolean G2API_AttachEnt(int *boltInfo, CGhoul2Info *ghlInfoTo, int toBoltIndex,
 		if ( ghlInfoTo->mBltlist.size() && ((ghlInfoTo->mBltlist[toBoltIndex].boneNumber != -1) || (ghlInfoTo->mBltlist[toBoltIndex].surfaceNumber != -1)))
 		{
 			// encode the bolt address into the model bolt link
-		   toModelNum &= MODEL_AND;
-		   toBoltIndex &= BOLT_AND;
-		   entNum &= ENTITY_AND;
-		   *boltInfo =  (toBoltIndex << BOLT_SHIFT) | (toModelNum << MODEL_SHIFT) | (entNum << ENTITY_SHIFT);
+		   *boltInfo = packed;
 		   ret=qtrue;
 		}
 	}
@@ -2265,12 +2284,12 @@ bool G2_TestModelPointers(CGhoul2Info *ghlInfo) // returns true if the model is 
 	return ghlInfo->mValid;
 }
 
-bool G2_SetupModelPointers(CGhoul2Info *ghlInfo) // returns true if the model is properly set up
+qboolean G2_SetupModelPointers(CGhoul2Info *ghlInfo) // returns true if the model is properly set up
 {
 	G2ERROR(ghlInfo,"NULL ghlInfo");
 	if (!ghlInfo)
 	{
-		return false;
+		return qfalse;
 	}
 	ghlInfo->mValid=false;
 //	G2WARNING(ghlInfo->mModelindex != -1,"Setup request on non-used info slot?");
@@ -2327,19 +2346,21 @@ bool G2_SetupModelPointers(CGhoul2Info *ghlInfo) // returns true if the model is
 		ghlInfo->currentAnimModelSize=0;
 		ghlInfo->aHeader=0;
 	}
-	return ghlInfo->mValid;
+	return (qboolean)ghlInfo->mValid;
 }
 
-bool G2_SetupModelPointers(CGhoul2Info_v &ghoul2) // returns true if any model is properly set up
+qboolean G2_SetupModelPointers(CGhoul2Info_v &ghoul2) // returns true if any model is properly set up
 {
-	bool ret=false;
+	qboolean ret=qfalse;
 	int i;
 	for (i=0; i<ghoul2.size(); i++)
 	{
-		bool r=G2_SetupModelPointers(&ghoul2[i]);
-		ret=ret||r;
+		qboolean r=G2_SetupModelPointers(&ghoul2[i]);
+		ret=(qboolean)(ret||r);
 	}
 	return ret;
 }
 
 
+
+#include "../rd-common/jar_ghoul_bounds.inc"

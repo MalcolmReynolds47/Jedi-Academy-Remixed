@@ -71,7 +71,7 @@ void NPC_Mark1_Precache(void)
 {
 	G_SoundIndex( "sound/chars/mark1/misc/mark1_wakeup");
 	G_SoundIndex( "sound/chars/mark1/misc/shutdown");
-	G_SoundIndex( "sound/chars/mark1/misc/walk");
+	// Footsteps use animevents.cfg; the legacy walk sound never shipped.
 	G_SoundIndex( "sound/chars/mark1/misc/run");
 	G_SoundIndex( "sound/chars/mark1/misc/death1");
 	G_SoundIndex( "sound/chars/mark1/misc/death2");

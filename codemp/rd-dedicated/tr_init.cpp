@@ -619,6 +619,10 @@ refexport_t *GetRefAPI ( int apiVersion, refimport_t *rimp ) {
 	re.G2API_GetRagBonePos					= G2API_GetRagBonePos;
 	re.G2API_GetSurfaceIndex				= G2API_GetSurfaceIndex;
 	re.G2API_GetSurfaceName					= G2API_GetSurfaceName;
+	re.G2API_JAR_PoseBounds = G2API_JAR_PoseBounds;
+	re.G2API_JAR_PoseGeometry = G2API_JAR_PoseGeometry;
+	re.G2API_JAR_ApplyFace = G2API_JAR_ApplyFace;
+	re.SetReflectionProbes = [](const jarProbe_t*, int) { return int(JAR_PROBE_UNSUPPORTED); };
 	re.G2API_GetSurfaceOnOff				= G2API_GetSurfaceOnOff;
 	re.G2API_GetSurfaceRenderStatus			= G2API_GetSurfaceRenderStatus;
 	re.G2API_GetTime						= G2API_GetTime;

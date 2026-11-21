@@ -459,6 +459,15 @@ void FBO_Init(void)
 		R_CheckFBO(tr.renderFbo);
 	}
 
+	for (int i = 0; i < JAR_PORTAL_CAMERA_FEEDS; ++i) {
+		auto* target = FBO_Create(va("_jarCamera%d", i), JAR_PORTAL_CAMERA_SIZE, JAR_PORTAL_CAMERA_SIZE);
+		FBO_Bind(target);
+		FBO_AttachTextureImage(tr.portalMonitorImages[i], 0);
+		FBO_CreateBuffer(target, GL_DEPTH24_STENCIL8, 0, 0);
+		FBO_SetupDrawBuffers();
+		if (R_CheckFBO(target)) tr.portalMonitorFbos[i] = target;
+	}
+
 	// clear render buffer
 	// this fixes the corrupt screen bug with r_hdr 1 on older hardware
 	FBO_Bind(tr.renderFbo);

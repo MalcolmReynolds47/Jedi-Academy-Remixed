@@ -96,6 +96,11 @@ ITM_SHIELD_LRG_PICKUP,
 ITM_GOODIE_KEY_PICKUP,
 ITM_SECURITY_KEY_PICKUP,
 
+ITM_JAR_PHYSGUN,
+ITM_JAR_TOOLGUN,
+ITM_JAR_FORCE_BOON,
+ITM_JAR_LIGHT_ENLIGHTENMENT,
+ITM_JAR_DARK_ENLIGHTENMENT,
 ITM_NUM_ITEMS
 };
 
@@ -110,6 +115,8 @@ enum //# item_e
 	//# #eol
 	INV_GOODIE_KEY,	// don't want to include keys in the icarus list
 	INV_SECURITY_KEY,
+	INV_PORTABLE_SHIELD, // Append only: native saves and campaign inventory retain old indices.
+	INV_DATAPAD, // Reusable access to the native mission/equipment datapad.
 
 	INV_MAX						// Be sure to update MAX_INVENTORY
 };

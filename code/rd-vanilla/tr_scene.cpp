@@ -51,6 +51,10 @@ R_InitNextFrame
 void R_InitNextFrame( void ) {
 
 	backEndData->commands.used = 0;
+	R_ResetGhoul2Surfaces();
+	// A sky pass must be submitted again this frame; disabling a portable
+	// controller must restore ordinary sky rendering without a map reload.
+	skyboxportal = drawskyboxportal = 0;
 
 	r_firstSceneDrawSurf = 0;
 
@@ -61,6 +65,8 @@ void R_InitNextFrame( void ) {
 	r_firstSceneEntity = 0;
 
 	r_numpolys = 0;
+	backEndData->numJarPortals=0;
+
 	r_firstScenePoly = 0;
 
 	r_numpolyverts = 0;
@@ -74,6 +80,7 @@ RE_ClearScene
 ====================
 */
 void RE_ClearScene( void ) {
+	R_ClearBSPGridInstances();
 	r_firstSceneDlight = r_numdlights;
 	r_firstSceneEntity = r_numentities;
 	r_firstScenePoly = r_numpolys;
@@ -102,9 +109,10 @@ void R_AddPolygonSurfaces( void ) {
 	srfPoly_t	*poly;
 
 	tr.currentEntityNum = REFENTITYNUM_WORLD;
-	tr.shiftedEntityNum = tr.currentEntityNum << QSORT_REFENTITYNUM_SHIFT;
+	tr.shiftedEntityNum = uint64_t(tr.currentEntityNum) << QSORT_REFENTITYNUM_SHIFT;
 
 	for ( i = 0, poly = tr.refdef.polys; i < tr.refdef.numPolys ; i++, poly++ ) {
+		if (tr.viewParms.portalMonitor && poly->jarPortal) continue;
 		sh = R_GetShaderByHandle( poly->hShader );
 		R_AddDrawSurf( ( surfaceType_t * )poly, sh, poly->fogIndex, qfalse );
 	}
@@ -116,9 +124,9 @@ RE_AddPolyToScene
 
 =====================
 */
-void RE_AddPolyToScene( qhandle_t hShader , int numVerts, const polyVert_t *verts ) {
+void RE_AddPolyToScene( qhandle_t hShader , int numVerts, const polyVert_t *verts, int numPolys ) {
 	srfPoly_t	*poly;
-	int			i;
+	int			i, j;
 	int			fogIndex = 0;
 	fog_t		*fog;
 	vec3_t		bounds[2];
@@ -134,67 +142,72 @@ void RE_AddPolyToScene( qhandle_t hShader , int numVerts, const polyVert_t *vert
 		return;
 	}
 
-	if ( r_numpolyverts + numVerts >= MAX_POLYVERTS || r_numpolys >= MAX_POLYS ) {
-      /*
-      NOTE TTimo this was initially a PRINT_WARNING
-      but it happens a lot with high fighting scenes and particles
-      since we don't plan on changing the const and making for room for those effects
-      simply cut this message to developer only
-      */
-		ri.Printf( PRINT_DEVELOPER, S_COLOR_YELLOW  "WARNING: RE_AddPolyToScene: r_max_polys or r_max_polyverts reached\n");
-		return;
-	}
-
-	poly = &backEndData->polys[r_numpolys];
-	poly->surfaceType = SF_POLY;
-	poly->hShader = hShader;
-	poly->numVerts = numVerts;
-	poly->verts = &backEndData->polyVerts[r_numpolyverts];
-
-	memcpy( poly->verts, verts, numVerts * sizeof( *verts ) );
-	r_numpolys++;
-	r_numpolyverts += numVerts;
-
-	// see if it is in a fog volume
-	if ( !tr.world || tr.world->numfogs == 1) {
-		fogIndex = 0;
-	} else {
-		// find which fog volume the poly is in
-		VectorCopy( poly->verts[0].xyz, bounds[0] );
-		VectorCopy( poly->verts[0].xyz, bounds[1] );
-		for ( i = 1 ; i < poly->numVerts ; i++ ) {
-			AddPointToBounds( poly->verts[i].xyz, bounds[0], bounds[1] );
+	for (j = 0; j < numPolys; j++) {
+		if (r_numpolyverts + numVerts >= MAX_POLYVERTS || r_numpolys >= MAX_POLYS) {
+			/*
+			NOTE TTimo this was initially a PRINT_WARNING
+			but it happens a lot with high fighting scenes and particles
+			since we don't plan on changing the const and making for room for those effects
+			simply cut this message to developer only
+			*/
+			ri.Printf(PRINT_DEVELOPER, S_COLOR_YELLOW  "WARNING: RE_AddPolyToScene: r_max_polys or r_max_polyverts reached\n");
+			return;
 		}
-		for ( int fI = 1 ; fI < tr.world->numfogs ; fI++ ) {
-			fog = &tr.world->fogs[fI];
-			if ( bounds[0][0] >= fog->bounds[0][0]
-				&& bounds[0][1] >= fog->bounds[0][1]
-				&& bounds[0][2] >= fog->bounds[0][2]
-				&& bounds[1][0] <= fog->bounds[1][0]
-				&& bounds[1][1] <= fog->bounds[1][1]
-				&& bounds[1][2] <= fog->bounds[1][2] )
-			{//completely in this one
-				fogIndex = fI;
-				break;
+
+		poly = &backEndData->polys[r_numpolys];
+		poly->surfaceType = SF_POLY;
+		poly->jarPortal=nullptr;poly->jarFallback=0;poly->jarSelected=false;poly->jarMonitorShader=0;
+
+		poly->hShader = hShader;
+		poly->numVerts = numVerts;
+		poly->verts = &backEndData->polyVerts[r_numpolyverts];
+
+		memcpy( poly->verts, &verts[numVerts*j], numVerts * sizeof( *verts ) );
+		r_numpolys++;
+		r_numpolyverts += numVerts;
+
+		// see if it is in a fog volume
+		if (!tr.world || tr.world->numfogs == 1) {
+			fogIndex = 0;
+		}
+		else {
+			// find which fog volume the poly is in
+			VectorCopy(poly->verts[0].xyz, bounds[0]);
+			VectorCopy(poly->verts[0].xyz, bounds[1]);
+			for (i = 1; i < poly->numVerts; i++) {
+				AddPointToBounds(poly->verts[i].xyz, bounds[0], bounds[1]);
 			}
-			else if ( ( bounds[0][0] >= fog->bounds[0][0] && bounds[0][1] >= fog->bounds[0][1] && bounds[0][2] >= fog->bounds[0][2] &&
-						bounds[0][0] <= fog->bounds[1][0] && bounds[0][1] <= fog->bounds[1][1] && bounds[0][2] <= fog->bounds[1][2]) ||
-				( bounds[1][0] >= fog->bounds[0][0] && bounds[1][1] >= fog->bounds[0][1] && bounds[1][2] >= fog->bounds[0][2] &&
-					bounds[1][0] <= fog->bounds[1][0] && bounds[1][1] <= fog->bounds[1][1] && bounds[1][2] <= fog->bounds[1][2] ) )
-			{//partially in this one
-				if ( tr.refdef.fogIndex == fI || R_FogParmsMatch( tr.refdef.fogIndex, fI ) )
-				{//take new one only if it's the same one that the viewpoint is in
+			for (int fI = 1; fI < tr.world->numfogs; fI++) {
+				fog = &tr.world->fogs[fI];
+				if (bounds[0][0] >= fog->bounds[0][0]
+					&& bounds[0][1] >= fog->bounds[0][1]
+					&& bounds[0][2] >= fog->bounds[0][2]
+					&& bounds[1][0] <= fog->bounds[1][0]
+					&& bounds[1][1] <= fog->bounds[1][1]
+					&& bounds[1][2] <= fog->bounds[1][2])
+				{//completely in this one
 					fogIndex = fI;
 					break;
 				}
-				else if ( !fogIndex )
-				{//didn't find one yet, so use this one
-					fogIndex = fI;
+				else if ((bounds[0][0] >= fog->bounds[0][0] && bounds[0][1] >= fog->bounds[0][1] && bounds[0][2] >= fog->bounds[0][2] &&
+					bounds[0][0] <= fog->bounds[1][0] && bounds[0][1] <= fog->bounds[1][1] && bounds[0][2] <= fog->bounds[1][2]) ||
+					(bounds[1][0] >= fog->bounds[0][0] && bounds[1][1] >= fog->bounds[0][1] && bounds[1][2] >= fog->bounds[0][2] &&
+						bounds[1][0] <= fog->bounds[1][0] && bounds[1][1] <= fog->bounds[1][1] && bounds[1][2] <= fog->bounds[1][2]))
+				{//partially in this one
+					if (tr.refdef.fogIndex == fI || R_FogParmsMatch(tr.refdef.fogIndex, fI))
+					{//take new one only if it's the same one that the viewpoint is in
+						fogIndex = fI;
+						break;
+					}
+					else if (!fogIndex)
+					{//didn't find one yet, so use this one
+						fogIndex = fI;
+					}
 				}
 			}
 		}
+		poly->fogIndex = fogIndex;
 	}
-	poly->fogIndex = fogIndex;
 }
 
 
@@ -207,17 +220,28 @@ RE_AddRefEntityToScene
 
 =====================
 */
+#include "../rd-common/tr_portal_submit.inc"
+
 void RE_AddRefEntityToScene( const refEntity_t *ent ) {
 	if ( !tr.registered ) {
 		return;
 	}
 	if ( r_numentities >= MAX_REFENTITIES ) {
+		static unsigned long long dropped=0;
+		if((++dropped==1 || dropped%1024==0) && ri.JAR_Log)
+			ri.JAR_Log(1,"capacity","ref_entities","dropped=%llu limit=%d",dropped,MAX_REFENTITIES);
 #ifndef FINAL_BUILD
 		ri.Printf( PRINT_WARNING, "WARNING: RE_AddRefEntityToScene: too many entities\n");
 #endif
 		return;
 	}
-	if ( ent->reType < 0 || ent->reType >= RT_MAX_REF_ENTITY_TYPE ) {
+
+	if (ent->reType == RT_ENT_CHAIN)
+	{ //minirefents must die.
+		return;
+	}
+
+	if ( (int)ent->reType < 0 || ent->reType >= RT_MAX_SP_REF_ENTITY_TYPE || ent->reType == RT_MAX_MP_REF_ENTITY_TYPE ) {
 		Com_Error( ERR_DROP, "RE_AddRefEntityToScene: bad reType %i", ent->reType );
 	}
 
@@ -225,6 +249,38 @@ void RE_AddRefEntityToScene( const refEntity_t *ent ) {
 	backEndData->entities[r_numentities].lightingCalculated = qfalse;
 
 	r_numentities++;
+}
+
+
+/************************************************************************************************
+ * RE_AddMiniRefEntityToScene                                                                   *
+ *    Adds a mini ref ent to the scene.  If the input parameter is null, it signifies the end   *
+ *    of the chain.  Otherwise, if there is a valid chain parent, it will be added to that.     *
+ *    If there is no parent, it will be added as a regular ref ent.                             *
+ *                                                                                              *
+ * Input                                                                                        *
+ *    ent: the mini ref ent to be added                                                         *
+ *                                                                                              *
+ * Output / Return                                                                              *
+ *    none                                                                                      *
+ *                                                                                              *
+ ************************************************************************************************/
+void RE_AddMiniRefEntityToScene(const miniRefEntity_t *ent)
+{
+	if (!tr.registered)
+	{
+		return;
+	}
+	if (!ent)
+	{
+		return;
+	}
+
+	refEntity_t		tempEnt;
+
+	memcpy(&tempEnt, ent, sizeof(*ent));
+	memset(((char *)&tempEnt) + sizeof(*ent), 0, sizeof(tempEnt) - sizeof(*ent));
+	RE_AddRefEntityToScene(&tempEnt);
 }
 
 
@@ -267,6 +323,8 @@ to handle mirrors,
 @@@@@@@@@@@@@@@@@@@@@
 */
 extern int	recursivePortalCount;
+#include "../rd-common/tr_rift_fog.inc"
+
 void RE_RenderScene( const refdef_t *fd ) {
 	viewParms_t		parms;
 	int				startTime;
@@ -377,6 +435,8 @@ void RE_RenderScene( const refdef_t *fd ) {
 	// each scene / view.
 	tr.frameSceneNum++;
 	tr.sceneCount++;
+	R_BuildBSPGridInstances(&tr.refdef);
+	R_AssignRiftFog(tr.refdef, 0);
 
 	// setup view parms for the initial view
 	//

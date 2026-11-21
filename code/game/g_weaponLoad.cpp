@@ -1459,6 +1459,8 @@ static void WP_ParseParms(const char *buffer)
 }
 
 //--------------------------------------------
+#include "g_weapon_resources.inc"
+
 void WP_LoadWeaponParms (void)
 {
 	char *buffer;
@@ -1475,7 +1477,7 @@ void WP_LoadWeaponParms (void)
 	memset(weaponData, 0, sizeof(weaponData));
 
 	// put in the default values, because backwards compatibility is awesome!
-	for(int i = 0; i < WP_NUM_WEAPONS; i++)
+	for(int i = 0; i < WP_NATIVE_WEAPON_COUNT; i++)
 	{
 		weaponData[i].damage = defaultDamage[i];
 		weaponData[i].altDamage = defaultAltDamage[i];
@@ -1486,6 +1488,16 @@ void WP_LoadWeaponParms (void)
 	}
 
 	WP_ParseParms(buffer);
+    JAR_RepairWeaponResources();
+    for(int tool=WP_PHYSGUN;tool<=WP_TOOLGUN;++tool){
+        auto& data=weaponData[tool];const auto& model=weaponData[tool==WP_PHYSGUN?WP_CONCUSSION:WP_BLASTER_PISTOL];
+        // Reuse installed native hand models; tool behavior, IDs and icons are distinct.
+        Q_strncpyz(data.weaponMdl,model.weaponMdl,sizeof(data.weaponMdl));
+        Q_strncpyz(data.selectSnd,model.selectSnd,sizeof(data.selectSnd));
+        Q_strncpyz(data.classname,tool==WP_PHYSGUN?"weapon_jar_physgun":"weapon_jar_toolgun",sizeof(data.classname));
+        Q_strncpyz(data.weaponIcon,tool==WP_PHYSGUN?"jar/icons/physgun":"jar/icons/toolgun",sizeof(data.weaponIcon));
+        data.ammoIndex=AMMO_NONE;data.fireTime=data.altFireTime=200;
+    }
 
 	gi.FS_FreeFile( buffer );	//let go of the buffer
 }

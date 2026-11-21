@@ -46,6 +46,7 @@ vec3_t WP_MuzzlePoint[WP_NUM_WEAPONS] =
 	{12,	0,		-4	},	// WP_DET_PACK,
 	{12,	6,		-6	},	// WP_CONCUSSION
 	{12,	6,		-6	},	// WP_BRYAR_OLD,
+ {0,0,0},{0,0,0},{12,6,-6},{12,6,-6},
 };
 
 weaponData_t weaponData[WP_NUM_WEAPONS] =
@@ -372,7 +373,9 @@ weaponData_t weaponData[WP_NUM_WEAPONS] =
 		0,						//int		altChargeSub;		// above for secondary
 		0,						//	int		maxCharge;			// stop subtracting once charged for this many ms
 		0						//	int		altMaxCharge;		// above for secondary
-	}
+	},
+ {AMMO_NONE,0,0,100,2048,0,100,2048,0,0,0,0,0,0},
+ {AMMO_NONE,0,0,250,2048,0,250,2048,0,0,0,0,0,0}
 };
 
 ammoData_t ammoData[AMMO_MAX] =

@@ -57,6 +57,7 @@ source_group("game" FILES ${MPCGameGameFiles})
 set(MPCGameFiles ${MPCGameFiles} ${MPCGameGameFiles})
 
 set(MPCGameCgameFiles
+	"${MPDir}/cgame/cg_jar_sandbox.c"
 	"${MPDir}/cgame/cg_consolecmds.c"
 	"${MPDir}/cgame/cg_cvar.c"
 	"${MPDir}/cgame/cg_draw.c"
@@ -159,22 +160,22 @@ if(MakeApplicationBundles AND BuildMPEngine)
 elseif(WIN32)
 	install(TARGETS ${MPCGame}
 		RUNTIME
-		DESTINATION "${JKAInstallDir}/OpenJK"
+		DESTINATION "${JKAInstallDir}"
 		COMPONENT ${JKAMPCoreComponent})
 
 	# Use OpenJK modules as default
 	install(TARGETS ${MPCGame}
 		RUNTIME
-		DESTINATION "${JKAInstallDir}/base"
+		DESTINATION "${JKAInstallDir}"
 		COMPONENT ${JKAMPCoreComponent})
 else()
 	install(TARGETS ${MPCGame}
 		LIBRARY
-		DESTINATION "${JKAInstallDir}/OpenJK"
+		DESTINATION "${JKAInstallDir}"
 		COMPONENT ${JKAMPCoreComponent})
 	install(TARGETS ${MPCGame}
 		LIBRARY
-		DESTINATION "${JKAInstallDir}/base"
+		DESTINATION "${JKAInstallDir}"
 		COMPONENT ${JKAMPCoreComponent})
 endif()
 

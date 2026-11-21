@@ -26,11 +26,16 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // This file contains the 8 (so far) function calls that replace the 8 function ptrs in the gentity_t structure
 
 #include "g_local.h"
+#include "g_galak_mech.h"
 #include "../cgame/cg_local.h"
 #include "g_functions.h"
+#include "g_portable_shield.h"
+#include "g_rail_portable.h"
+#include "g_subbsp_ownership.h"
 
 void GEntity_ThinkFunc(gentity_t *self)
 {
+	G_SubBSPCapture subBspCapture(self);
 #define THINKCASE(blah) case thinkF_ ## blah: blah(self); break;
 
 	switch (self->e_ThinkFunc)
@@ -116,6 +121,16 @@ void GEntity_ThinkFunc(gentity_t *self)
 	THINKCASE( WP_flechette_alt_blow )
 	THINKCASE( WP_prox_mine_think )
 	THINKCASE( camera_aim )
+	THINKCASE( scene_camera_think )
+	THINKCASE( portable_shield_think )
+	THINKCASE( portable_sliding_door_think )
+	THINKCASE( portable_button_think )
+	THINKCASE( portable_bobbing_think )
+	THINKCASE( factory_flag_think )
+	THINKCASE( section_traffic_think )
+	THINKCASE( wasteland_gun_respawn )
+	THINKCASE( siege_item_think )
+	THINKCASE( siege_korriban_round_think )
 	THINKCASE( fx_explosion_trail_link )
 	THINKCASE( fx_explosion_trail_think )
 	THINKCASE( fx_target_beam_link )
@@ -169,6 +184,7 @@ void CEntity_ThinkFunc(centity_s *cent)
 
 void GEntity_ReachedFunc(gentity_t *self)
 {
+	G_SubBSPCapture subBspCapture(self);
 #define REACHEDCASE(blah) case reachedF_ ## blah: blah(self); break;
 
 	switch (self->e_ReachedFunc)
@@ -191,6 +207,7 @@ void GEntity_ReachedFunc(gentity_t *self)
 
 void GEntity_BlockedFunc(gentity_t *self, gentity_t *other)
 {
+	G_SubBSPCapture subBspCapture(self);
 #define BLOCKEDCASE(blah) case blockedF_ ## blah: blah(self,other); break;
 
 	switch (self->e_BlockedFunc)
@@ -207,41 +224,14 @@ void GEntity_BlockedFunc(gentity_t *self, gentity_t *other)
 	}
 }
 
-void GEntity_TouchFunc(gentity_t *self, gentity_t *other, trace_t *trace)
-{
-#define TOUCHCASE(blah) case touchF_ ## blah: blah(self,other,trace); break;
-
-	switch (self->e_TouchFunc)
-	{
-	case touchF_NULL:
-		break;
-
-	TOUCHCASE( Touch_Item )
-	TOUCHCASE( teleporter_touch )
-	TOUCHCASE( charge_stick )
-	TOUCHCASE( Touch_DoorTrigger )
-	TOUCHCASE( Touch_PlatCenterTrigger )
-	TOUCHCASE( Touch_Plat )
-	TOUCHCASE( Touch_Button )
-	TOUCHCASE( Touch_Multi )
-	TOUCHCASE( trigger_push_touch )
-	TOUCHCASE( trigger_teleporter_touch )
-	TOUCHCASE( hurt_touch )
-	TOUCHCASE( NPC_Touch )
-	TOUCHCASE( touch_ammo_crystal_tigger )
-	TOUCHCASE( funcBBrushTouch )
-	TOUCHCASE( touchLaserTrap )
-	TOUCHCASE( prox_mine_stick )
-	TOUCHCASE( func_rotating_touch )
-	TOUCHCASE( TouchTieBomb )
-
-	default:
-		Com_Error(ERR_DROP, "GEntity_TouchFunc: case %d not handled!\n",self->e_TouchFunc);
-	}
-}
+#define GEntity_TouchFunc GEntity_TouchFuncUnscoped
+#include "g_entity_touch.inc"
+#undef GEntity_TouchFunc
+void GEntity_TouchFunc(gentity_t *self,gentity_t *other,trace_t *trace){G_SubBSPCapture capture(self);GEntity_TouchFuncUnscoped(self,other,trace);}
 
 void GEntity_UseFunc(gentity_t *self, gentity_t *other, gentity_t *activator)
 {
+	G_SubBSPCapture subBspCapture(self);
 	if ( !self || (self->svFlags&SVF_INACTIVE) )
 	{
 		return;
@@ -329,7 +319,29 @@ void GEntity_UseFunc(gentity_t *self, gentity_t *other, gentity_t *activator)
 	USECASE( NPC_VehicleSpawnUse )
 	USECASE( misc_weapon_shooter_use )
 	USECASE( eweb_use )
-	USECASE( TieFighterUse );
+	USECASE( TieFighterUse )
+	USECASE( space_use );
+	USECASE( bidirectional_use );
+	USECASE( shipboundary_use );
+	USECASE( cloudlayer_use );
+	USECASE( weather_use );
+	USECASE( portable_portal_use )
+	USECASE( skyportal_use );
+	USECASE( scene_camera_use )
+	USECASE( portable_rail_use );
+	USECASE( reflection_probe_use );
+	USECASE( portable_always_use );
+	USECASE( portable_start_use );
+	USECASE( portable_visible_use );
+	USECASE( portable_sliding_door_use );
+	USECASE( portable_button_use );
+	USECASE( portable_bobbing_use );
+	USECASE( factory_flag_use );
+	USECASE( siege_item_use );
+	USECASE( siege_objective_use );
+	USECASE( siege_end_use );
+	USECASE( siege_checkpoint_use );
+	USECASE( marker_use );
 
 	default:
 		Com_Error(ERR_DROP, "GEntity_UseFunc: case %d not handled!\n",self->e_UseFunc);
@@ -338,6 +350,7 @@ void GEntity_UseFunc(gentity_t *self, gentity_t *other, gentity_t *activator)
 
 void GEntity_PainFunc(gentity_t *self, gentity_t *inflictor, gentity_t *attacker, const vec3_t point, int damage, int mod,int hitLoc)
 {
+	G_SubBSPCapture subBspCapture(self);
 #define PAINCASE(blah) case painF_ ## blah: blah(self,inflictor,attacker,point,damage,mod,hitLoc); break;
 
 	switch (self->e_PainFunc)
@@ -366,11 +379,13 @@ void GEntity_PainFunc(gentity_t *self, gentity_t *inflictor, gentity_t *attacker
 	PAINCASE( NPC_Mark1_Pain )
 	PAINCASE( NPC_Sentry_Pain )
 	PAINCASE( NPC_Mark2_Pain )
+	PAINCASE( NPC_GM_Pain )
 	PAINCASE( PlayerPain )
 	PAINCASE( GasBurst )
 	PAINCASE( CrystalCratePain )
 	PAINCASE( TurretPain )
 	PAINCASE( eweb_pain )
+	PAINCASE( portable_shield_pain )
 
 	default:
 		Com_Error(ERR_DROP, "GEntity_PainFunc: case %d not handled!\n",self->e_PainFunc);
@@ -380,6 +395,7 @@ void GEntity_PainFunc(gentity_t *self, gentity_t *inflictor, gentity_t *attacker
 
 void GEntity_DieFunc(gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int damage, int mod, int dFlags, int hitLoc)
 {
+	G_SubBSPCapture subBspCapture(self);
 #define DIECASE(blah) case dieF_ ## blah: blah(self,inflictor,attacker,damage,mod,dFlags,hitLoc); break;
 
 	switch (self->e_DieFunc)
@@ -409,6 +425,8 @@ void GEntity_DieFunc(gentity_t *self, gentity_t *inflictor, gentity_t *attacker,
 	DIECASE( misc_panel_turret_die )
 	DIECASE( thermal_die )
 	DIECASE( eweb_die )
+	DIECASE( portable_shield_die )
+	DIECASE( siege_item_die )
 
 	default:
 		Com_Error(ERR_DROP, "GEntity_DieFunc: case %d not handled!\n",self->e_DieFunc);

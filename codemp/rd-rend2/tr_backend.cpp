@@ -598,7 +598,23 @@ void RB_BeginDrawingView (void) {
 	// dont clear color if we have a skyportal and it has been rendered
 	if (tr.world && tr.world->skyboxportal == 1 && !(tr.viewParms.isSkyPortal))
 		clearBits &= ~GL_COLOR_BUFFER_BIT;
+	if (backEnd.viewParms.flags & VPF_JAR_SECTION_SKY) {
+		clearBits |= GL_COLOR_BUFFER_BIT;
+		qglClearColor(0.3f, 0.3f, 0.3f, 1.0f);
+	}
+	if (!backEnd.viewParms.isSkyPortal && !(backEnd.refdef.rdflags & (RDF_NOWORLDMODEL | RDF_NOFOG))) {
+		const auto *room = backEnd.viewParms.riftFogRoom;
+		const auto *world = room ? R_BSPFogWorld(room) : nullptr;
+		if (const auto *fog = world ? world->globalFog : nullptr) {
+			clearBits |= GL_COLOR_BUFFER_BIT;
+			qglClearColor(fog->parms.color[0], fog->parms.color[1], fog->parms.color[2], 1.0f);
+		}
+	}
 
+	if (backEnd.viewParms.portalMonitor) {
+		qglClearColor(0.12f, 0.12f, 0.12f, 1.0f);
+		clearBits = GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT;
+	}
 	if (clearBits > 0 && !(backEnd.viewParms.flags & VPF_NOCLEAR))
 		qglClear( clearBits );
 
@@ -1187,7 +1203,7 @@ static void RB_SubmitDrawSurfsForDepthFill(
 {
 	shader_t *oldShader = nullptr;
 	int oldEntityNum = -1;
-	int oldSort = -1;
+	uint64_t oldSort = UINT64_MAX;
 	int oldDepthRange = 0;
 	CBoneCache *oldBoneCache = nullptr;
 
@@ -1274,7 +1290,7 @@ static void RB_SubmitDrawSurfs(
 {
 	shader_t *oldShader = nullptr;
 	int oldEntityNum = -1;
-	int oldSort = -1;
+	uint64_t oldSort = UINT64_MAX;
 	int oldFogNum = -1;
 	int oldDepthRange = 0;
 	int oldDlighted = 0;
@@ -1332,7 +1348,7 @@ static void RB_SubmitDrawSurfs(
 				dlighted != oldDlighted ||
 				postRender != oldPostRender ||
 				cubemapIndex != oldCubemapIndex ||
-				(entityNum != oldEntityNum && !shader->entityMergable)) )
+				(entityNum != oldEntityNum && (!shader->entityMergable || fogNum != 0))) )
 		{
 			if ( oldShader != nullptr )
 			{
@@ -1438,7 +1454,7 @@ static void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs )
 	void *allocMark = backEndData->perFrameMemory->Mark();
 	assert(backEndData->currentPass == nullptr);
 	backEndData->currentPass = RB_CreatePass(
-		*backEndData->perFrameMemory, numDrawSurfs * estimatedNumShaderStages);
+		*backEndData->perFrameMemory, numDrawSurfs * estimatedNumShaderStages + 1);
 
 	// save original time for entity shader offsets
 	float originalTime = backEnd.refdef.floatTime;
@@ -1454,6 +1470,26 @@ static void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs )
 	else
 	{
 		RB_SubmitDrawSurfs(drawSurfs, numDrawSurfs, originalTime);
+		const auto *room = backEnd.viewParms.riftFogRoom;
+		const auto *world = room ? R_BSPFogWorld(room) : nullptr;
+		if (r_drawfog->integer && !backEnd.framePostProcessed && !backEnd.refractionFill &&
+			(backEnd.viewParms.viewParmType == VPT_MAIN || backEnd.viewParms.viewParmType == VPT_PORTAL) &&
+			!(backEnd.viewParms.flags & VPF_DEPTHSHADOW) && !(backEnd.refdef.rdflags & (RDF_NOWORLDMODEL | RDF_NOFOG)) &&
+			world && world->globalFog && world->globalFogIndex > 0 && world->globalFogIndex <= ARRAY_LEN(FogsBlock::fogs)) {
+			const float depth = world->globalFog->parms.depthForOpaque;
+			if (depth > 0 && depth < backEnd.viewParms.zFar) {
+				vec3_t origin, left, up;
+				VectorMA(backEnd.viewParms.ori.origin, depth, backEnd.viewParms.ori.axis[0], origin);
+				VectorScale(backEnd.viewParms.ori.axis[1], depth * tanf(backEnd.viewParms.fovX * M_PI / 360.0f), left);
+				VectorScale(backEnd.viewParms.ori.axis[2], depth * tanf(backEnd.viewParms.fovY * M_PI / 360.0f), up);
+				RB_PrepareForEntity(REFENTITYNUM_WORLD, originalTime);
+				backEnd.sectionFogCapRoom = room;
+				RB_BeginSurface(tr.sectionFogCapShader, world->globalFogIndex, 0);
+				RB_AddQuadStamp(origin, left, up, colorWhite);
+				RB_EndSurface();
+				backEnd.sectionFogCapRoom = nullptr;
+			}
+		}
 	}
 
 	// Do the drawing and release memory
@@ -2243,31 +2279,62 @@ static void RB_UpdateLightsConstants(gpuFrame_t *frame, const trRefdef_t *refdef
 		frame, &lightsBlock, sizeof(lightsBlock));
 }
 
-static void RB_UpdateFogsConstants(gpuFrame_t *frame)
+const world_t *R_BSPFogWorld(const trRefEntity_t *entity)
+{
+	if (entity && entity->riftFogRoom) entity = entity->riftFogRoom;
+	else if (entity == &tr.worldEntity && backEnd.sectionFogCapRoom) entity = backEnd.sectionFogCapRoom;
+	if (!entity || entity == &tr.worldEntity || entity->e.reType != RT_MODEL) return tr.world;
+	const model_t *model = R_GetModelByHandle(entity->e.hModel);
+	if (!model || model->type != MOD_BRUSH || !model->data.bmodel) return tr.world;
+	const int worldIndex = model->data.bmodel->worldIndex;
+	return worldIndex >= 0 && worldIndex < tr.numBspModels ? R_GetWorld(worldIndex) : tr.world;
+}
+
+static long RB_BuildBSPFogs(gpuFrame_t *frame, const world_t *world, const trRefEntity_t *entity)
 {
 	FogsBlock fogsBlock = {};
-	if (tr.world == nullptr)
-	{
-		fogsBlock.numFogs = 0;
-	}
-	else
-	{
-		fogsBlock.numFogs = tr.world->numfogs - 1; // Don't reserve fog 0 as 'null'
-	}
+	if (world) fogsBlock.numFogs = Com_Clampi(0, ARRAY_LEN(fogsBlock.fogs), world->numfogs - 1);
 
 	for (int i = 0; i < fogsBlock.numFogs; ++i)
 	{
-		const fog_t *fog = tr.world->fogs + i + 1;
+		const fog_t *fog = world->fogs + i + 1;
 		FogsBlock::Fog *fogData = fogsBlock.fogs + i;
 
 		VectorCopy4(fog->surface, fogData->plane);
+		if (entity && fog->hasSurface) {
+			vec3_t normal = {};
+			for (int a = 0; a < 3; ++a) {
+				const float scale = DotProduct(entity->e.axis[a], entity->e.axis[a]);
+				if (scale > 0.000001f) VectorMA(normal, fog->surface[a] / scale, entity->e.axis[a], normal);
+			}
+			const float length = VectorLength(normal);
+			if (length > 0.000001f) {
+				fogData->plane[3] = (fog->surface[3] + DotProduct(normal, entity->e.origin)) / length;
+				VectorScale(normal, 1.0f / length, fogData->plane);
+			}
+		}
 		VectorCopy4(fog->color, fogData->color);
-		fogData->depthToOpaque = sqrtf(-logf(1.0f / 255.0f)) / fog->parms.depthForOpaque;
+		fogData->depthToOpaque = sqrtf(-logf(1.0f / 255.0f)) / fmaxf(1.0f, fog->parms.depthForOpaque);
 		fogData->hasPlane = fog->hasSurface;
 	}
 
-	tr.fogsUboOffset = RB_AppendConstantsData(
-		frame, &fogsBlock, sizeof(fogsBlock));
+	return RB_AppendConstantsData(frame, &fogsBlock, sizeof(fogsBlock));
+}
+
+static void RB_UpdateFogsConstants(gpuFrame_t *frame, const trRefdef_t *refdef)
+{
+	tr.fogsUboOffset = RB_BuildBSPFogs(frame, tr.world, nullptr);
+	for (int i = 0; i < refdef->num_entities; ++i) {
+		trRefEntity_t *entity = &refdef->entities[i];
+		entity->bspFogUboOffset = tr.fogsUboOffset;
+		if (entity->riftFogRoom) continue;
+		const auto *world = R_BSPFogWorld(entity);
+		if (world != tr.world && world && world->numfogs > 1)
+			entity->bspFogUboOffset = RB_BuildBSPFogs(frame, world, entity);
+	}
+	for (int i = 0; i < refdef->num_entities; ++i)
+		if (const auto *room = refdef->entities[i].riftFogRoom)
+			refdef->entities[i].bspFogUboOffset = room->bspFogUboOffset;
 }
 
 static void RB_UpdateEntityLightConstants(
@@ -2534,7 +2601,7 @@ void RB_UpdateConstants(const trRefdef_t *refdef)
 	RB_UpdateCameraConstants(frame);
 	RB_UpdateSceneConstants(frame, refdef);
 	RB_UpdateLightsConstants(frame, refdef);
-	RB_UpdateFogsConstants(frame);
+	RB_UpdateFogsConstants(frame, refdef);
 	RB_UpdateGhoul2Constants(frame, refdef);
 	RB_UpdateEntityConstants(frame, refdef);
 
@@ -3017,6 +3084,11 @@ static const void *RB_DrawSurfs(const void *data) {
 
 	// clear the z buffer, set the modelview, etc
 	RB_BeginDrawingView();
+
+	if (backEnd.viewParms.portalMonitor) {
+		RB_RenderDrawSurfList(cmd->drawSurfs, cmd->numDrawSurfs);
+		return cmd + 1;
+	}
 
 	if (cmd->numDrawSurfs > 0)
 	{

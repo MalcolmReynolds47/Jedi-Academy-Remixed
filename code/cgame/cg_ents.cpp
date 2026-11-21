@@ -24,18 +24,46 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // cg_ents.c -- present snapshot entities, happens every single frame
 
 #include "cg_headers.h"
+#include "qcommon/jar_diagnostics.h"
 
 #include "cg_media.h"
+#include "../game/g_laser_arm.h"
+#include "../game/g_sandbox_laser.h"
+#include "../game/g_sandbox_breakable.h"
+#include "../game/g_sandbox_usable.h"
+#include "../game/g_portal.h"
+#include "../game/g_spotlight.h"
+#include "../game/g_door_camera.h"
+#include "qcommon/jar_angular_trajectory.h"
 #include "../game/g_functions.h"
 #include "../ghoul2/G2.h"
 #include "FxScheduler.h"
 #include "../game/wp_saber.h"
 #include "../game/g_vehicles.h"
+#include "../game/g_bsp_section.h"
+#include "../game/g_siege_korriban.h"
+#include "qcommon/jar_force_enlightenment.h"
 
 extern void CG_AddSaberBlade( centity_t *cent, centity_t *scent, refEntity_t *saber, int renderfx, int modelIndex, vec3_t origin, vec3_t angles);
 extern void CG_CheckSaberInWater( centity_t *cent, centity_t *scent, int saberNum, int modelIndex, vec3_t origin, vec3_t angles );
 extern void CG_ForcePushBlur( const vec3_t org, qboolean darkSide = qfalse );
 extern void CG_AddForceSightShell( refEntity_t *ent, centity_t *cent );
+
+bool CG_SiegeKorribanMediaVisible(const gentity_t* entity,const vec3_t point){
+	const auto* root=G_SubBSPOwner(entity);
+	if(!root)return true;
+	const float range=jar::siegeKorriban::mediaRange;
+	if(DistanceSquared(cg.refdef.vieworg,point)>range*range)return false;
+	vec3_t axes[3],viewDelta,pointDelta,localView,localPoint;
+	AnglesToAxis(root->currentAngles,axes);
+	VectorSubtract(cg.refdef.vieworg,root->currentOrigin,viewDelta);
+	VectorSubtract(point,root->currentOrigin,pointDelta);
+	for(int axis=0;axis<3;++axis){
+		localView[axis]=DotProduct(viewDelta,axes[axis]);
+		localPoint[axis]=DotProduct(pointDelta,axes[axis]);
+	}
+	return cgi_CM_SectionPVS(root->s.modelindex,localView,localPoint)!=qfalse;
+}
 extern qboolean CG_PlayerCanSeeCent( centity_t *cent );
 extern cvar_t	*debug_subdivision;
 
@@ -129,7 +157,14 @@ vec3_t *CG_SetEntitySoundPosition( centity_t *cent ) {
 		float	*v;
 
 		v = cgs.inlineModelMidpoints[ cent->currentState.modelindex ];
-		VectorAdd( cent->lerpOrigin, v, origin );
+		if (cent->gent && jar::bspSection::ShaftLift(*cent->gent)) {
+			vec3_t axis[3];
+			AnglesToAxis(cent->lerpAngles, axis);
+			VectorCopy(cent->lerpOrigin, origin);
+			for (int i = 0; i < 3; ++i)
+				VectorMA(origin, v[i], axis[i], origin);
+		} else
+			VectorAdd( cent->lerpOrigin, v, origin );
 		cgi_S_UpdateEntityPosition( cent->currentState.number, origin );
 		VectorCopy(origin, v3Return);
 	} else {
@@ -254,11 +289,11 @@ void CG_SetGhoul2Info( refEntity_t *ent, centity_t *cent)
 void G2_BoltToGhoul2Model(centity_t *cent, refEntity_t *ent)
 {
 		// extract the wraith ID from the bolt info
-	int modelNum = cent->currentState.boltInfo >> MODEL_SHIFT;
+	int modelNum = uint32_t(cent->currentState.boltInfo) >> MODEL_SHIFT;
 	modelNum &= MODEL_AND;
-	int boltNum	= cent->currentState.boltInfo >> BOLT_SHIFT;
+	int boltNum	= uint32_t(cent->currentState.boltInfo) >> BOLT_SHIFT;
 	boltNum &= BOLT_AND;
-	int	entNum = cent->currentState.boltInfo >> ENTITY_SHIFT;
+	int	entNum = uint32_t(cent->currentState.boltInfo) >> ENTITY_SHIFT;
 	entNum &= ENTITY_AND;
 
  	mdxaBone_t 		boltMatrix;
@@ -312,8 +347,17 @@ Ghoul2 Insert End
 CG_General
 ==================
 */
+#include "cg_spotlight.inc"
+#include "cg_door_camera.inc"
+#include "cg_portable_shield.inc"
+#include "qcommon/jar_entity_presets.h"
+#include "../../shared/cgame/jar_logic_marker_sprite.h"
+#include "../../shared/qcommon/jar_wall.h"
+#include "game/g_button_sandbox.h"
 static void CG_General( centity_t *cent )
 {
+ CG_PortableShield(cent);
+ vec3_t laserStart,laserEnd;if(cent->gent&&G_LaserArmBeam(*cent->gent,laserStart,laserEnd)){vec3_t color={1,.85f,.15f};FX_AddLine(laserStart,laserEnd,1,1.5f,0,.85f,.85f,color,color,1,cgi_R_RegisterShader("gfx/effects/redLine"));}
 	refEntity_t			ent;
 	entityState_t		*s1;
 
@@ -370,6 +414,15 @@ Ghoul2 Insert End
 	}
 	ent.oldframe = ent.frame;
 	ent.backlerp = 0;
+	const auto* next = cent->nextState;
+	if (G_ButtonPortable(*cent->gent) && cent->interpolate && next &&
+		cg.frameInterpolation > 0.f && cg.frameInterpolation < 1.f &&
+		next->modelindex == s1->modelindex &&
+		JAR_ButtonFrameStep(s1->time,s1->frame,next->time,next->frame))
+	{
+		ent.frame = next->frame;
+		ent.backlerp = 1.f - cg.frameInterpolation;
+	}
 /*
 Ghoul2 Insert Start
 */
@@ -380,6 +433,17 @@ Ghoul2 Insert End
 
 	VectorCopy( cent->lerpOrigin, ent.origin);
 	VectorCopy( cent->lerpOrigin, ent.oldorigin);
+
+	if(s1->time2==jar::siegeKorriban::sceneryTag){
+		const auto* root=G_SubBSPOwner(cent->gent);
+		if(root){
+			vec3_t up;
+			AngleVectors(root->currentAngles,nullptr,nullptr,up);
+			VectorMA(ent.origin,s1->angles2[2]+1.0f,up,ent.lightingOrigin);
+			if(!CG_SiegeKorribanMediaVisible(cent->gent,ent.lightingOrigin))return;
+			ent.renderfx|=RF_LIGHTING_ORIGIN;
+		}
+	}
 
 	ent.hModel = cgs.model_draw[s1->modelindex];
 
@@ -556,6 +620,7 @@ const weaponData_t  *wData = NULL;
 
 	//copy modelscale, if any
 	VectorCopy( cent->currentState.modelScale, ent.modelScale );
+ CG_DoorCameraScale(cent,ent);
 	//apply modelscale, if any
 	ScaleModelAxis(&ent);
 
@@ -615,7 +680,7 @@ const weaponData_t  *wData = NULL;
 						}
 						else
 						{
-							switch ( cent->gent->owner->client->ps.forcePowerLevel[FP_SABERTHROW] )
+							switch ( jar::enlightenment::Rank(cent->gent->owner->client->ps,FP_SABERTHROW) )
 							{
 							case FORCE_LEVEL_1:
 								spinSound = cgi_S_RegisterSound( "sound/weapons/saber/saberspin3.wav" );
@@ -692,7 +757,7 @@ const weaponData_t  *wData = NULL;
 					}
 					else
 					{
-						switch ( cent->gent->owner->client->ps.forcePowerLevel[FP_SABERTHROW] )
+						switch ( jar::enlightenment::Rank(cent->gent->owner->client->ps,FP_SABERTHROW) )
 						{
 						case FORCE_LEVEL_1:
 							spinSound = cgi_S_RegisterSound( "sound/weapons/saber/saberspin3.wav" );
@@ -804,7 +869,8 @@ Ghoul2 Insert End
 		theFxScheduler.PlayEffect( "tripMine/glowBit", beamOrg, ent.axis[0] );
 	}
 
-	if ( s1->eFlags & EF_ALT_FIRING )
+ if(G_SpotlightPortable(*cent->gent)){CG_PortableSpotlight(cent);}
+ else if ( s1->eFlags & EF_ALT_FIRING )
 	{
 		// hack for the spotlight
 		vec3_t	org, axis[3], dir;
@@ -1117,6 +1183,20 @@ static void CG_Missile( centity_t *cent ) {
 	}
 	weapon = &cg_weapons[s1->weapon];
 	wData = &weaponData[s1->weapon];
+    // Diagnostic-only qualification: once per player missile, no gameplay writes.
+    // Weapon model/trail fields are generic; vehicle effects use a separate path.
+    if (gi.JAR_LogLevel && gi.JAR_LogLevel()>=2 && cent->gent->owner && cent->gent->owner->s.number==0) {
+        static unsigned visualTime[MAX_GENTITIES]={};
+        if (visualTime[s1->number]!=unsigned(s1->pos.trTime)+1u) {
+            visualTime[s1->number]=unsigned(s1->pos.trTime)+1u;
+            const bool alt=cent->gent->alt_fire!=qfalse;
+            JAR_Log(2,"fx","projectile_visual","entity=%d class=%s weapon=%d alt=%d registered=%d model=%d trail=%d vehicle=%d",
+                s1->number,cent->gent->classname?cent->gent->classname:"",s1->weapon,alt,weapon->registered,
+                alt?weapon->alt_missileModel:weapon->missileModel,
+                (alt?weapon->alt_missileTrailFunc:weapon->missileTrailFunc)!=nullptr,s1->otherEntityNum2);
+        }
+    }
+
 
 	if ( s1->pos.trType != TR_INTERPOLATE )
 	{
@@ -1238,7 +1318,7 @@ Ghoul2 Insert End
 		ent.hModel = weapon->missileModel;
 
 	// spin as it moves
-	if ( s1->apos.trType != TR_INTERPOLATE )
+	if ( !jar::angular::Interpolates(s1->apos.trType) )
 	{
 		// convert direction of travel into axis
 		if ( VectorNormalize2( s1->pos.trDelta, ent.axis[0] ) == 0 ) {
@@ -1292,6 +1372,14 @@ CG_Mover
 #define DOOR_OPEN		3
 #define DOOR_CLOSED		4
 
+static bool CG_SectionSky(const centity_t& cent) {
+    const auto& state = cent.currentState;
+    return state.eType == ET_MOVER && state.solid == SOLID_BMODEL &&
+        cent.gent && jar::bspSection::Portable(*cent.gent) &&
+        jar::bspSection::SectionSky(cent.gent->model);
+}
+
+#include "cg_wasteland.inc"
 static void CG_Mover( centity_t *cent ) {
 	refEntity_t			ent;
 	entityState_t		*s1;
@@ -1320,7 +1408,7 @@ Ghoul2 Insert End
 
 	// get the model, either as a bmodel or a modelindex
 	if ( s1->solid == SOLID_BMODEL ) {
-		ent.hModel = cgs.inlineDrawModel[s1->modelindex];
+		ent.hModel = s1->modelindex>0 && s1->modelindex<(int)ARRAY_LEN(cgs.inlineDrawModel) ? cgs.inlineDrawModel[s1->modelindex] : 0;
 	} else {
 		ent.hModel = cgs.model_draw[s1->modelindex];
 	}
@@ -1329,6 +1417,24 @@ Ghoul2 Insert End
 	if ( !ent.hModel )
 	{
 		return;
+	}
+
+	if (CG_SectionSky(*cent) && cgi_CM_SectionSky(s1->modelindex, nullptr))
+		ent.renderfx |= RF_JAR_SECTION_ARENA;
+	if (s1->solid == SOLID_BMODEL && cent->gent && jar::bspSection::Portable(*cent->gent)) {
+		const auto mode=jar::bspSection::Resource(cent->gent->model)->mode;
+		int rootIndex,modelCount;
+		if ((mode==jar::bspSection::Mode::Rift && cgi_CM_RiftSectionAir(s1->modelindex,nullptr)) ||
+			(mode==jar::bspSection::Mode::Korriban &&
+			 cgi_CM_BSPModelInfo(jar::korriban::resource,&rootIndex,&modelCount) && rootIndex==s1->modelindex) ||
+			(mode==jar::bspSection::Mode::Coruscant &&
+			 cgi_CM_BSPModelInfo(jar::coruscant::resource,&rootIndex,&modelCount) && rootIndex==s1->modelindex))
+			ent.renderfx |= RF_JAR_SECTION_FOG;
+		if(mode==jar::bspSection::Mode::Wasteland&&
+		   cgi_CM_BSPModelInfo(jar::wasteland::resource,&rootIndex,&modelCount)&&rootIndex==s1->modelindex){
+			ent.renderfx |= RF_JAR_SECTION_FOG;
+			if(!(s1->eFlags&EF_NODRAW))CG_WastelandSnow(rootIndex,ent.origin,cent->lerpAngles,ent.axis);
+		}
 	}
 
 	if ( cent->currentState.eFlags & EF_DISABLE_SHADER_ANIM )
@@ -1356,8 +1462,13 @@ Ghoul2 Insert End
 		if ( !VectorCompare( vec3_origin, cent->gent->modelAngles ) )
 		{//we have a rotational offset for the model for this brush
 			vec3_t modelAngles;
-			VectorAdd( cent->lerpAngles, cent->gent->modelAngles, modelAngles );
-			AnglesToAxis( modelAngles, ent.axis );
+			if (jar::angular::Path(s1->apos.trType))
+				jar::angular::ModelAxis(cent->lerpAngles,cent->gent->modelAngles,ent.axis);
+			else
+			{
+				VectorAdd( cent->lerpAngles, cent->gent->modelAngles, modelAngles );
+				AnglesToAxis( modelAngles, ent.axis );
+			}
 		}
 		ent.hModel = cgs.model_draw[s1->modelindex2];
 	}
@@ -1555,7 +1666,10 @@ void CG_Line( vec3_t start, vec3_t end, vec3_t color, float alpha )
 CG_Portal
 ===============
 */
+#include "cg_portal.inc"
+
 static void CG_Portal( centity_t *cent ) {
+ if(CG_PortablePortal(cent))return;
 	refEntity_t			ent;
 	entityState_t		*s1;
 
@@ -1682,14 +1796,19 @@ Ghoul2 Insert End
 
 		f = cg.frameInterpolation;
 
-		if ( cent->currentState.apos.trType == TR_INTERPOLATE && cent->nextState )
+		if ( jar::angular::Interpolates(cent->currentState.apos.trType) && cent->nextState )
 		{
 			EvaluateTrajectory( &cent->currentState.apos, cg.snap->serverTime, current );
 			EvaluateTrajectory( &cent->nextState->apos, cg.nextSnap->serverTime, next );
 
-			cent->lerpAngles[0] = LerpAngle( current[0], next[0], f );
-			cent->lerpAngles[1] = LerpAngle( current[1], next[1], f );
-			cent->lerpAngles[2] = LerpAngle( current[2], next[2], f );
+			if (cent->currentState.apos.trType == TR_AXIS_INTERPOLATE)
+				jar::angular::Interpolate(current,next,f,cent->lerpAngles);
+			else
+			{
+				cent->lerpAngles[0] = LerpAngle( current[0], next[0], f );
+				cent->lerpAngles[1] = LerpAngle( current[1], next[1], f );
+				cent->lerpAngles[2] = LerpAngle( current[2], next[2], f );
+			}
 
 			/*
 			if(cent->gent && cent->currentState.clientNum != 0 && !VectorCompare(current, next))
@@ -1733,7 +1852,7 @@ Ghoul2 Insert End
 	}
 	else
 	{
-		if ( cent->currentState.apos.trType == TR_INTERPOLATE )
+		if ( jar::angular::Interpolates(cent->currentState.apos.trType) )
 		{
 			EvaluateTrajectory( &cent->currentState.apos, cg.snap->serverTime, cent->lerpAngles );
 		}
@@ -1918,6 +2037,27 @@ CAS_GetBModelSound
 
 sfxHandle_t CAS_GetBModelSound( const char *name, int stage )
 {
+	if(name&&!strcmp(name,jar::siegeKorriban::doorSoundSet)){
+		if(stage<0||stage>=int(ARRAY_LEN(jar::siegeKorriban::doorSounds)))return -1;
+		const auto handle=cgi_S_RegisterSound(jar::siegeKorriban::doorSounds[stage]);
+		return handle>0?handle:-1;
+	}
+	if(name)for(const auto& sound:jar::taspir::sounds)if(!strcmp(name,sound.runtime)){
+		if(stage<0||stage>=int(ARRAY_LEN(sound.files)))return -1;
+		const auto handle=cgi_S_RegisterSound(sound.files[stage]);
+		return handle>0?handle:-1;
+	}
+	if (name && !strcmp(name, jar::sentinel::pistonSet)) {
+		if (stage < 0 || stage >= int(ARRAY_LEN(jar::sentinel::pistonSounds)))return -1;
+		const auto handle=cgi_S_RegisterSound(jar::sentinel::pistonSounds[stage]);
+		return handle>0?handle:-1;
+	}
+	if (name && !strcmp(name, jar::shaft::liftSoundSet)) {
+		if (stage < 0 || stage >= (int)ARRAY_LEN(jar::shaft::liftSounds))
+			return -1;
+		const auto handle = cgi_S_RegisterSound(jar::shaft::liftSounds[stage]);
+		return handle > 0 ? handle : -1;
+	}
 	return cgi_AS_GetBModelSound( name, stage );
 }
 
@@ -2305,39 +2445,7 @@ static void CG_Think ( centity_t *cent )
 	CEntity_ThinkFunc(cent);	//	cent->gent->clThink(cent);
 }
 
-static void CG_Clouds( centity_t *cent )
-{
-	refEntity_t		ent;
-
-	// create the render entity
-	memset( &ent, 0, sizeof( ent ));
-
-	VectorCopy( cent->lerpOrigin, ent.origin );
-
-	ent.shaderRGBA[0] = ent.shaderRGBA[1] = ent.shaderRGBA[2] = ent.shaderRGBA[3] = 255;
-
-	ent.radius = cent->gent->radius;
-	ent.backlerp = cent->gent->wait;
-
-	ent.reType = RT_CLOUDS;
-
-	if ( cent->gent->spawnflags & 1 ) // TUBE type, the one with a hole in the middle
-	{
-		ent.rotation = cent->gent->random;
-		ent.renderfx = RF_GROW;// tube flag
-	}
-
-	if ( cent->gent->spawnflags & 2 ) // ALT type, uses a different shader
-	{
-		ent.customShader = cgi_R_RegisterShader( "gfx/world/haze2" );
-	}
-	else
-	{
-		ent.customShader = cgi_R_RegisterShader( "gfx/world/haze" );
-	}
-
-	cgi_R_AddRefEntityToScene( &ent );
-}
+#include "cg_cloud.inc"
 
 /*
 ===============
@@ -2370,6 +2478,34 @@ static void CG_AddCEntity( centity_t *cent )
 	if ( cent->gent && cent->gent->soundSet && cent->gent->soundSet[0] && cent->currentState.eType != ET_MOVER )
 	{
 		CG_AddLocalSet( cent );
+	}
+
+	const auto& state = cent->currentState;
+	if (cgs.media.jarLogicMarkerShader && (G_SandboxBreakableBroken(*cent->gent)||G_SandboxUsableDormant(*cent->gent)||
+		(!cent->gent->count&&JAR_WallPortable(cent->gent->classname,cent->gent->model))))
+	{
+		refEntity_t marker;
+		JAR_LogicMarkerSprite(&marker, cent->lerpOrigin, cg.refdef.vieworg,
+			cg.refdef.viewaxis[0], cgs.media.jarLogicMarkerShader);
+		cgi_R_AddRefEntityToScene(&marker);
+		return;
+	}
+	const bool markerType = state.eType == ET_GENERAL || state.eType == ET_INVISIBLE ||
+		state.eType == ET_PUSH_TRIGGER || state.eType == ET_TELEPORT_TRIGGER;
+	vec3_t emitterStart,emitterEnd;
+	if(!(state.eFlags&EF_NODRAW)&&G_SandboxLaserBeam(*cent->gent,emitterStart,emitterEnd)){
+		vec3_t color={1,1,1};
+		FX_AddLine(emitterStart,emitterEnd,1,1.5f,0,.9f,.9f,color,color,1,cgi_R_RegisterShader("gfx/effects/redLine"));
+	}
+	if (markerType && cgs.media.jarLogicMarkerShader && !(state.eFlags & EF_NODRAW) &&
+		state.modelindex > 0 && state.modelindex < MAX_MODELS &&
+		jar::entities::LogicMarker(cent->gent->classname, cent->gent->targetname,
+			CG_ConfigString(CS_MODELS + state.modelindex))) {
+		refEntity_t marker;
+		JAR_LogicMarkerSprite(&marker, cent->lerpOrigin, cg.refdef.vieworg,
+			cg.refdef.viewaxis[0], cgs.media.jarLogicMarkerShader);
+		cgi_R_AddRefEntityToScene(&marker);
+		return;
 	}
 /*
 Ghoul2 Insert Start
@@ -2437,6 +2573,10 @@ CG_AddPacketEntities
 
 ===============
 */
+#include "cg_skyportal.inc"
+#include "cg_section_sky.inc"
+#include "cg_section_air.inc"
+
 void CG_AddPacketEntities( qboolean isPortal ) {
 	int					num;
 	centity_t			*cent;
@@ -2444,6 +2584,7 @@ void CG_AddPacketEntities( qboolean isPortal ) {
 
 	if (isPortal)
 	{
+		jar::skyPortal::View sky;if(jar::skyPortal::Decode(CG_ConfigString(CS_SKYBOXORG),sky,ENTITYNUM_WORLD)){CG_AddPortableSkyEntities(sky);return;}
 		for ( num = 0 ; num < cg.snap->numEntities ; num++ )
 		{
 			cent = &cg_entities[ cg.snap->entities[ num ].number ];
@@ -2478,6 +2619,7 @@ void CG_AddPacketEntities( qboolean isPortal ) {
 									// no entities should be marked as interpolating
 //OutputDebugString(va("noterp %4.2f ct=%6d nt=%6d st=%6d\n",cg.frameInterpolation,cg.time,0,cg.snap->serverTime));
 	}
+	CG_CollectRiftAirSpaces();
 
 	// the auto-rotating items will all have the same axis
 	cg.autoAngles[0] = 0;

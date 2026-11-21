@@ -156,7 +156,7 @@ A NULL client will broadcast to all clients
 */
 void QDECL SV_SendServerCommand(client_t *cl, const char *fmt, ...) {
 	va_list		argptr;
-	byte		message[MAX_MSGLEN];
+	static byte		message[MAX_MSGLEN];
 	client_t	*client;
 	int			j;
 
@@ -419,7 +419,7 @@ the simple info query.
 */
 void SVC_Status( const netadr_t *from ) {
 	char	player[1024];
-	char	status[MAX_MSGLEN];
+	static char	status[MAX_MSGLEN];
 	int		i;
 	client_t	*cl;
 	playerState_t	*ps;

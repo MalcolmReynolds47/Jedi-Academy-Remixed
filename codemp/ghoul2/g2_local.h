@@ -378,3 +378,8 @@ int			G2API_Ghoul2Size ( CGhoul2Info_v &ghoul2 );
 void		RemoveBoneCache( CBoneCache *boneCache );
 
 const char	*G2API_GetModelName ( CGhoul2Info_v& ghoul2, int modelIndex );
+
+qboolean G2API_JAR_PoseBounds(CGhoul2Info_v&,int,int*,vec3_t,vec3_t);
+qboolean G2API_JAR_PoseGeometry(CGhoul2Info_v&,int,int*,vec3_t,vec3_t,
+ void*,void (*)(void*,const float*));
+void G2API_JAR_ApplyFace(CGhoul2Info_v&,int,int,int,float,float,qboolean,int);

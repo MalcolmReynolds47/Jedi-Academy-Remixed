@@ -67,7 +67,7 @@ new gamestate_t, potentially several times during an established connection
 // the parseEntities array must be large enough to hold PACKET_BACKUP frames of
 // entities, so that when a delta compressed message arives from the server
 // it can be un-deltad from the original
-#define MAX_PARSE_ENTITIES	512
+#define MAX_PARSE_ENTITIES	JAR_SNAPSHOT_HISTORY
 
 extern int g_console_field_width;
 
@@ -351,6 +351,7 @@ extern int cl_connectedToCheatServer;
 
 void CL_SystemInfoChanged( void );
 void CL_ParseServerMessage( msg_t *msg );
+void CL_ParsePacketEntities(msg_t *msg, clSnapshot_t *oldframe, clSnapshot_t *newframe);
 
 //====================================================================
 

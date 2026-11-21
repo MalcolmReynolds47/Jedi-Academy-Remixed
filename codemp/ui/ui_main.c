@@ -37,6 +37,8 @@ USER INTERFACE MAIN
 
 #include "ghoul2/G2.h"
 #include "ui_local.h"
+#include "game/jar_saber_rgb.h"
+#include "ui_jar_frontend.h"
 #include "qcommon/qfiles.h"
 #include "qcommon/game_version.h"
 #include "ui_force.h"
@@ -486,6 +488,7 @@ static void UI_BuildFindPlayerList(qboolean force);
 static int QDECL UI_ServersQsortCompare( const void *arg1, const void *arg2 );
 static int UI_MapCountByGameType(qboolean singlePlayer);
 static int UI_HeadCountByColor( void );
+static qboolean bIsImageFile(const char *dirptr, const char *skinname);
 static void UI_ParseGameInfo(const char *teamFile);
 static const char *UI_SelectedMap(int index, int *actual);
 static int UI_GetIndexFromSelection(int actual);
@@ -686,6 +689,7 @@ int MenuFontToHandle(int iMenuFont)
 {
 	switch (iMenuFont)
 	{
+		case 5: return UI_JAR_Font();
 		case 1: return uiInfo.uiDC.Assets.qhSmallFont;
 		case 2: return uiInfo.uiDC.Assets.qhMediumFont;
 		case 3: return uiInfo.uiDC.Assets.qhBigFont;
@@ -957,7 +961,7 @@ void UI_SetActiveMenu( uiMenuCommand_t menu ) {
 			trap->Key_SetCatcher( KEYCATCH_UI );
 			UI_BuildPlayerList();
 			Menus_CloseAll();
-			Menus_ActivateByName("ingame");
+			Menus_ActivateByName("jarMPPause");
 			return;
 		case UIMENU_PLAYERCONFIG:
 			// trap->Cvar_Set( "cl_paused", "1" );
@@ -1391,6 +1395,12 @@ void UI_ParseMenu(const char *menuFile) {
 	trap->PC_FreeSource(handle);
 }
 
+void UI_LoadJARControls(qboolean inGame) {
+	trap->PC_LoadGlobalDefines("ui/jamp/menudef.h");
+	UI_ParseMenu(inGame ? "ui/jamp/ingame_controls.menu" : "ui/jamp/controls.menu");
+	trap->PC_RemoveAllGlobalDefines();
+}
+
 qboolean Load_Menu(int handle) {
 	pc_token_t token;
 
@@ -1463,6 +1473,7 @@ void UI_LoadMenus(const char *menuFile, qboolean reset) {
 	trap->PC_FreeSource( handle );
 
 	trap->PC_RemoveAllGlobalDefines ( );
+	UI_JAR_LoadMenus();
 }
 
 void UI_Load( void ) {
@@ -5246,16 +5257,19 @@ saber_colors_t TranslateSaberColor( const char *name );
 static void UI_UpdateSaberCvars ( void )
 {
 	saber_colors_t colorI;
+	byte rgb[3];
 
 	trap->Cvar_Set ( "saber1", UI_Cvar_VariableString ( "ui_saber" ) );
 	trap->Cvar_Set ( "saber2", UI_Cvar_VariableString ( "ui_saber2" ) );
 
 	colorI = TranslateSaberColor( UI_Cvar_VariableString ( "ui_saber_color" ) );
-	trap->Cvar_Set ( "color1", va("%d",colorI));
+	const char *primary = UI_Cvar_VariableString("ui_saber_color");
+	trap->Cvar_Set("color1", JAR_ParseSaberRGB(primary, rgb) ? primary : va("%d", colorI));
 	trap->Cvar_Set ( "g_saber_color", UI_Cvar_VariableString ( "ui_saber_color" ));
 
 	colorI = TranslateSaberColor( UI_Cvar_VariableString ( "ui_saber2_color" ) );
-	trap->Cvar_Set ( "color2", va("%d",colorI) );
+	const char *secondary = UI_Cvar_VariableString("ui_saber2_color");
+	trap->Cvar_Set("color2", JAR_ParseSaberRGB(secondary, rgb) ? secondary : va("%d", colorI));
 	trap->Cvar_Set ( "g_saber2_color", UI_Cvar_VariableString ( "ui_saber2_color" ));
 }
 
@@ -5421,8 +5435,12 @@ static void UI_GetSaberCvars ( void )
 	trap->Cvar_Set ( "ui_saber", UI_Cvar_VariableString ( "saber1" ) );
 	trap->Cvar_Set ( "ui_saber2", UI_Cvar_VariableString ( "saber2" ));
 
-	trap->Cvar_Set("g_saber_color", SaberColorToString(trap->Cvar_VariableValue("color1")));
-	trap->Cvar_Set("g_saber2_color", SaberColorToString(trap->Cvar_VariableValue("color2")));
+	char color[16];
+	byte rgb[3];
+	trap->Cvar_VariableStringBuffer("color1", color, sizeof(color));
+	trap->Cvar_Set("g_saber_color", JAR_ParseSaberRGB(color, rgb) ? color : SaberColorToString(atoi(color)));
+	trap->Cvar_VariableStringBuffer("color2", color, sizeof(color));
+	trap->Cvar_Set("g_saber2_color", JAR_ParseSaberRGB(color, rgb) ? color : SaberColorToString(atoi(color)));
 
 	trap->Cvar_Set ( "ui_saber_color", UI_Cvar_VariableString ( "g_saber_color" ) );
 	trap->Cvar_Set ( "ui_saber2_color", UI_Cvar_VariableString ( "g_saber2_color" ) );
@@ -5907,6 +5925,7 @@ static void UI_RunMenuScript(char **args)
 
 	if (String_Parse(args, &name))
 	{
+		if (UI_JAR_Script(name,args)) return;
 		if (Q_stricmp(name, "StartServer") == 0)
 		{
 			int i, added = 0;
@@ -7265,37 +7284,26 @@ qboolean UI_hasSkinForBase(const char *base, const char *team) {
 UI_HeadCountByColor
 ==================
 */
-static int UI_HeadCountByColor(void) {
-	int i, c;
-	char *teamname;
-
-	c = 0;
-
-	switch(uiSkinColor)
-	{
-		case TEAM_BLUE:
-			teamname = "/blue";
-			break;
-		case TEAM_RED:
-			teamname = "/red";
-			break;
-		default:
-			teamname = "/default";
-	}
-
-	// Count each head with this color
-	for (i=0; i<uiInfo.q3HeadCount; i++)
-	{
-		if (uiInfo.q3HeadNames[i][0] && strstr(uiInfo.q3HeadNames[i], teamname))
-		{
-			c++;
-		}
-	}
-	return c;
+static qboolean UI_PlayerSkinMatchesColor(const char *entry)
+{
+	const char *skin = strchr(entry, '/');
+	if (!skin)
+		return qfalse;
+	if (uiSkinColor == TEAM_BLUE)
+		return !Q_stricmp(skin, "/blue");
+	if (uiSkinColor == TEAM_RED)
+		return !Q_stricmp(skin, "/red");
+	return Q_stricmp(skin, "/blue") && Q_stricmp(skin, "/red");
 }
 
-int Q_isprintext( int c );
-int Q_isgraph( int c );
+static int UI_HeadCountByColor(void)
+{
+	int count = 0;
+	for (int i = 0; i < uiInfo.q3HeadCount; ++i)
+		count += UI_PlayerSkinMatchesColor(uiInfo.q3HeadNames[i]);
+	return count;
+}
+
 /*
 ==================
 UI_ServerInfoIsValid
@@ -8111,38 +8119,15 @@ static const char *UI_SelectedMap(int index, int *actual) {
 UI_HeadCountByColor
 ==================
 */
-static const char *UI_SelectedTeamHead(int index, int *actual) {
-	char *teamname;
-	int i,c=0;
-
-	switch(uiSkinColor)
-	{
-		case TEAM_BLUE:
-			teamname = "/blue";
-			break;
-		case TEAM_RED:
-			teamname = "/red";
-			break;
-		default:
-			teamname = "/default";
-			break;
-	}
-
-	// Count each head with this color
-
-	for (i=0; i<uiInfo.q3HeadCount; i++)
-	{
-		if (uiInfo.q3HeadNames[i][0] && strstr(uiInfo.q3HeadNames[i], teamname))
-		{
-			if (c==index)
-			{
-				*actual = i;
-				return uiInfo.q3HeadNames[i];
-			}
-			else
-			{
-				c++;
-			}
+static const char *UI_SelectedTeamHead(int index, int *actual)
+{
+	*actual = -1;
+	for (int i = 0; i < uiInfo.q3HeadCount; ++i) {
+		if (!UI_PlayerSkinMatchesColor(uiInfo.q3HeadNames[i]))
+			continue;
+		if (index-- == 0) {
+			*actual = i;
+			return uiInfo.q3HeadNames[i];
 		}
 	}
 	return "";
@@ -8531,50 +8516,17 @@ static qhandle_t UI_FeederItemImage(float feederID, int index) {
 			}
 
 			if (!uiInfo.q3HeadIcons[index])
-			{ //this isn't the best way of doing this I guess, but I didn't want a whole seperate string array
-			  //for storing shader names. I can't just replace q3HeadNames with the shader name, because we
-			  //print what's in q3HeadNames and the icon name would look funny.
-				char iconNameFromSkinName[256];
-				int i = 0;
-				int skinPlace;
-
-				i = strlen(uiInfo.q3HeadNames[index]);
-
-				while (uiInfo.q3HeadNames[index][i] != '/')
-				{
-					i--;
-				}
-
-				i++;
-				skinPlace = i; //remember that this is where the skin name begins
-
-				//now, build a full path out of what's in q3HeadNames, into iconNameFromSkinName
-				Com_sprintf(iconNameFromSkinName, sizeof(iconNameFromSkinName), "models/players/%s", uiInfo.q3HeadNames[index]);
-
-				i = strlen(iconNameFromSkinName);
-
-				while (iconNameFromSkinName[i] != '/')
-				{
-					i--;
-				}
-
-				i++;
-				iconNameFromSkinName[i] = 0; //terminate, and append..
-				Q_strcat(iconNameFromSkinName, 256, "icon_");
-
-				//and now, for the final step, append the skin name from q3HeadNames onto the end of iconNameFromSkinName
-				i = strlen(iconNameFromSkinName);
-
-				while (uiInfo.q3HeadNames[index][skinPlace])
-				{
-					iconNameFromSkinName[i] = uiInfo.q3HeadNames[index][skinPlace];
-					i++;
-					skinPlace++;
-				}
-				iconNameFromSkinName[i] = 0;
-
-				//and now we are ready to register (thankfully this will only happen once)
-				uiInfo.q3HeadIcons[index] = trap->R_RegisterShaderNoMip(iconNameFromSkinName);
+			{
+				char model[MAX_QPATH];
+				Q_strncpyz(model, uiInfo.q3HeadNames[index], sizeof(model));
+				char *skin = strchr(model, '/');
+				*skin++ = '\0';
+				if (bIsImageFile(model, skin))
+					uiInfo.q3HeadIcons[index] = trap->R_RegisterShaderNoMip(va("models/players/%s/icon_%s", model, skin));
+				else if (bIsImageFile(model, "default"))
+					uiInfo.q3HeadIcons[index] = trap->R_RegisterShaderNoMip(va("models/players/%s/icon_default", model));
+				else
+					uiInfo.q3HeadIcons[index] = trap->R_RegisterShaderNoMip("models/players/kyle/icon_default");
 			}
 			return uiInfo.q3HeadIcons[index];
 		}
@@ -9424,113 +9376,66 @@ static qboolean bIsImageFile(const char* dirptr, const char* skinname)
 PlayerModel_BuildList
 =================
 */
-static void UI_BuildQ3Model_List( void )
+extern qboolean BG_IsValidCharacterModel(const char *modelName, const char *skinName);
+
+static qboolean UI_PlayerUsesHumanoid(const char *name)
 {
-	int		numdirs;
-	int		numfiles;
-	char	dirlist[2048];
-	char	filelist[2048];
-	char	skinname[64];
-	char*	dirptr;
-	char*	fileptr;
-	char*	check;
-	int		i;
-	int		j, k, p, s;
-	int		dirlen;
-	int		filelen;
+	char model[MAX_QPATH];
+	byte header[136];
+	fileHandle_t file = 0;
+	if (Com_sprintf(model, sizeof(model), "models/players/%s/model.glm", name) >= sizeof(model))
+		return qfalse;
+	const int length = trap->FS_Open(model, &file, FS_READ);
+	if (!file)
+		return qfalse;
+	const int read = length >= sizeof(header) ? trap->FS_Read(header, sizeof(header), file) : 0;
+	trap->FS_Close(file);
+	if (read != sizeof(header) || memcmp(header, "2LGM", 4) || !memchr(header+72, 0, 64))
+		return qfalse;
+	return Q_stricmp((const char *)header+72, "models/players/_humanoid/_humanoid") == 0;
+}
 
+static void UI_AddPlayerSkin(const char *model, const char *skin)
+{
+	char key[MAX_QPATH];
+	if (uiInfo.q3HeadCount >= MAX_Q3PLAYERMODELS ||
+		Com_sprintf(key, sizeof(key), "%s/%s", model, skin) >= sizeof(key))
+		return;
+	for (int i = 0; i < uiInfo.q3HeadCount; ++i)
+		if (!Q_stricmp(key, uiInfo.q3HeadNames[i]))
+			return;
+	const int index = uiInfo.q3HeadCount++;
+	Q_strncpyz(uiInfo.q3HeadNames[index], key, sizeof(uiInfo.q3HeadNames[index]));
+	uiInfo.q3HeadIcons[index] = 0;
+}
+
+static void UI_BuildQ3Model_List(void)
+{
+	static char directories[65536];
+	char skins[8192];
 	uiInfo.q3HeadCount = 0;
-
-	// iterate directory of all player models
-	numdirs = trap->FS_GetFileList("models/players", "/", dirlist, 2048 );
-	dirptr  = dirlist;
-	for (i=0; i<numdirs && uiInfo.q3HeadCount < MAX_Q3PLAYERMODELS; i++,dirptr+=dirlen+1)
-	{
-		dirlen = strlen(dirptr);
-
-		if (dirlen && dirptr[dirlen-1]=='/') dirptr[dirlen-1]='\0';
-
-		if (!strcmp(dirptr,".") || !strcmp(dirptr,".."))
-			continue;
-
-
-		numfiles = trap->FS_GetFileList( va("models/players/%s",dirptr), "skin", filelist, 2048 );
-		fileptr  = filelist;
-		for (j=0; j<numfiles && uiInfo.q3HeadCount < MAX_Q3PLAYERMODELS;j++,fileptr+=filelen+1)
-		{
-			int skinLen = 0;
-
-			filelen = strlen(fileptr);
-
-			COM_StripExtension(fileptr,skinname, sizeof( skinname ) );
-
-			skinLen = strlen(skinname);
-			k = 0;
-			while (k < skinLen && skinname[k] && skinname[k] != '_')
-			{
-				k++;
-			}
-			if (skinname[k] == '_')
-			{
-				p = 0;
-
-				while (skinname[k])
-				{
-					skinname[p] = skinname[k];
-					k++;
-					p++;
-				}
-				skinname[p] = '\0';
-			}
-
-			/*
-			Com_sprintf(fpath, 2048, "models/players/%s/icon%s.jpg", dirptr, skinname);
-
-			trap->FS_Open(fpath, &f, FS_READ);
-
-			if (f)
-			*/
-			check = &skinname[1];
-			if (bIsImageFile(dirptr, check))
-			{ //if it exists
-				qboolean iconExists = qfalse;
-
-				//trap->FS_Close(f);
-
-				if (skinname[0] == '_')
-				{ //change character to append properly
-					skinname[0] = '/';
-				}
-
-				s = 0;
-
-				while (s < uiInfo.q3HeadCount)
-				{ //check for dupes
-					if (!Q_stricmp(va("%s%s", dirptr, skinname), uiInfo.q3HeadNames[s]))
-					{
-						iconExists = qtrue;
-						break;
-					}
-					s++;
-				}
-
-				if (iconExists)
-				{
+	const int count = trap->FS_GetFileList("models/players", "/", directories, sizeof(directories));
+	char *directory = directories;
+	for (int i = 0; i < count; ++i) {
+		const size_t length = strlen(directory);
+		char *next = directory + length + 1;
+		if (length && directory[length-1] == '/')
+			directory[length-1] = '\0';
+		if (*directory && *directory != '.' && *directory != '_' && UI_PlayerUsesHumanoid(directory)) {
+			UI_AddPlayerSkin(directory, "default");
+			const int skinCount = trap->FS_GetFileList(va("models/players/%s", directory), ".skin", skins, sizeof(skins));
+			const char *file = skins;
+			for (int j = 0; j < skinCount; ++j, file += strlen(file)+1) {
+				char name[MAX_QPATH];
+				if (Q_stricmpn(file, "model_", 6))
 					continue;
-				}
-
-				Com_sprintf( uiInfo.q3HeadNames[uiInfo.q3HeadCount], sizeof(uiInfo.q3HeadNames[uiInfo.q3HeadCount]), va("%s%s", dirptr, skinname));
-				uiInfo.q3HeadIcons[uiInfo.q3HeadCount++] = 0;//trap->R_RegisterShaderNoMip(fpath);
-				//rww - we are now registering them as they are drawn like the TA feeder, so as to decrease UI load time.
-			}
-
-			if (uiInfo.q3HeadCount >= MAX_Q3PLAYERMODELS)
-			{
-				return;
+				COM_StripExtension(file+6, name, sizeof(name));
+				if (*name && BG_IsValidCharacterModel(directory, name))
+					UI_AddPlayerSkin(directory, name);
 			}
 		}
+		directory = next;
 	}
-
 }
 
 void UI_SiegeInit(void)
@@ -10028,6 +9933,7 @@ void UI_Refresh( int realtime )
 
 	if (Menu_Count() > 0) {
 		// paint all the menus
+		UI_JAR_Refresh();
 		Menu_PaintAll();
 		// refresh server browser list
 		UI_DoServerRefresh();
@@ -10039,7 +9945,7 @@ void UI_Refresh( int realtime )
 	// draw cursor
 	UI_SetColor( NULL );
 	if (Menu_Count() > 0 && (trap->Key_GetCatcher() & KEYCATCH_UI)) {
-		UI_DrawHandlePic( (float)uiInfo.uiDC.cursorx, (float)uiInfo.uiDC.cursory, 40.0f, 40.0f, uiInfo.uiDC.Assets.cursor);
+		UI_JAR_DrawCursor();
 		//UI_DrawHandlePic( uiInfo.uiDC.cursorx, uiInfo.uiDC.cursory, 48, 48, uiInfo.uiDC.Assets.cursor);
 	}
 

@@ -372,7 +372,10 @@ void Interrogator_Melee( qboolean visible, qboolean advance )
 
 			// Drug our enemy up and do the wonky vision thing
 			gentity_t *tent = G_TempEntity( NPC->enemy->currentOrigin, EV_DRUGGED );
-			tent->owner = NPC->enemy;
+			if (tent)
+			{
+				tent->owner = NPC->enemy;
+			}
 
 			G_Sound( NPC, G_SoundIndex( "sound/chars/interrogator/misc/torture_droid_inject.mp3" ));
 		}

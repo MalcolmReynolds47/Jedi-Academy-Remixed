@@ -22,9 +22,17 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include <SDL.h>
 #include <SDL_syswm.h>
 #include "qcommon/qcommon.h"
+#include "../../code/qcommon/jar_appearance.h"
+#ifndef JAR_MP
+#include "qcommon/jar_diagnostics.h"
+#endif
 #include "rd-common/tr_types.h"
 #include "sys/sys_local.h"
+#ifdef JAR_SP_ICON
+#include "jar_icon.h"
+#else
 #include "sdl_icon.h"
+#endif
 
 enum rserr_t
 {
@@ -60,6 +68,42 @@ cvar_t	*r_depthbits;
 cvar_t	*r_colorbits;
 cvar_t	*r_ignorehwgamma;
 cvar_t  *r_ext_multisample;
+cvar_t  *r_ext_multisample_default_fb;
+
+static Uint16 windowGamma[3][256];
+static bool windowGammaValid;
+static bool windowGammaPending;
+static bool windowGammaFirstFrame;
+static Uint32 windowGammaQueuedAt;
+
+void WIN_QueueGammaRestore(unsigned int windowId)
+{
+	if (!windowGammaValid || !screen || SDL_GetWindowID(screen) != windowId)
+		return;
+	windowGammaPending = true;
+	windowGammaFirstFrame = true;
+	windowGammaQueuedAt = SDL_GetTicks();
+}
+
+static void WIN_ApplyPendingGamma()
+{
+	if (!windowGammaPending)
+		return;
+	const Uint32 flags = SDL_GetWindowFlags(screen);
+	if (!(flags & SDL_WINDOW_INPUT_FOCUS) || (flags & SDL_WINDOW_MINIMIZED))
+		return;
+
+	// Exclusive fullscreen can change display mode after the focus event.
+	// Restore after presenting, then once more after the transition settles.
+	constexpr Uint32 settleTimeMs = 250;
+	const bool settled = SDL_GetTicks() - windowGammaQueuedAt >= settleTimeMs;
+	if (!windowGammaFirstFrame && !settled)
+		return;
+	windowGammaFirstFrame = false;
+	windowGammaPending = !settled;
+	if (SDL_SetWindowGammaRamp(screen, windowGamma[0], windowGamma[1], windowGamma[2]) < 0)
+		Com_DPrintf("SDL_SetWindowGammaRamp() failed: %s\n", SDL_GetError());
+}
 
 /*
 ** R_GetModeInfo
@@ -102,7 +146,7 @@ qboolean R_GetModeInfo( int *width, int *height, int mode ) {
 	if ( mode == -1 ) {
 		*width = r_customwidth->integer;
 		*height = r_customheight->integer;
-		return qtrue;
+		return jar::ResolutionValid(*width,*height) ? qtrue : qfalse;
 	}
 
 	vm = &r_vidModes[mode];
@@ -157,39 +201,13 @@ void WIN_Present( window_t *window )
 			}
 		}
 	}
+	WIN_ApplyPendingGamma();
 
-	if ( r_fullscreen->modified )
-	{
-		bool	fullscreen;
-		bool	needToToggle;
-		bool	sdlToggled = qfalse;
-
-		// Find out the current state
-		fullscreen = (SDL_GetWindowFlags( screen ) & SDL_WINDOW_FULLSCREEN) != 0;
-
-		if ( r_fullscreen->integer && Cvar_VariableIntegerValue( "in_nograb" ) )
-		{
-			Com_Printf( "Fullscreen not allowed with in_nograb 1\n" );
-			Cvar_Set( "r_fullscreen", "0" );
-			r_fullscreen->modified = qfalse;
-		}
-
-		// Is the state we want different from the current state?
-		needToToggle = !!r_fullscreen->integer != fullscreen;
-
-		if ( needToToggle )
-		{
-			sdlToggled = SDL_SetWindowFullscreen( screen, r_fullscreen->integer ) >= 0;
-
-			// SDL_WM_ToggleFullScreen didn't work, so do it the slow way
-			if ( !sdlToggled )
-				Cbuf_AddText( "vid_restart\n" );
-
-			IN_Restart();
-		}
-
-		r_fullscreen->modified = qfalse;
-	}
+	if (r_fullscreen->modified) {
+        // Windowed/exclusive/desktop are three states, not a boolean toggle.
+        r_fullscreen->modified = qfalse;
+        Cbuf_AddText("vid_restart\n");
+    }
 }
 
 /*
@@ -315,7 +333,7 @@ static bool GLimp_DetectAvailableModes(void)
 GLimp_SetMode
 ===============
 */
-static rserr_t GLimp_SetMode(glconfig_t *glConfig, const windowDesc_t *windowDesc, const char *windowTitle, int mode, qboolean fullscreen, qboolean noborder)
+static rserr_t GLimp_SetMode(glconfig_t *glConfig, const windowDesc_t *windowDesc, const char *windowTitle, int mode, int fullscreen, qboolean noborder)
 {
 	int perChannelColorBits;
 	int colorBits, depthBits, stencilBits;
@@ -360,6 +378,9 @@ static rserr_t GLimp_SetMode(glconfig_t *glConfig, const windowDesc_t *windowDes
 	if( display >= 0 && SDL_GetDesktopDisplayMode( display, &desktopMode ) == 0 )
 	{
 		displayAspect = (float)desktopMode.w / (float)desktopMode.h;
+        Cvar_Set("jar_desktopWidth", va("%d",desktopMode.w));
+        Cvar_Set("jar_desktopHeight", va("%d",desktopMode.h));
+        Cvar_Set("jar_desktopHz", va("%d",desktopMode.refresh_rate));
 
 		Com_Printf( "Display aspect: %.3f\n", displayAspect );
 	}
@@ -372,13 +393,14 @@ static rserr_t GLimp_SetMode(glconfig_t *glConfig, const windowDesc_t *windowDes
 
 	Com_Printf( "...setting mode %d:", mode );
 
-	if (mode == -2)
+	if (mode == -2 || fullscreen == 2)
 	{
 		// use desktop video resolution
 		if( desktopMode.h > 0 )
 		{
 			glConfig->vidWidth = desktopMode.w;
 			glConfig->vidHeight = desktopMode.h;
+            glConfig->displayFrequency = desktopMode.refresh_rate;
 		}
 		else
 		{
@@ -419,12 +441,13 @@ static rserr_t GLimp_SetMode(glconfig_t *glConfig, const windowDesc_t *windowDes
 		screen = NULL;
 	}
 
+	if (fullscreen == 2) { x = SDL_WINDOWPOS_CENTERED_DISPLAY(display >= 0 ? display : 0); y = x; }
 	if( fullscreen )
 	{
 #ifdef MACOS_X
         flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
 #else
-        flags |= SDL_WINDOW_FULLSCREEN;
+        flags |= fullscreen == 2 ? SDL_WINDOW_FULLSCREEN_DESKTOP : SDL_WINDOW_FULLSCREEN;
 #endif
 		glConfig->isFullscreen = qtrue;
 	}
@@ -447,6 +470,8 @@ static rserr_t GLimp_SetMode(glconfig_t *glConfig, const windowDesc_t *windowDes
 
 	stencilBits = r_stencilbits->integer;
 	samples = r_ext_multisample->integer;
+	if (!r_ext_multisample_default_fb->integer)
+		samples = 0;
 
 	if ( windowDesc->api == GRAPHICS_API_OPENGL )
 	{
@@ -582,7 +607,7 @@ static rserr_t GLimp_SetMode(glconfig_t *glConfig, const windowDesc_t *windowDes
 			SDL_SetWindowIcon( screen, icon );
 #endif
 
-			if( fullscreen )
+			if( fullscreen == 1 )
 			{
 				SDL_DisplayMode mode;
 
@@ -653,6 +678,10 @@ static rserr_t GLimp_SetMode(glconfig_t *glConfig, const windowDesc_t *windowDes
 		}
 	}
 
+    r_fullscreen->modified = qfalse;
+#ifndef JAR_MP
+    JAR_Log(1,"display","window_created","requestedMode=%d windowMode=%d width=%d height=%d desktop=%dx%d@%d",mode,fullscreen,glConfig->vidWidth,glConfig->vidHeight,desktopMode.w,desktopMode.h,desktopMode.refresh_rate);
+#endif
 	SDL_FreeSurface( icon );
 
 	if (!GLimp_DetectAvailableModes())
@@ -668,7 +697,7 @@ static rserr_t GLimp_SetMode(glconfig_t *glConfig, const windowDesc_t *windowDes
 GLimp_StartDriverAndSetMode
 ===============
 */
-static qboolean GLimp_StartDriverAndSetMode(glconfig_t *glConfig, const windowDesc_t *windowDesc, int mode, qboolean fullscreen, qboolean noborder)
+static qboolean GLimp_StartDriverAndSetMode(glconfig_t *glConfig, const windowDesc_t *windowDesc, int mode, int fullscreen, qboolean noborder)
 {
 	rserr_t err;
 
@@ -753,11 +782,12 @@ window_t WIN_Init( const windowDesc_t *windowDesc, glconfig_t *glConfig )
 	r_colorbits			= Cvar_Get( "r_colorbits",			"0",		CVAR_ARCHIVE_ND|CVAR_LATCH );
 	r_ignorehwgamma		= Cvar_Get( "r_ignorehwgamma",		"0",		CVAR_ARCHIVE_ND|CVAR_LATCH );
 	r_ext_multisample	= Cvar_Get( "r_ext_multisample",	"0",		CVAR_ARCHIVE_ND|CVAR_LATCH );
+	r_ext_multisample_default_fb = Cvar_Get("r_ext_multisample_default_fb", "1", CVAR_ROM);
 	Cvar_Get( "r_availableModes", "", CVAR_ROM );
 
 	// Create the window and set up the context
 	if(!GLimp_StartDriverAndSetMode( glConfig, windowDesc, r_mode->integer,
-										(qboolean)r_fullscreen->integer, (qboolean)r_noborder->integer ))
+										r_fullscreen->integer, (qboolean)r_noborder->integer ))
 	{
 		if( r_mode->integer != R_MODE_FALLBACK )
 		{
@@ -809,6 +839,8 @@ GLimp_Shutdown
 */
 void WIN_Shutdown( void )
 {
+	windowGammaValid = false;
+	windowGammaPending = false;
 	Cmd_RemoveCommand("modelist");
 	Cmd_RemoveCommand("minimize");
 
@@ -883,10 +915,9 @@ void WIN_SetGamma( glconfig_t *glConfig, byte red[256], byte green[256], byte bl
 		}
 	}
 
-	if ( SDL_SetWindowGammaRamp( screen, table[0], table[1], table[2] ) < 0 )
-	{
-		Com_DPrintf( "SDL_SetWindowGammaRamp() failed: %s\n", SDL_GetError() );
-	}
+	memcpy(windowGamma, table, sizeof(windowGamma));
+	windowGammaValid = true;
+	WIN_QueueGammaRestore(SDL_GetWindowID(screen));
 }
 
 void *WIN_GL_GetProcAddress( const char *proc )

@@ -1,3 +1,5 @@
+#include "../../shared/qcommon/jar_saber_flash.h"
+#include "qcommon/jar_diagnostics.h"
 /*
 ===========================================================================
 Copyright (C) 2000 - 2013, Raven Software, Inc.
@@ -21,6 +23,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "common_headers.h"
+#include "qcommon/jar_effect_fallback.h"
 
 
 #if !defined(FX_SCHEDULER_H_INC)
@@ -233,8 +236,14 @@ int CFxScheduler::ScheduleLoopedEffect( int id, int boltInfo, bool isPortal, int
 
 	if(i==MAX_LOOPED_FX)
 	{//bad
-		assert(i!=MAX_LOOPED_FX);
-		theFxHelper.Print( "CFxScheduler::AddLoopedEffect- No Free Slots available for %d\n", mEffectTemplates[id].mEffectName);
+		JAR_DiagnosticsCount(JAR_FX_LOOP_DROPPED);
+		// Cosmetic loop capacity is bounded; preserve existing loops.
+		static int nextWarning = 0;
+		if (theFxHelper.mTime >= nextWarning)
+		{
+			theFxHelper.Print("JA:R: looped effect skipped; all %d slots occupied\n", MAX_LOOPED_FX);
+			nextWarning = theFxHelper.mTime + 5000;
+		}
 		return -1;
 	}
 	mLoopedEffectArray[i].mId = id;
@@ -286,7 +295,7 @@ void CFxScheduler::AddLoopedEffects()
 	{
 		if (mLoopedEffectArray[i].mId && mLoopedEffectArray[i].mNextTime < theFxHelper.mTime )
 		{
-			const int entNum = ( mLoopedEffectArray[i].mBoltInfo >> ENTITY_SHIFT )	& ENTITY_AND;
+			const int entNum = ( uint32_t(mLoopedEffectArray[i].mBoltInfo) >> ENTITY_SHIFT )	& ENTITY_AND;
 			if ( cg_entities[entNum].gent->inuse )
 			{// only play the looped effect when the ent is still inUse....
 				PlayEffect( mLoopedEffectArray[i].mId, cg_entities[entNum].lerpOrigin, 0, mLoopedEffectArray[i].mBoltInfo, -1, mLoopedEffectArray[i].mPortalEffect, false,  mLoopedEffectArray[i].mIsRelative );	//very important to send FALSE looptime to not recursively add me!
@@ -474,6 +483,14 @@ int CFxScheduler::RegisterEffect( const char *path, bool bHasCorrectPath /*= fal
 	CGenericParser2	parser;
 	if( !parser.Parse( pfile ) )
 	{
+        if (const char *fallback=jar::MissingEffectFallback(filenameNoExt,parser.ValidFile(),bHasCorrectPath)) {
+            CGenericParser2 fallbackParser;
+            if (fallbackParser.Parse(fallback)) {
+                const int id=ParseEffect(filenameNoExt,fallbackParser.GetBaseParseGroup());
+                JAR_Log(1,"fx","missing_media_fallback","key=%s file=%s id=%d primitives=%d",filenameNoExt,fallback,id,id>0 ? mEffectTemplates[id].mPrimitiveCount : 0);
+                return id;
+            }
+        }
 		if( !parser.ValidFile() )
 		{
 			theFxHelper.Print( "RegisterEffect: INVALID file: %s\n", pfile );
@@ -540,7 +557,7 @@ int CFxScheduler::ParseEffect( const char *file, const CGPGroup& base )
 			{ CSTRING_VIEW( "flash" ), ScreenFlash }
 		};
 		auto pos = primitiveTypes.find( primitiveGroup.GetName() );
-		if( pos != primitiveTypes.end() )
+		if( pos != primitiveTypes.end() && !(pos->second==ScreenFlash && JAR_SaberContactEffect(file)) )
 		{
 			CPrimitiveTemplate *prim = new CPrimitiveTemplate;
 
@@ -831,6 +848,7 @@ void CFxScheduler::PlayEffect( const char *file, vec3_t origin, vec3_t axis[3], 
 //------------------------------------------------------
 void CFxScheduler::PlayEffect( const char *file, int clientID, bool isPortal )
 {
+	JAR_Log(3,"fx","play_client","file=%s client=%d portal=%d",file?file:"",clientID,isPortal);
 	char	sfile[MAX_QPATH];
 	int		id;
 
@@ -901,6 +919,13 @@ void CFxScheduler::PlayEffect( const char *file, int clientID, bool isPortal )
 			}
 			else
 			{
+				// Bound delayed cosmetic work as well as active primitives.
+				if (mFxSchedule.size() >= JAR_SCHEDULED_EFFECTS)
+				{
+					JAR_DiagnosticsCount(JAR_FX_SCHEDULE_DROPPED);
+					if (prim->mCopy && --prim->mRefCount <= 0) delete prim;
+					continue;
+				}
 				SScheduledEffect		*sfx = mScheduledEffectsPool.Alloc();
 
 				if ( sfx == NULL )
@@ -1115,6 +1140,7 @@ void CFxScheduler::CreateEffect( CPrimitiveTemplate *fx, int clientID, int delay
 //------------------------------------------------------
 void CFxScheduler::PlayEffect( int id, vec3_t origin, vec3_t axis[3], const int boltInfo, const int entNum, bool isPortal, int iLoopTime, bool isRelative )
 {
+	JAR_Log(3,"fx","play","id=%d entity=%d bolt=%d portal=%d loop=%d",id,entNum,boltInfo,isPortal,iLoopTime);
 	SEffectTemplate			*fx;
 	CPrimitiveTemplate		*prim;
 	int						i = 0;
@@ -1138,12 +1164,12 @@ void CFxScheduler::PlayEffect( int id, vec3_t origin, vec3_t axis[3], const int 
 	int	modelNum = 0, boltNum = -1;
 	int	entityNum = entNum;
 
-	if ( boltInfo > 0 )
+	if ( boltInfo != 0 && boltInfo != -1 )
 	{
 		// extract the wraith ID from the bolt info
-		modelNum	= ( boltInfo >> MODEL_SHIFT )	& MODEL_AND;
-		boltNum		= ( boltInfo >> BOLT_SHIFT )	& BOLT_AND;
-		entityNum	= ( boltInfo >> ENTITY_SHIFT )	& ENTITY_AND;
+		modelNum	= ( uint32_t(boltInfo) >> MODEL_SHIFT )	& MODEL_AND;
+		boltNum		= ( uint32_t(boltInfo) >> BOLT_SHIFT )	& BOLT_AND;
+		entityNum	= ( uint32_t(boltInfo) >> ENTITY_SHIFT )	& ENTITY_AND;
 
 		// We always force ghoul bolted objects to be scheduled so that they don't play right away.
 		forceScheduling = true;
@@ -1213,6 +1239,13 @@ void CFxScheduler::PlayEffect( int id, vec3_t origin, vec3_t axis[3], const int 
 			}
 			else
 			{
+				// Bound delayed cosmetic work as well as active primitives.
+				if (mFxSchedule.size() >= JAR_SCHEDULED_EFFECTS)
+				{
+					JAR_DiagnosticsCount(JAR_FX_SCHEDULE_DROPPED);
+					if (prim->mCopy && --prim->mRefCount <= 0) delete prim;
+					continue;
+				}
 				SScheduledEffect		*sfx = mScheduledEffectsPool.Alloc();
 
 				if ( sfx == NULL )

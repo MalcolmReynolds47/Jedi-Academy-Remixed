@@ -22,8 +22,13 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "g_local.h"
+#include "g_workshop.h"
+#include "g_workshop_pickup_quantity.h"
 #include "g_functions.h"
+#include "g_subbsp_ownership.h"
 #include "g_items.h"
+#include "qcommon/jar_force_boon.h"
+#include "qcommon/jar_force_enlightenment.h"
 #include "wp_saber.h"
 #include "../cgame/cg_local.h"
 #include "b_local.h"
@@ -88,51 +93,7 @@ qboolean G_InventorySelectable( int index,gentity_t *other)
 
 extern qboolean INV_GoodieKeyGive( gentity_t *target );
 extern qboolean INV_SecurityKeyGive( gentity_t *target, const char *keyname );
-int Pickup_Holdable( gentity_t *ent, gentity_t *other )
-{
-	int		i,original;
-
-	other->client->ps.stats[STAT_ITEMS] |= (1<<ent->item->giTag);
-
-	if ( ent->item->giTag == INV_SECURITY_KEY )
-	{//give the key
-		//FIXME: temp message
-		gi.SendServerCommand( 0, "cp @SP_INGAME_YOU_TOOK_SECURITY_KEY" );
-		INV_SecurityKeyGive( other, ent->message );
-	}
-	else if ( ent->item->giTag == INV_GOODIE_KEY )
-	{//give the key
-		//FIXME: temp message
-		gi.SendServerCommand( 0, "cp @SP_INGAME_YOU_TOOK_SUPPLY_KEY" );
-		INV_GoodieKeyGive( other );
-	}
-	else
-	{// Picking up a normal item?
-		other->client->ps.inventory[ent->item->giTag]++;
-	}
-	// Got a security key
-
-	// Set the inventory select, just in case it hasn't
-	original = cg.inventorySelect;
-	for ( i = 0 ; i < INV_MAX ; i++ )
-	{
-		if ((cg.inventorySelect < INV_ELECTROBINOCULARS) || (cg.inventorySelect >= INV_MAX))
-		{
-			cg.inventorySelect = (INV_MAX - 1);
-		}
-
-		if ( G_InventorySelectable( cg.inventorySelect,other ) )
-		{
-			return 60;
-		}
-		cg.inventorySelect++;
-	}
-
-	cg.inventorySelect = original;
-
-	return 60;
-}
-
+#include "g_holdable_pickup.inc"
 
 //======================================================================
 int Add_Ammo2 (gentity_t *ent, int ammoType, int count)
@@ -140,6 +101,8 @@ int Add_Ammo2 (gentity_t *ent, int ammoType, int count)
 
 	if (ammoType != AMMO_FORCE)
 	{
+		if (ent->NPC && ammoType > AMMO_NONE && ent->client->ps.ammo[ammoType] == AMMO_UNLIMITED)
+			return qfalse;
 		ent->client->ps.ammo[ammoType] += count;
 
 		// since the ammo is the weapon in this case, picking up ammo should actually give you the weapon
@@ -268,7 +231,7 @@ gentity_t *G_DropSaberItem( const char *saberType, saber_colors_t saberColor, ve
 	if ( saberType
 		&& saberType[0] )
 	{//have a valid string to use for saberType
-		newItem = G_Spawn();
+		newItem = G_TrySpawn();
 		if ( newItem )
 		{
 			newItem->classname = G_NewString( "weapon_saber" );
@@ -602,7 +565,7 @@ int Pickup_Armor( gentity_t *ent, gentity_t *other ) {
 	// make sure that the shield effect is on
 	other->client->ps.powerups[PW_BATTLESUIT] = Q3_INFINITE;
 
-	other->client->ps.stats[STAT_ARMOR] += ent->item->quantity;
+	other->client->ps.stats[STAT_ARMOR] += G_WorkshopArmorPickupQuantity(*ent);
 	if ( other->client->ps.stats[STAT_ARMOR] > other->client->ps.stats[STAT_MAX_HEALTH] ) {
 		other->client->ps.stats[STAT_ARMOR] = other->client->ps.stats[STAT_MAX_HEALTH];
 	}
@@ -614,41 +577,8 @@ int Pickup_Armor( gentity_t *ent, gentity_t *other ) {
 
 //======================================================================
 
-int Pickup_Holocron( gentity_t *ent, gentity_t *other )
-{
-	int forcePower = ent->item->giTag;
-	int forceLevel = ent->count;
-	// check if out of range
-	if( forceLevel < 0 || forceLevel >= NUM_FORCE_POWER_LEVELS )
-	{
-		gi.Printf(" Pickup_Holocron : count %d not in valid range\n", forceLevel );
-		return 1;
-	}
-
-	// don't pick up if already known AND your level is higher than pickup level
-	if ( ( other->client->ps.forcePowersKnown & ( 1 << forcePower )) )
-	{
-		//don't pickup if item is lower than current level
-		if( other->client->ps.forcePowerLevel[forcePower] >= forceLevel )
-		{
-			return 1;
-		}
-	}
-
-	other->client->ps.forcePowerLevel[forcePower] = forceLevel;
-	other->client->ps.forcePowersKnown |= ( 1 << forcePower );
-
-	missionInfo_Updated = qtrue;	// Activate flashing text
-	gi.cvar_set("cg_updatedDataPadForcePower1", va("%d",forcePower+1)); // The +1 is offset in the print routine.
-	cg_updatedDataPadForcePower1.integer = forcePower+1;
-	gi.cvar_set("cg_updatedDataPadForcePower2", "0"); // The +1 is offset in the print routine.
-	cg_updatedDataPadForcePower2.integer = 0;
-	gi.cvar_set("cg_updatedDataPadForcePower3", "0"); // The +1 is offset in the print routine.
-	cg_updatedDataPadForcePower3.integer = 0;
-
-	return 1;
-}
-
+#include "g_holocron_pickup.inc"
+#include "g_portable_shield.inc"
 
 //======================================================================
 
@@ -657,7 +587,10 @@ int Pickup_Holocron( gentity_t *ent, gentity_t *other )
 RespawnItem
 ===============
 */
+#include "g_bsp_section_pickup.inc"
+
 void RespawnItem( gentity_t *ent ) {
+	BSPSectionRespawnPickup(*ent);
 }
 
 
@@ -688,7 +621,7 @@ qboolean CheckItemCanBePickedUpByNPC( gentity_t *item, gentity_t *pickerupper )
 	return qfalse;
 }
 
-qboolean G_CanPickUpWeapons( gentity_t *other )
+qboolean G_CanPickUpWeapons( const gentity_t *other )
 {
 	if ( !other || !other->client )
 	{
@@ -769,7 +702,7 @@ void Touch_Item (gentity_t *ent, gentity_t *other, trace_t *trace) {
 		{//they were running to pick me up, they did, so clear goal
 			other->NPC->goalEntity	= NULL;
 			other->NPC->squadState	= SQUAD_STAND_AND_SHOOT;
- 			NPCInfo->tempBehavior	= BS_DEFAULT;
+			other->NPC->tempBehavior	= BS_DEFAULT;
 			TIMER_Set(other, "flee", -1);
 		}
 		else
@@ -824,6 +757,7 @@ void Touch_Item (gentity_t *ent, gentity_t *other, trace_t *trace) {
 		}
 	}
 
+	const auto jarPreviousWeapon = (other->s.number==0 && ent->item->giType==IT_WEAPON) ? G_JAR_WorkshopCurrentWeapon() : jar::workshop::Weapon{};
 	qboolean bHadWeapon = qfalse;
 	// call the item-specific pickup function
 	switch( ent->item->giType )
@@ -863,6 +797,21 @@ void Touch_Item (gentity_t *ent, gentity_t *other, trace_t *trace) {
 	case IT_HOLOCRON:
 		respawn = Pickup_Holocron( ent, other );
 		break;
+	case IT_POWERUP: {
+		const int duration = ent->count>0 ? ent->count : ent->item->quantity;
+		if (ent->item->giTag == PW_FORCE_BOON) {
+			auto& expires=other->client->ps.powerups[PW_FORCE_BOON];
+			expires=jar::forceBoon::Deadline(level.time,expires,duration);
+		} else {
+			auto& ps=other->client->ps;
+			const auto side=jar::enlightenment::PickupSide(ent->item->giTag);
+			if (other->s.number!=0 || !jar::enlightenment::CanCollect(ps,side))
+				return;
+			jar::enlightenment::Extend(ps,side,level.time,duration);
+		}
+		respawn=1;
+		break;
+	}
 	default:
 		return;
 	}
@@ -872,6 +821,7 @@ void Touch_Item (gentity_t *ent, gentity_t *other, trace_t *trace) {
 		return;
 	}
 
+	if (other->s.number==0 && ent->item->giType==IT_WEAPON) G_JAR_WorkshopAcquired(jarPreviousWeapon);
 	// play the normal pickup sound
 	if ( !other->s.number && g_timescale->value < 1.0f  )
 	{//SIGH... with timescale on, you lose events left and right
@@ -893,8 +843,11 @@ extern void CG_ItemPickup( int itemNum, qboolean bHadItem );
 		}
 	}
 
-	// fire item targets
-	G_UseTargets (ent, other);
+	// Item outputs can delete the pickup or reuse its slot.
+ const auto pickupLife=G_EntityLifetime(ent);
+ G_UseTargets(ent,other);
+ if(!ent->inuse||G_EntityLifetime(ent)!=pickupLife)return;
+ if(BSPSectionSchedulePickup(*ent))return;
 
 	if ( ent->item->giType == IT_WEAPON
 		&& ent->item->giTag == WP_SABER )
@@ -940,7 +893,14 @@ Spawns an item and tosses it forward
 gentity_t *LaunchItem( gitem_t *item, const vec3_t origin, const vec3_t velocity, char *target ) {
 	gentity_t	*dropped;
 
-	dropped = G_Spawn();
+	// Preserve keys and script-linked pickups; ordinary drops are expendable
+	// under pressure and must not consume the critical reserve.
+	const bool required = (target && target[0]) ||
+		(item->giType == IT_HOLDABLE &&
+		 (item->giTag == INV_SECURITY_KEY || item->giTag == INV_GOODIE_KEY)) ||
+		(item->giType == IT_AMMO && item->giTag == AMMO_FORCE);
+	dropped = required ? G_Spawn() : G_TrySpawn();
+	if (!dropped) return NULL;
 
 	dropped->s.eType = ET_ITEM;
 	dropped->s.modelindex = item - bg_itemlist;	// store item number in modelindex
@@ -1041,6 +1001,8 @@ gentity_t *Drop_Item( gentity_t *ent, gitem_t *item, float angle, qboolean copyt
 		dropped = LaunchItem( item, ent->s.pos.trBase, velocity, NULL );
 	}
 
+	if (!dropped) return NULL;
+	if(!G_JAR_WorkshopTrackDrop(ent,dropped)){G_FreeEntity(dropped);return NULL;}
 	dropped->activator = ent;//so we know who we belonged to so they can pick it back up later
 	dropped->s.time = level.time;//mark this time so we aren't picked up instantly by the guy who dropped us
 	return dropped;
@@ -1099,16 +1061,11 @@ extern cvar_t	*g_saber;
 void FinishSpawningItem( gentity_t *ent ) {
 	trace_t		tr;
 	vec3_t		dest;
-	gitem_t		*item;
-	int			itemNum;
-
-	itemNum=1;
-	for ( item = bg_itemlist + 1 ; item->classname ; item++,itemNum++)
+	const gitem_t *item=ent->item;
+	if (!item)
 	{
-		if (!strcmp(item->classname,ent->classname))
-		{
-			break;
-		}
+		G_FreeEntity(ent);
+		return;
 	}
 
 	// Set bounding box for item
@@ -1163,18 +1120,8 @@ void FinishSpawningItem( gentity_t *ent ) {
 		gi.G2API_InitGhoul2Model( ent->ghoul2, ent->item->world_model, G_ModelIndex( ent->item->world_model ), NULL_HANDLE, NULL_HANDLE, 0, 0);
 	}
 
-	// Set crystal ammo amount based on skill level
-/*	if ((itemNum == ITM_AMMO_CRYSTAL_BORG) ||
-		(itemNum == ITM_AMMO_CRYSTAL_DN) ||
-		(itemNum == ITM_AMMO_CRYSTAL_FORGE) ||
-		(itemNum == ITM_AMMO_CRYSTAL_SCAVENGER) ||
-		(itemNum == ITM_AMMO_CRYSTAL_STASIS))
-	{
-		CrystalAmmoSettings(ent);
-	}
-*/
 	ent->s.eType = ET_ITEM;
-	ent->s.modelindex = ent->item - bg_itemlist;		// store item number in modelindex
+	ent->s.modelindex = item - bg_itemlist;		// store item number in modelindex
 	ent->s.modelindex2 = 0; // zero indicates this isn't a dropped item
 
 	ent->contents = CONTENTS_TRIGGER|CONTENTS_ITEM;//CONTENTS_BODY;//CONTENTS_TRIGGER|
@@ -1184,8 +1131,17 @@ void FinishSpawningItem( gentity_t *ent ) {
 	ent->svFlags |= SVF_PLAYER_USABLE;//so player can pick it up
 
 	// Hang in air?
-	ent->s.origin[2] += 1;//just to get it off the damn ground because coplanar = insolid
-	if ( (ent->spawnflags&ITMSF_SUSPEND)
+	const auto* root = G_BSPSectionPickupRoot(*ent);
+	if (!root)
+		ent->s.origin[2] += 1; // Prevent coplanar pickups from starting in solid.
+	if (root) {
+		if (!BSPSectionPlacePickup(*ent, *root)) {
+			G_FreeEntity(ent);
+			return;
+		}
+		ent->flags |= FL_NO_KNOCKBACK;
+	}
+	else if ( (ent->spawnflags&ITMSF_SUSPEND)
 		|| (ent->flags&FL_DROPPED_ITEM) )
 	{
 		// suspended
@@ -1254,7 +1210,7 @@ void FinishSpawningItem( gentity_t *ent ) {
 }
 
 
-char itemRegistered[MAX_ITEMS+1];
+extern char itemRegistered[MAX_ITEMS+1];
 
 
 /*
@@ -1277,52 +1233,6 @@ void ClearRegisteredItems( void ) {
 
 extern void Player_CacheFromPrevLevel(void);//g_client.cpp
 	Player_CacheFromPrevLevel();	//reads from transition carry-over;
-}
-
-/*
-===============
-RegisterItem
-
-The item will be added to the precache list
-===============
-*/
-void RegisterItem( gitem_t *item ) {
-	if ( !item ) {
-		G_Error( "RegisterItem: NULL" );
-	}
-	itemRegistered[ item - bg_itemlist ] = '1';
-	gi.SetConfigstring(CS_ITEMS, itemRegistered);	//Write the needed items to a config string
-}
-
-
-/*
-===============
-SaveRegisteredItems
-
-Write the needed items to a config string
-so the client will know which ones to precache
-===============
-*/
-void SaveRegisteredItems( void ) {
-/*	char	string[MAX_ITEMS+1];
-	int		i;
-	int		count;
-
-	count = 0;
-	for ( i = 0 ; i < bg_numItems ; i++ ) {
-		if ( itemRegistered[i] ) {
-			count++;
-			string[i] = '1';
-		} else {
-			string[i] = '0';
-		}
-	}
-	string[ bg_numItems ] = 0;
-
-	gi.Printf( "%i items registered\n", count );
-	gi.SetConfigstring(CS_ITEMS, string);
-*/
-	gi.SetConfigstring(CS_ITEMS, itemRegistered);
 }
 
 /*
@@ -1483,154 +1393,7 @@ G_RunItem
 
 ================
 */
-void G_RunItem( gentity_t *ent ) {
-	vec3_t		origin;
-	trace_t		tr;
-	int			contents;
-	int			mask;
-
-	// if groundentity has been set to -1, it may have been pushed off an edge
-	if ( ent->s.groundEntityNum == ENTITYNUM_NONE )
-	{
-		if ( ent->s.pos.trType != TR_GRAVITY )
-		{
-			ent->s.pos.trType = TR_GRAVITY;
-			ent->s.pos.trTime = level.time;
-		}
-	}
-
-	if ( ent->s.pos.trType == TR_STATIONARY )
-	{
-		// check think function
-		G_RunThink( ent );
-		if ( !g_gravity->value )
-		{
-			ent->s.pos.trType = TR_GRAVITY;
-			ent->s.pos.trTime = level.time;
-			ent->s.pos.trDelta[0] += Q_flrand(-1.0f, 1.0f) * 40.0f; // I dunno, just do this??
-			ent->s.pos.trDelta[1] += Q_flrand(-1.0f, 1.0f) * 40.0f;
-			ent->s.pos.trDelta[2] += Q_flrand(0.0f, 1.0f) * 20.0f;
-		}
-		else if ( (ent->flags&FL_DROPPED_ITEM)
-			&& ent->item
-			&& ent->item->giType == IT_WEAPON
-			&& ent->item->giTag == WP_SABER )
-		{//a dropped saber item, check below, just in case
-			int ignore = ENTITYNUM_NONE;
-			if ( ent->clipmask )
-			{
-				mask = ent->clipmask;
-			}
-			else
-			{
-				mask = MASK_SOLID|CONTENTS_PLAYERCLIP;//shouldn't be able to get anywhere player can't
-			}
-			if ( ent->owner )
-			{
-				ignore = ent->owner->s.number;
-			}
-			else if ( ent->activator )
-			{
-				ignore = ent->activator->s.number;
-			}
-			VectorSet( origin, ent->currentOrigin[0], ent->currentOrigin[1], ent->currentOrigin[2]-1 );
-			gi.trace( &tr, ent->currentOrigin, ent->mins, ent->maxs, origin, ignore, mask, (EG2_Collision)0, 0 );
-			if ( !tr.allsolid
-				&& !tr.startsolid
-				&& tr.fraction > 0.001f )
-			{//wha?  fall....
-				ent->s.pos.trType = TR_GRAVITY;
-				ent->s.pos.trTime = level.time;
-			}
-		}
-		return;
-	}
-
-	// get current position
-	EvaluateTrajectory( &ent->s.pos, level.time, origin );
-	if ( ent->s.apos.trType != TR_STATIONARY )
-	{
-		EvaluateTrajectory( &ent->s.apos, level.time, ent->currentAngles );
-		G_SetAngles( ent, ent->currentAngles );
-	}
-
-	// trace a line from the previous position to the current position
-	if ( ent->clipmask )
-	{
-		mask = ent->clipmask;
-	}
-	else
-	{
-		mask = MASK_SOLID|CONTENTS_PLAYERCLIP;//shouldn't be able to get anywhere player can't
-	}
-
-	int ignore = ENTITYNUM_NONE;
-	if ( ent->owner )
-	{
-		ignore = ent->owner->s.number;
-	}
-	else if ( ent->activator )
-	{
-		ignore = ent->activator->s.number;
-	}
-	gi.trace( &tr, ent->currentOrigin, ent->mins, ent->maxs, origin, ignore, mask, (EG2_Collision)0, 0 );
-
-	VectorCopy( tr.endpos, ent->currentOrigin );
-
-	if ( tr.startsolid )
-	{
-		tr.fraction = 0;
-	}
-
-	gi.linkentity( ent );	// FIXME: avoid this for stationary?
-
-	// check think function
-	G_RunThink( ent );
-
-	if ( tr.fraction == 1 )
-	{
-		if ( g_gravity->value <= 0 )
-		{
-			if ( ent->s.apos.trType != TR_LINEAR )
-			{
-				VectorCopy( ent->currentAngles, ent->s.apos.trBase );
-				ent->s.apos.trType = TR_LINEAR;
-				ent->s.apos.trDelta[1] = Q_flrand( -300, 300 );
-				ent->s.apos.trDelta[0] = Q_flrand( -10, 10 );
-				ent->s.apos.trDelta[2] = Q_flrand( -10, 10 );
-				ent->s.apos.trTime = level.time;
-			}
-		}
-		//friction in zero-G
-		if ( !g_gravity->value )
-		{
-			float friction = 0.975f;
-			/*friction -= ent->mass/1000.0f;
-			if ( friction < 0.1 )
-			{
-				friction = 0.1f;
-			}
-			*/
-			VectorScale( ent->s.pos.trDelta, friction, ent->s.pos.trDelta );
-			VectorCopy( ent->currentOrigin, ent->s.pos.trBase );
-			ent->s.pos.trTime = level.time;
-		}
-		return;
-	}
-
-	// if it is in a nodrop volume, remove it
-	contents = gi.pointcontents( ent->currentOrigin, -1 );
-	if ( contents & CONTENTS_NODROP )
-	{
-		G_FreeEntity( ent );
-		return;
-	}
-
-	if ( !tr.startsolid )
-	{
-		G_BounceItem( ent, &tr );
-	}
-}
+#include "g_item_motion.inc"
 
 /*
 ================

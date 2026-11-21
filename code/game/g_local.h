@@ -392,6 +392,7 @@ void	Add_Ammo (gentity_t *ent, int weapon, int count);
 void Touch_Item (gentity_t *ent, gentity_t *other, trace_t *trace);
 
 void ClearRegisteredItems( void );
+void RestoreRegisteredItems( void );
 void RegisterItem( gitem_t *item );
 void SaveRegisteredItems( void );
 
@@ -433,7 +434,11 @@ void	G_UseTargets2 (gentity_t *ent, gentity_t *activator, const char *string);
 void	G_SetMovedir ( vec3_t angles, vec3_t movedir);
 
 void	G_InitGentity( gentity_t *e, qboolean bFreeG2 );
-gentity_t	*G_Spawn (void);
+gentity_t *G_Spawn(void); // required entities: controlled ERR_DROP at the absolute limit
+// Optional callers MUST handle NULL. Essential callers may use the reserve.
+gentity_t *G_TrySpawn(qboolean essential = qfalse);
+void G_ResetEntityCapacityStats(void);
+void G_EntityCapacity_f(void);
 gentity_t *G_TempEntity( const vec3_t origin, int event );
 void	G_Sound( gentity_t *ent, int soundIndex );
 void	G_FreeEntity( gentity_t *e );
@@ -691,8 +696,8 @@ extern char *G_NewString( const char *string );
 
 // some stuff for savegames...
 //
-void WriteLevel(qboolean qbAutosave);
-void ReadLevel(qboolean qbAutosave, qboolean qbLoadTransition);
+void WriteLevel(qboolean qbAutosave, int jarSaveVersion);
+void ReadLevel(qboolean qbAutosave, qboolean qbLoadTransition, int jarSaveVersion);
 qboolean GameAllowedToSaveHere(void);
 
 extern qboolean G_ActivateBehavior( gentity_t *ent, int bset );
@@ -714,3 +719,5 @@ float NPC_GetHFOVPercentage( vec3_t spot, vec3_t from, vec3_t facing, float hFOV
 float NPC_GetVFOVPercentage( vec3_t spot, vec3_t from, vec3_t facing, float vFOV );
 
 #endif//#ifndef __G_LOCAL_H__
+
+void G_JAR_SetBrushModel(gentity_t*,const char*);

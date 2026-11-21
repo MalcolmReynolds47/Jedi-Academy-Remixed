@@ -18,12 +18,12 @@
 
 # The <min>...<policy_max> syntax is needed to remain compatible with 3.1, but also newer versions that dropped 3.1 compatibility
 # More info here: https://cmake.org/cmake/help/latest/command/cmake_minimum_required.html
-cmake_minimum_required(VERSION 3.1...3.31)
+cmake_minimum_required(VERSION 3.16...3.31)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.9" CACHE STRING "Minimum OS X deployment version")
 
 set(InOpenJK ON)
 
-set(ProjectName "OpenJK" CACHE STRING "Project Name")
+set(ProjectName "JediAcademyRemixed" CACHE STRING "Project Name")
 project(${ProjectName})
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -35,16 +35,17 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 #=============================================================================
 option(BuildPortableVersion "Build portable version (does not read or write files from your user/home directory" OFF)
 
-option(BuildMPEngine "Whether to create projects for the MP client (openjk.exe)" ON)
-option(BuildMPRdVanilla "Whether to create projects for the MP default renderer (rd-vanilla_x86.dll)" ON)
-option(BuildMPDed "Whether to create projects for the MP dedicated server (openjkded.exe)" ON)
-option(BuildMPGame "Whether to create projects for the MP server-side gamecode (jampgamex86.dll)" ON)
-option(BuildMPCGame "Whether to create projects for the MP clientside gamecode (cgamex86.dll)" ON)
-option(BuildMPUI "Whether to create projects for the MP UI code (uix86.dll)" ON)
-option(BuildMPRend2 "Whether to create projects for the EXPERIMENTAL MP rend2 renderer (rd-rend2_x86.dll)" ON)
+option(BuildMPEngine "Whether to create projects for the MP client (openjk.exe)" OFF)
+option(BuildMPRdVanilla "Whether to create projects for the MP default renderer (rd-vanilla_x86.dll)" OFF)
+option(BuildMPDed "Whether to create projects for the MP dedicated server (openjkded.exe)" OFF)
+option(BuildMPGame "Whether to create projects for the MP server-side gamecode (jampgamex86.dll)" OFF)
+option(BuildMPCGame "Whether to create projects for the MP clientside gamecode (cgamex86.dll)" OFF)
+option(BuildMPUI "Whether to create projects for the MP UI code (uix86.dll)" OFF)
+option(BuildMPRend2 "Build the optional JA:R multiplayer Rend2 OpenGL renderer" OFF)
 
 option(BuildSPEngine "Whether to create projects for the SP engine (openjk_sp.exe)" ON)
 option(BuildSPGame "Whether to create projects for the SP gamecode (jagamex86.dll)" ON)
+option(BuildSPRend2 "Build the optional JA:R Rend2 OpenGL renderer" ON)
 option(BuildSPRdVanilla "Whether to create projects for the SP default renderer (rdsp-vanilla_x86.dll)" ON)
 
 option(BuildJK2SPEngine "Whether to create projects for the jk2 SP engine (openjo_sp.exe)" OFF)
@@ -52,6 +53,7 @@ option(BuildJK2SPGame "Whether to create projects for the jk2 sp gamecode mod (j
 option(BuildJK2SPRdVanilla "Whether to create projects for the jk2 sp renderer (rdjosp-vanilla_x86.dll)" OFF)
 
 option(BuildTests "Whether to build automatic unit tests (requires Boost)" OFF)
+option(BuildJARTests "Build headless JA:R capacity regression tests" ON)
 option(UseAddressSanitizer "Whether to enable runtime address sanitizer" OFF)
 option(UseUndefinedSanitizer "Whether to enable runtime Undefined Behavior sanitizer" OFF)
 
@@ -153,6 +155,16 @@ else()
 endif()
 
 message(STATUS "Architecture is ${Architecture}")
+if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR "Jedi Academy Remixed requires a 64-bit build")
+endif()
+if(BuildJK2SPEngine OR BuildJK2SPGame OR BuildJK2SPRdVanilla)
+    message(FATAL_ERROR "Jedi Academy Remixed targets Jedi Academy, not Jedi Outcast")
+endif()
+if(MSVC)
+    # Entity queries use bounded local arrays; allow nested queries at 16x size.
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /STACK:16777216")
+endif()
 
 if(WIN32 AND CMAKE_VERSION VERSION_LESS "3.4")
 	message(WARNING "Building on Windows platform with CMake version less than 3.4 is deprecated. Manifest file will fail to be included.")
@@ -163,16 +175,17 @@ endif()
 # Binary names
 #
 #=============================================================================
-set(SPEngine "openjk_sp.${Architecture}")
-set(SPGame "jagame${Architecture}")
-set(SPRDVanillaRenderer "rdsp-vanilla_${Architecture}")
-set(MPEngine "openjk.${Architecture}")
-set(MPVanillaRenderer "rd-vanilla_${Architecture}")
-set(MPDed "openjkded.${Architecture}")
+set(SPEngine "jar_sp.${Architecture}")
+set(SPGame "jar_game${Architecture}")
+set(SPRend2 "rdjar-rend2_${Architecture}")
+set(SPRDVanillaRenderer "rdjar-vanilla_${Architecture}")
+set(MPEngine "jar_mp.${Architecture}")
+set(MPVanillaRenderer "rdjar-mp-vanilla_${Architecture}")
+set(MPDed "jar_server.${Architecture}")
 set(MPGame "jampgame${Architecture}")
 set(MPCGame "cgame${Architecture}")
 set(MPUI "ui${Architecture}")
-set(MPRend2 "rd-rend2_${Architecture}")
+set(MPRend2 "rdjar-mp-rend2_${Architecture}")
 set(JK2SPEngine "openjo_sp.${Architecture}")
 set(JK2SPGame "jospgame${Architecture}")
 set(JK2SPVanillaRenderer "rdjosp-vanilla_${Architecture}")
@@ -349,7 +362,7 @@ endif()
 # Current Git tag/version
 # ideally we would separate the hash suffix into its own variable, but sed is not available everywhere
 execute_process(
-	COMMAND "git" "describe" "--tag"
+	COMMAND "git" "describe" "--tags" "--always" "--dirty"
 	WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 	OUTPUT_VARIABLE GIT_TAG
 	RESULT_VARIABLE GIT_TAG_ERROR
@@ -419,6 +432,26 @@ endif()
 
 add_subdirectory(${MPDir})
 
+if(WIN32 AND BuildSPEngine)
+    add_executable(jar_launcher WIN32 tools/jar-launcher/main.cpp tools/jar-launcher/icon.rc)
+    set_target_properties(jar_launcher PROPERTIES
+        OUTPUT_NAME "jar_sp.${Architecture}"
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    install(TARGETS jar_launcher RUNTIME DESTINATION ${JKAInstallDir}
+        COMPONENT ${JKASPClientComponent})
+endif()
+
+if(WIN32 AND BuildMPEngine)
+    add_executable(jar_mp_launcher WIN32 tools/jar-launcher/main.cpp tools/jar-launcher/icon.rc)
+    target_compile_definitions(jar_mp_launcher PRIVATE JAR_MP_LAUNCHER)
+    set_target_properties(jar_mp_launcher PROPERTIES
+        OUTPUT_NAME "jar_mp.${Architecture}"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/mp-launcher"
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    install(TARGETS jar_mp_launcher RUNTIME DESTINATION ${JKAInstallDir}
+        COMPONENT ${JKAMPClientComponent})
+endif()
+
 if(BuildSymbolServer)
 	add_subdirectory("tools/WinSymbol")
 endif()
@@ -426,4 +459,27 @@ endif()
 if(BuildTests)
 	enable_testing()
 	add_subdirectory("tests")
+endif()
+if(BuildJARTests)
+	enable_testing()
+	add_subdirectory("tests/jar")
+endif()
+
+# Retain optimized Release symbols for every JA:R runtime module. Symbols are
+# archived by build-jar.ps1 separately from the installed game payload.
+set(JARBuildId "manual-build" CACHE STRING "Unique JA:R diagnostic build identity")
+if(TARGET ${SPEngine})
+    target_compile_definitions(${SPEngine} PRIVATE JAR_BUILD_ID="${JARBuildId}")
+endif()
+if(MSVC)
+    foreach(jarTarget ${SPEngine} ${SPGame} ${SPRDVanillaRenderer} ${SPRend2}
+        ${MPEngine} ${MPDed} ${MPGame} ${MPCGame} ${MPUI} ${MPVanillaRenderer} ${MPRend2}
+        jar_launcher jar_mp_launcher)
+        if(TARGET ${jarTarget})
+            target_compile_options(${jarTarget} PRIVATE $<$<CONFIG:Release>:/Zi>)
+            target_link_options(${jarTarget} PRIVATE $<$<CONFIG:Release>:/DEBUG:FULL>
+                $<$<CONFIG:Release>:/OPT:REF> $<$<CONFIG:Release>:/OPT:ICF>
+                $<$<CONFIG:Release>:/INCREMENTAL:NO>)
+        endif()
+    endforeach()
 endif()

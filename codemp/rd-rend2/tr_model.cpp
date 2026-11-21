@@ -255,10 +255,13 @@ model_t *R_AllocModel( void ) {
 	return mod;
 }
 
+#include "qcommon/jar_bsp_model.h"
 static qhandle_t RE_RegisterBSP(const char *name)
 {
 	char bspFilePath[MAX_QPATH];
-	Com_sprintf(bspFilePath, sizeof(bspFilePath), "maps/%s.bsp", name + 1);
+	int child=0;
+	if(!JAR_BSPModelName(name,bspFilePath,&child))return 0;
+	R_IssuePendingRenderCommands();
 
 	int bspIndex;
 	world_t *world = R_LoadBSP(bspFilePath, &bspIndex);
@@ -268,7 +271,8 @@ static qhandle_t RE_RegisterBSP(const char *name)
 	}
 
 	char bspModelIdent[MAX_QPATH];
-	Com_sprintf(bspModelIdent, sizeof(bspModelIdent), "*%d-0", bspIndex);
+	if(child>=world->numBModels)return 0;
+	Com_sprintf(bspModelIdent, sizeof(bspModelIdent), "*%d-%d", bspIndex,child);
 
 	qhandle_t modelHandle = CModelCache->GetModelHandle(bspModelIdent);
 	if (modelHandle == -1)
@@ -276,6 +280,7 @@ static qhandle_t RE_RegisterBSP(const char *name)
 		return 0;
 	}
 
+	CModelCache->InsertModelHandle(name,modelHandle);
 	return modelHandle;
 }
 
@@ -1622,6 +1627,8 @@ void R_ModelInit( void ) {
 
 	// leave a space for NULL model
 	tr.numModels = 0;
+	tr.numBspModels = 0;
+	Com_Memset(tr.bspModels, 0, sizeof(tr.bspModels));
 
 	CModelCache->DeleteAll();
 
@@ -1634,6 +1641,8 @@ void RE_HunkClearCrap(void)
 { //get your dirty sticky assets off me, you damn dirty hunk!
 	KillTheShaderHashTable();
 	tr.numModels = 0;
+	tr.numBspModels = 0;
+	Com_Memset(tr.bspModels, 0, sizeof(tr.bspModels));
 	CModelCache->DeleteAll();
 	tr.numShaders = 0;
 	tr.numSkins = 0;

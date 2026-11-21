@@ -22,9 +22,15 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "../cgame/cg_local.h"
+#include "g_target_music.h"
 #include "Q3_Interface.h"
 #include "g_local.h"
 #include "g_functions.h"
+#include "g_randomizer.h"
+#include "g_bsp_section.h"
+#include "g_siege_item.h"
+#include "g_subbsp_ownership.h"
+#include "qcommon/jar_spawn_difficulty.h"
 
 extern cvar_t *g_spskill;
 extern cvar_t *g_delayedShutdown;
@@ -446,6 +452,9 @@ void SP_target_secret( gentity_t *self );
 void SP_light (gentity_t *self);
 void SP_info_null (gentity_t *self);
 void SP_info_notnull (gentity_t *self);
+void SP_info_siege_objective(gentity_t*);
+void SP_misc_siege_item(gentity_t*);
+void SP_target_siege_end(gentity_t*);
 void SP_path_corner (gentity_t *self);
 
 void SP_misc_teleporter (gentity_t *self);
@@ -684,6 +693,9 @@ spawn_t	spawns[] = {
 	{"info_null", SP_info_null},
 	{"func_group", SP_info_null},
 	{"info_notnull", SP_info_notnull},		// use target_position instead
+	{"info_siege_objective", SP_info_siege_objective},
+	{"misc_siege_item", SP_misc_siege_item},
+	{"target_siege_end", SP_target_siege_end},
 	{"path_corner", SP_path_corner},
 
 	{"misc_teleporter", SP_misc_teleporter},
@@ -1067,11 +1079,7 @@ extern cvar_t	*com_buildScript;
 	if (com_buildScript->integer) {	//always spawn when building a pak file
 		return qtrue;
 	}
-	if ( ent->spawnflags & ( 1 << (8 + g_spskill->integer )) )	{// easy -256	medium -512		hard -1024
-		return qfalse;
-	} else {
-		return qtrue;
-	}
+	return jar::SpawnAtDifficulty(ent->spawnflags,g_spskill->integer) ? qtrue : qfalse;
 }
 
 /*
@@ -1083,7 +1091,7 @@ level.spawnVars[], then call the class specfic spawn function
 ===================
 */
 
-void G_SpawnGEntityFromSpawnVars( void ) {
+void G_SpawnGEntityFromSpawnVars( int pickupOrdinal ) {
 	int			i;
 	gentity_t	*ent;
 
@@ -1103,6 +1111,11 @@ void G_SpawnGEntityFromSpawnVars( void ) {
 	// move editor origin to pos
 	VectorCopy( ent->s.origin, ent->s.pos.trBase );
 	VectorCopy( ent->s.origin, ent->currentOrigin );
+
+	// Only the initial BSP entity loop supplies a stable nonzero ordinal.
+	G_JAR_RandomizeMapPickup(ent, pickupOrdinal);
+	// NPC replacement runs after class wrappers resolve NPC_type.
+	G_JAR_RandomizeMapObject(ent, pickupOrdinal);
 
 	// if we didn't get a classname, don't bother spawning anything
 	if ( !G_CallSpawn( ent ) ) {
@@ -1125,7 +1138,11 @@ void G_SpawnGEntityFromSpawnVars( void ) {
 	}
 }
 
+#include "g_spawn_context.h"
+#include "g_subbsp_transform.inc"
+
 void G_SpawnSubBSPGEntityFromSpawnVars( vec3_t posOffset, vec3_t angOffset ) {
+	G_AdjustSubBSPSpawnVars(posOffset,angOffset);
 	int			i;
 	gentity_t	*ent;
 
@@ -1142,9 +1159,6 @@ void G_SpawnSubBSPGEntityFromSpawnVars( vec3_t posOffset, vec3_t angOffset ) {
 		return;
 	}
 
-	VectorAdd(ent->s.origin, posOffset, ent->s.origin);
-	VectorAdd(ent->s.angles, angOffset, ent->s.angles);
-
 	VectorCopy(ent->s.angles, ent->s.apos.trBase);
 	VectorCopy(ent->s.angles, ent->currentAngles);
 
@@ -1152,9 +1166,23 @@ void G_SpawnSubBSPGEntityFromSpawnVars( vec3_t posOffset, vec3_t angOffset ) {
 	VectorCopy( ent->s.origin, ent->s.pos.trBase );
 	VectorCopy( ent->s.origin, ent->currentOrigin );
 
+	auto* root=G_SubBSPOwner(ent);
+	if(G_BSPSectionPosition(ent,root))return;
+	if(G_BSPSectionScenery(ent,root))return;
+	const bool siegeKorriban=G_SiegeKorribanRoom(root);
+	if(siegeKorriban&&ent->classname&&!strcmp(ent->classname,"trigger_hurt"))ent->spawnflags|=4;
+	if(siegeKorriban&&!G_SiegeKorribanPrepareMedia(*ent)){
+		G_FreeEntity(ent);
+		return;
+	}
 	// if we didn't get a classname, don't bother spawning anything
 	if ( !G_CallSpawn( ent ) ) {
 		G_FreeEntity( ent );
+		return;
+	}
+	if(siegeKorriban&&ent->inuse&&!G_SiegeKorribanPrepareBrush(*ent)){
+		gi.Printf("JA:R: Siege Korriban could not initialize %s %s\n",ent->classname,ent->model?ent->model:"");
+		G_FreeEntity(ent);
 		return;
 	}
 
@@ -1180,90 +1208,7 @@ void G_SpawnSubBSPGEntityFromSpawnVars( vec3_t posOffset, vec3_t angOffset ) {
 G_AddSpawnVarToken
 ====================
 */
-char *G_AddSpawnVarToken( const char *string ) {
-	int		l;
-	char	*dest;
-
-	l = strlen( string );
-	if ( numSpawnVarChars + l + 1 > MAX_SPAWN_VARS_CHARS ) {
-		G_Error( "G_AddSpawnVarToken: MAX_SPAWN_VARS" );
-	}
-
-	dest = spawnVarChars + numSpawnVarChars;
-	memcpy( dest, string, l+1 );
-
-	numSpawnVarChars += l + 1;
-
-	return dest;
-}
-
-/*
-====================
-G_ParseSpawnVars
-
-Parses a brace bounded set of key / value pairs out of the
-level's entity strings into level.spawnVars[]
-
-This does not actually spawn an entity.
-====================
-*/
-qboolean G_ParseSpawnVars( const char **data ) {
-	char		keyname[MAX_STRING_CHARS];
-	const char	*com_token;
-
-	numSpawnVars = 0;
-	numSpawnVarChars = 0;
-
-	// parse the opening brace
-	COM_BeginParseSession();
-	com_token = COM_Parse( data );
-	if ( !*data ) {
-		// end of spawn string
-		COM_EndParseSession();
-		return qfalse;
-	}
-	if ( com_token[0] != '{' ) {
-		COM_EndParseSession();
-		G_Error( "G_ParseSpawnVars: found %s when expecting {",com_token );
-	}
-
-	// go through all the key / value pairs
-	while ( 1 ) {
-		// parse key
-		com_token = COM_Parse( data );
-		if ( !*data ) {
-			COM_EndParseSession();
-			G_Error( "G_ParseSpawnVars: EOF without closing brace" );
-		}
-
-		if ( com_token[0] == '}' ) {
-			break;
-		}
-
-		Q_strncpyz( keyname, com_token, sizeof(keyname) );
-
-		// parse value
-		com_token = COM_Parse( data );
-		if ( !*data ) {
-			COM_EndParseSession();
-			G_Error( "G_ParseSpawnVars: EOF without closing brace" );
-		}
-		if ( com_token[0] == '}' ) {
-			COM_EndParseSession();
-			G_Error( "G_ParseSpawnVars: closing brace without data" );
-		}
-		if ( numSpawnVars == MAX_SPAWN_VARS ) {
-			COM_EndParseSession();
-			G_Error( "G_ParseSpawnVars: MAX_SPAWN_VARS" );
-		}
-		spawnVars[ numSpawnVars ][0] = G_AddSpawnVarToken( keyname );
-		spawnVars[ numSpawnVars ][1] = G_AddSpawnVarToken( com_token );
-		numSpawnVars++;
-	}
-
-	COM_EndParseSession();
-	return qtrue;
-}
+#include "g_spawn_parse.inc"
 
 static	const char *defaultStyles[LS_NUM_STYLES][3] =
 {
@@ -1483,7 +1428,7 @@ void SP_worldspawn( void ) {
 
 	// make some data visible to connecting client
 	G_SpawnString( "music", "", &s );
-	gi.SetConfigstring( CS_MUSIC, s );
+	G_SetMusic(s);
 
 	G_SpawnString( "message", "", &s );
 	gi.SetConfigstring( CS_MESSAGE, s );				// map specific message
@@ -1597,38 +1542,10 @@ qboolean SP_bsp_worldspawn ( void )
 	return qtrue;
 }
 
-void G_SubBSPSpawnEntitiesFromString(const char *entityString, vec3_t posOffset, vec3_t angOffset)
-{
-	const char		*entities;
-
-	entities = entityString;
-
-	// allow calls to G_Spawn*()
-	spawning = qtrue;
-	NPCsPrecached = qfalse;
-	numSpawnVars = 0;
-
-	// the worldspawn is not an actual entity, but it still
-	// has a "spawn" function to perform any global setup
-	// needed by a level (setting configstrings or cvars, etc)
-	if ( !G_ParseSpawnVars( &entities ) ) {
-		G_Error( "SpawnEntities: no entities" );
-	}
-
-	// Skip this guy if its worldspawn fails
-	if ( !SP_bsp_worldspawn() )
-	{
-		return;
-	}
-
-	// parse ents
-	while( G_ParseSpawnVars(&entities) )
-	{
-		G_SpawnSubBSPGEntityFromSpawnVars(posOffset, angOffset);
-	}
-}
+#include "g_subbsp_parse.inc"
 
 void G_SpawnEntitiesFromString( const char *entityString ) {
+	G_ResetSubBSPSpawnContext();
 	const char		*entities;
 
 	entities = entityString;
@@ -1647,14 +1564,19 @@ void G_SpawnEntitiesFromString( const char *entityString ) {
 
 	SP_worldspawn();
 
-	// parse ents
+	G_JAR_InitPickupRandomizer();
+	int pickupOrdinal = 0;
+	// Count every BSP entry, including difficulty-filtered entities.
 	while( G_ParseSpawnVars( &entities ) )
 	{
-		G_SpawnGEntityFromSpawnVars();
+		G_SpawnGEntityFromSpawnVars(++pickupOrdinal);
 	}
+
+	G_JAR_ReportRandomizer();
 
 	//Search the entities for precache information
 	G_ParsePrecaches();
+	G_JAR_FinishShotCatalog();
 
 
 	if( g_entities[ENTITYNUM_WORLD].behaviorSet[BSET_SPAWN] && g_entities[ENTITYNUM_WORLD].behaviorSet[BSET_SPAWN][0] )
@@ -1688,3 +1610,5 @@ void G_SpawnEntitiesFromString( const char *entityString ) {
 	}
 }
 
+
+#include "g_workshop_entities.inc"

@@ -409,6 +409,9 @@ typedef struct trRefEntity_s {
 	vec3_t		ambientLight;	// color normalized to 0-255
 	int			ambientLightInt;	// 32 bit rgba packed
 	vec3_t		directedLight;
+	const struct trRefEntity_s *riftFogRoom;
+	int riftFogIndex;
+	long bspFogUboOffset;
 } trRefEntity_t;
 
 
@@ -1528,6 +1531,7 @@ enum viewParmFlag_t {
 	VPF_POINTSHADOW		= 0x80,// Rendering pointlight shadow
 	VPF_SHADOWCASCADES	= 0x100,// Rendering sun shadow cascades
 	VPF_NOCLEAR			= 0x200,
+	VPF_JAR_SECTION_SKY = 0x400,
 };
 using viewParmFlags_t = uint32_t;
 
@@ -1547,7 +1551,9 @@ typedef struct {
 	vec3_t			pvsOrigin;			// may be different than or.origin for portals
 	qboolean		isPortal;			// true if this view is through a portal
 	qboolean		isMirror;			// the portal is a mirror, invert the face culling
+	int portalMonitor; // Zero for ordinary views, otherwise color target slot plus one.
 	qboolean		isSkyPortal;
+	const trRefEntity_t *riftFogRoom;
 	int				flags;
 	int				frameSceneNum;		// copied from tr.frameSceneNum
 	int				frameCount;			// copied from tr.frameCount
@@ -1605,8 +1611,11 @@ typedef enum surfaceType_e
 the drawsurf sort data is packed into a single 32 bit value so it can be
 compared quickly during the qsorting process
 */
+#include "qcommon/jar_probe.h"
+#include "../../shared/rd-rend2/tr_jar_probes.h"
+
 #define	QSORT_CUBEMAP_SHIFT		0
-#define QSORT_CUBEMAP_BITS		6
+#define QSORT_CUBEMAP_BITS		16
 #define QSORT_CUBEMAP_MASK		((1 << QSORT_CUBEMAP_BITS) - 1)
 
 #define QSORT_ENTITYNUM_SHIFT	(QSORT_CUBEMAP_SHIFT + QSORT_CUBEMAP_BITS)
@@ -1621,12 +1630,12 @@ compared quickly during the qsorting process
 #define QSORT_POSTRENDER_BITS	1
 #define QSORT_POSTRENDER_MASK	((1 << QSORT_POSTRENDER_BITS) - 1)
 
-#if QSORT_POSTRENDER_SHIFT >= 32
+#if QSORT_POSTRENDER_SHIFT >= 64
 	#error "Sort field needs to be expanded"
 #endif
 
 typedef struct drawSurf_s {
-	uint32_t sort; // bit combination for fast compares
+	uint64_t sort; // bit combination for fast compares
 	uint32_t dlightBits;
 	surfaceType_t *surface; // any of surface*_t
 	int fogIndex;
@@ -1646,6 +1655,10 @@ typedef struct srfPoly_s {
 	int				fogIndex;
 	int				numVerts;
 	polyVert_t		*verts;
+	const jarPortablePortalView_t* jarPortal;
+	qhandle_t jarFallback;
+	bool jarSelected;
+	qhandle_t jarMonitorShader;
 } srfPoly_t;
 
 typedef struct srfFlare_s {
@@ -2356,6 +2369,7 @@ typedef struct {
 	orientationr_t	ori;
 	backEndCounters_t	pc;
 	trRefEntity_t	*currentEntity;
+	const trRefEntity_t *sectionFogCapRoom;
 	qboolean	skyRenderedThisView;	// flag for drawing sun
 
 	qboolean	projection2D;	// if qtrue, drawstretchpic doesn't need to change modes
@@ -2424,6 +2438,8 @@ typedef struct trGlobals_s {
 	image_t					*glowImageScaled[6];
 	image_t					*sunRaysImage;
 	image_t					*renderDepthImage;
+	image_t* portalMonitorImages[JAR_PORTAL_CAMERA_FEEDS];
+	FBO_t* portalMonitorFbos[JAR_PORTAL_CAMERA_FEEDS];
 	image_t					*pshadowArrayImage;
 	image_t					*textureScratchImage[2];
 	image_t                 *quarterImage[2];
@@ -2465,6 +2481,7 @@ typedef struct trGlobals_s {
 	shader_t				*distortionShader;
 	shader_t				*projectionShadowShader;
 	shader_t				*weatherInternalShader;
+	shader_t				*sectionFogCapShader;
 
 	shader_t				*flareShader;
 	shader_t				*sunShader;
@@ -2481,6 +2498,7 @@ typedef struct trGlobals_s {
 	vec2i_t					lightmapsPerAtlasSide;
 
 	int                     numCubemaps;
+	jarProbeState_t jarProbes;
 	cubemap_t               *cubemaps;
 
 	trRefEntity_t			worldEntity;		// point currentEntity at this when rendering world
@@ -2528,7 +2546,7 @@ typedef struct trGlobals_s {
 	int defaultFogsUboOffset;
 	int defaultShaderInstanceUboOffset;
 
-	int cameraUboOffsets[3 + MAX_DLIGHTS * 6 + 3 + MAX_DRAWN_PSHADOWS];
+	int cameraUboOffsets[3 + MAX_DLIGHTS * 6 + 3 + MAX_DRAWN_PSHADOWS + JAR_PORTAL_CAMERA_FEEDS];
 	int sceneUboOffset;
 	int lightsUboOffset;
 	int fogsUboOffset;
@@ -2539,7 +2557,7 @@ typedef struct trGlobals_s {
 	// -----------------------------------------
 
 	viewParms_t				viewParms;
-	viewParms_t				cachedViewParms[3 + MAX_DLIGHTS * 6 + 3 + MAX_DRAWN_PSHADOWS];
+	viewParms_t				cachedViewParms[3 + MAX_DLIGHTS * 6 + 3 + MAX_DRAWN_PSHADOWS + JAR_PORTAL_CAMERA_FEEDS];
 	int						numCachedViewParms;
 
 	viewParms_t				skyPortalParms;
@@ -2846,8 +2864,8 @@ void R_GatherFrameViews(trRefdef_t *refdef);
 void R_AddMD3Surfaces( trRefEntity_t *e, int entityNum );
 void R_AddPolygonSurfaces( const trRefdef_t *refdef );
 
-void R_DecomposeSort( uint32_t sort, int *entityNum, shader_t **shader, int *cubemap, int *postRender );
-uint32_t R_CreateSortKey(int entityNum, int sortedShaderIndex, int cubemapIndex, int postRender);
+void R_DecomposeSort( uint64_t sort, int *entityNum, shader_t **shader, int *cubemap, int *postRender );
+uint64_t R_CreateSortKey(int entityNum, int sortedShaderIndex, int cubemapIndex, int postRender);
 void R_AddDrawSurf( surfaceType_t *surface, int entityNum, shader_t *shader,
 				   int fogIndex, int dlightMap, int postRender, int cubemap );
 bool R_IsPostRenderEntity ( const trRefEntity_t *refEntity );
@@ -3095,6 +3113,9 @@ WORLD MAP
 ============================================================
 */
 world_t *R_GetWorld(int worldIndex);
+void R_AssignRiftFog(trRefdef_t& scene, int firstEntity);
+const trRefEntity_t *R_RiftFogRoomAtPoint(const vec3_t point);
+const world_t *R_BSPFogWorld(const trRefEntity_t *entity);
 void R_AddBrushModelSurfaces( trRefEntity_t *e, int entityNum );
 void R_AddWorldSurfaces( viewParms_t *viewParms, trRefdef_t *refdef );
 void R_MarkLeaves(void);
@@ -3131,6 +3152,10 @@ int R_LightForPoint( vec3_t point, vec3_t ambientLight, vec3_t directedLight, ve
 int R_LightDirForPoint( vec3_t point, vec3_t lightDir, vec3_t normal, world_t *world );
 int R_DLightsForPoint(const vec3_t point, const float radius);
 int R_CubemapForPoint( const vec3_t point );
+int RE_SetReflectionProbes(const jarProbe_t*, int);
+void R_JAR_ReflectionFrame(stereoFrame_t);
+int R_JAR_ProbeForPoint(const vec3_t);
+int R_JAR_ProbeForSurface(const msurface_t*,const trRefEntity_t*,int);
 
 /*
 ============================================================
@@ -3667,10 +3692,13 @@ typedef struct backEndData_s {
 	dlight_t	dlights[MAX_DLIGHTS];
 	trRefEntity_t	entities[MAX_REFENTITIES];
 	srfPoly_t	*polys;//[MAX_POLYS];
+	jarPortablePortalView_t jarPortals[JAR_PORTAL_SURFACE_LIMIT];
+	unsigned numJarPortals;
 	polyVert_t	*polyVerts;//[MAX_POLYVERTS];
 	pshadow_t pshadows[MAX_CALC_PSHADOWS];
 	renderCommandList_t	commands;
 } backEndData_t;
+void RE_AddPortalToScene(const jarPortablePortalView_t*);
 
 extern	int		max_polys;
 extern	int		max_polyverts;

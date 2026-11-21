@@ -22,19 +22,31 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "g_local.h"
 #include "g_functions.h"
+#include "g_mover_portal.h"
+#include "g_sandbox_usable.inc"
+#include "g_siege_item.h"
 
 extern void	InitMover( gentity_t *ent );
 
 extern gentity_t	*G_TestEntityPosition( gentity_t *ent );
 void func_wait_return_solid( gentity_t *self )
 {
+	if(G_SandboxUsable(*self)){sandboxUsableReturn(*self);return;}
 	//once a frame, see if it's clear.
 	self->clipmask = CONTENTS_BODY;//|CONTENTS_MONSTERCLIP|CONTENTS_BOTCLIP;
 	if ( !(self->spawnflags&16) || G_TestEntityPosition( self ) == NULL )
 	{
-		gi.SetBrushModel( self, self->model );
-		VectorCopy( self->currentOrigin, self->pos1 );
-		InitMover( self );
+		if ( self->flags & jarDetachedMoverAreaPortal )
+		{
+			// The inline brush is already registered in its section, outside the host BSP.
+			self->contents = self->spawnContents;
+		}
+		else
+		{
+			G_JAR_SetBrushModel( self, self->model );
+			VectorCopy( self->currentOrigin, self->pos1 );
+			InitMover( self );
+		}
 		/*
 		VectorCopy( self->s.origin, self->s.pos.trBase );
 		VectorCopy( self->s.origin, self->currentOrigin );
@@ -57,7 +69,7 @@ void func_wait_return_solid( gentity_t *self )
 		//NOTE: be sure to reset the brushmodel before doing this or else CONTENTS_OPAQUE may not be on when you call this
 		if ( !(self->spawnflags&1) )
 		{//START_OFF doesn't effect area portals
-			gi.AdjustAreaPortalState( self, qfalse );
+			G_AdjustMoverAreaPortalState( self, qfalse );
 		}
 	}
 	else
@@ -70,6 +82,7 @@ void func_wait_return_solid( gentity_t *self )
 
 void func_usable_think( gentity_t *self )
 {
+	if(G_SandboxUsable(*self)){G_SandboxUsableRefresh(*self);return;}
 	if ( self->spawnflags & 8 )
 	{
 		self->svFlags |= SVF_PLAYER_USABLE;	//Replace the usable flag
@@ -93,6 +106,7 @@ qboolean G_EntIsRemovableUsable( int entNum )
 
 void func_usable_use( gentity_t *self, gentity_t *other, gentity_t *activator )
 {//Toggle on and off
+	if(G_SandboxUsable(*self)){G_SandboxUsableActivate(*self,activator,other==activator);return;}
 	if ( other == activator )
 	{//directly used by use button trace
 		if ( (self->spawnflags&32) )
@@ -148,7 +162,7 @@ void func_usable_use( gentity_t *self, gentity_t *other, gentity_t *activator )
 		//NOTE: MUST do this BEFORE clearing contents, or you may not open the area portal!!!
 		if ( !(self->spawnflags&1) )
 		{//START_OFF doesn't effect area portals
-			gi.AdjustAreaPortalState( self, qtrue );
+			G_AdjustMoverAreaPortalState( self, qtrue );
 		}
 		self->s.solid = 0;
 		self->contents = 0;
@@ -156,18 +170,23 @@ void func_usable_use( gentity_t *self, gentity_t *other, gentity_t *activator )
 		self->svFlags |= SVF_NOCLIENT;
 		self->s.eFlags |= EF_NODRAW;
 		self->count = 0;
+		if ( self->flags & jarDetachedMoverAreaPortal )
+		{
+			gi.unlinkentity( self );
+		}
+		self->e_ThinkFunc = thinkF_NULL;
+		self->nextthink = -1;
 
 		if(self->target && self->target[0])
 		{
 			G_UseTargets(self, activator);
 		}
-		self->e_ThinkFunc = thinkF_NULL;
-		self->nextthink = -1;
 	}
 }
 
 void func_usable_pain(gentity_t *self, gentity_t *inflictor, gentity_t *attacker, const vec3_t point, int damage, int mod,int hitLoc)
 {
+	if(G_SandboxUsable(*self)){sandboxUsableDamage(*self,attacker,false);return;}
 	if ( self->paintarget )
 	{
 		G_UseTargets2 (self, self->activator, self->paintarget);
@@ -180,6 +199,7 @@ void func_usable_pain(gentity_t *self, gentity_t *inflictor, gentity_t *attacker
 
 void func_usable_die(gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int damage, int mod,int dFlags,int hitLoc)
 {
+	if(G_SandboxUsable(*self)){sandboxUsableDamage(*self,attacker,true);return;}
 	self->takedamage = qfalse;
 	GEntity_UseFunc( self, inflictor, attacker );
 }
@@ -211,7 +231,12 @@ A bmodel that just sits there, doing nothing.  Can be used for conditional walls
 
 void SP_func_usable( gentity_t *self )
 {
-	gi.SetBrushModel( self, self->model );
+	G_JAR_SetBrushModel( self, self->model );
+	if ( G_SiegeKorribanRoom( G_SubBSPOwner( self ) ) )
+	{
+		self->flags |= jarDetachedMoverAreaPortal;
+		self->spawnContents = self->contents;
+	}
 	InitMover( self );
 	VectorCopy( self->s.origin, self->s.pos.trBase );
 	VectorCopy( self->s.origin, self->currentOrigin );

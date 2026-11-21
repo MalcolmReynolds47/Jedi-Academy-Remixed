@@ -1250,7 +1250,9 @@ void CL_ParseBinding( int key, qboolean down, unsigned time )
 			// button commands add keynum and time as parameters
 			// so that multiple sources can be discriminated and
 			// subframe corrected
-			if ( allCommands || ( allowUpCmds && !down ) ) {
+			const qboolean jarMove = (qboolean)(Key_GetCatcher()==KEYCATCH_CGAME && Cvar_VariableIntegerValue("jar_mpMenuOpen") && !Cvar_VariableIntegerValue("jar_mpMenuTyping") &&
+				(!strcmp(p,"+forward")||!strcmp(p,"+back")||!strcmp(p,"+moveleft")||!strcmp(p,"+moveright")||!strcmp(p,"+moveup")||!strcmp(p,"+movedown")||!strcmp(p,"+speed")));
+			if ( allCommands || jarMove || ( allowUpCmds && !down ) ) {
 				char cmd[1024];
 				Com_sprintf( cmd, sizeof( cmd ), "%c%s %d %d\n",
 					( down ) ? '+' : '-', p + 1, key, time );
@@ -1468,37 +1470,4 @@ void CL_CharEvent( int key ) {
 Key_ClearStates
 ===================
 */
-void Key_ClearStates( void ) {
-	kg.anykeydown = qfalse;
-
-	for ( int i=0; i<MAX_KEYS; i++ ) {
-		if ( kg.keys[i].down )
-			CL_KeyEvent( i, qfalse, 0 );
-		kg.keys[i].down = qfalse;
-		kg.keys[i].repeats = 0;
-	}
-}
-
-static int keyCatchers = 0;
-
-/*
-====================
-Key_GetCatcher
-====================
-*/
-int Key_GetCatcher( void ) {
-	return keyCatchers;
-}
-
-/*
-====================
-Key_SetCatcher
-====================
-*/
-void Key_SetCatcher( int catcher ) {
-	// If the catcher state is changing, clear all key states
-	if ( catcher != keyCatchers )
-		Key_ClearStates();
-
-	keyCatchers = catcher;
-}
+#include "cl_jar_keycatcher.inc"

@@ -153,6 +153,7 @@ typedef struct channel_s {
 
 	// Open AL specific
 	bool	bLooping;	// Signifies if this channel / source is playing a looping sound
+	bool	soundscapeLoop;
 //	bool	bAmbient;	// Signifies if this channel / source is playing a looping ambient sound
 	bool	bProcessed;	// Signifies if this channel / source has been processed
 	bool	bStreaming;	// Set to true if the data needs to be streamed (MP3 or dialogue)

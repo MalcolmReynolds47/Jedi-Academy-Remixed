@@ -3335,6 +3335,10 @@ void R_CreateBuiltinImages( void ) {
 
 	// we use a solid white image instead of disabling texturing
 	Com_Memset( data, 255, sizeof( data ) );
+	for (int i = 0; i < JAR_PORTAL_CAMERA_FEEDS; ++i)
+		tr.portalMonitorImages[i] = R_CreateImage(va("*jarCamera%d", i), nullptr,
+			JAR_PORTAL_CAMERA_SIZE, JAR_PORTAL_CAMERA_SIZE, IMGTYPE_COLORALPHA,
+			IMGFLAG_NO_COMPRESSION | IMGFLAG_CLAMPTOEDGE, GL_RGBA16F);
 	tr.whiteImage = R_CreateImage(
 		"*white", (byte *)data, 8, 8, IMGTYPE_COLORALPHA, IMGFLAG_NONE,
 		GL_RGBA8);

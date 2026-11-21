@@ -21,10 +21,12 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "g_local.h"
+#include "g_randomizer.h"
 #include "b_local.h"
 #include "g_functions.h"
 #include "wp_saber.h"
 #include "w_local.h"
+#include "qcommon/jar_force_enlightenment.h"
 
 //-----------------------
 //	Rocket Launcher
@@ -186,6 +188,7 @@ void WP_FireRocket( gentity_t *ent, qboolean alt_fire )
 	WP_TraceSetStart( ent, start, vec3_origin, vec3_origin );//make sure our start point isn't on the other side of a wall
 
 	gentity_t *missile = CreateMissile( start, forwardVec, vel, 10000, ent, alt_fire );
+	if (!missile) return;
 
 	missile->classname = "rocket_proj";
 	missile->s.weapon = WP_ROCKET_LAUNCHER;
@@ -226,7 +229,8 @@ void WP_FireRocket( gentity_t *ent, qboolean alt_fire )
 			lockTime = g_rocketLockTime;
 		}
 		// we'll consider attempting to lock this little poochie onto some baddie.
-		if ( (lockEntNum > 0 || (ent->NPC && lockEntNum >= 0)) && lockEntNum < ENTITYNUM_WORLD && lockTime > 0 )
+		const bool jarInstantLock=G_JAR_InstantProjectileLock(ent,lockEntNum);
+		if ( (lockEntNum > 0 || (ent->NPC && lockEntNum >= 0)) && lockEntNum < ENTITYNUM_WORLD && (lockTime > 0 || jarInstantLock) )
 		{
 			// take our current lock time and divide that by 8 wedge slices to get the current lock amount
 			int dif = ( level.time - lockTime ) / ( 1200.0f / 8.0f );
@@ -243,7 +247,7 @@ void WP_FireRocket( gentity_t *ent, qboolean alt_fire )
 			// if we are fully locked, always take on the enemy.
 			//	Also give a slight advantage to higher, but not quite full charges.
 			//	Finally, just give any amount of charge a very slight random chance of locking.
-			if ( dif == 8 || Q_flrand(0.0f, 1.0f) * dif > 2 || Q_flrand(0.0f, 1.0f) > 0.97f )
+			if ( jarInstantLock || dif == 8 || Q_flrand(0.0f, 1.0f) * dif > 2 || Q_flrand(0.0f, 1.0f) > 0.97f )
 			{
 				missile->enemy = &g_entities[lockEntNum];
 
@@ -251,8 +255,8 @@ void WP_FireRocket( gentity_t *ent, qboolean alt_fire )
 					&& missile->enemy->inuse )//&& DistanceSquared( missile->currentOrigin, missile->enemy->currentOrigin ) < 262144 && InFOV( missile->currentOrigin, missile->enemy->currentOrigin, missile->enemy->client->ps.viewangles, 45, 45 ) )
 				{
 					if ( missile->enemy->client
-						&& (missile->enemy->client->ps.forcePowersKnown&(1<<FP_PUSH))
-						&& missile->enemy->client->ps.forcePowerLevel[FP_PUSH] > FORCE_LEVEL_0 )
+						&& (jar::enlightenment::Known(missile->enemy->client->ps)&(1<<FP_PUSH))
+						&& jar::enlightenment::Rank(missile->enemy->client->ps,FP_PUSH) > FORCE_LEVEL_0 )
 					{//have force push, don't flee from homing rockets
 					}
 					else
@@ -306,4 +310,5 @@ void WP_FireRocket( gentity_t *ent, qboolean alt_fire )
 
 	// we don't want it to ever bounce
 	missile->bounceCount = 0;
+	if(G_JAR_ProjectilesEnabled()&&ent->s.number==0&&gi.JAR_Log)gi.JAR_Log(2,"randomizer","rocket_projectile","entity=%d alt=%d homing=%d target=%d",missile->s.number,alt_fire,missile->e_ThinkFunc==thinkF_rocketThink,missile->enemy?missile->enemy->s.number:ENTITYNUM_NONE);
 }

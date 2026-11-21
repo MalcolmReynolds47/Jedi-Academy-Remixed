@@ -27,6 +27,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // qcommon.h -- definitions common between client and server, but not game.or ref modules
 
 #include "qcommon/q_shared.h"
+#include "qcommon/jar_host_port.h"
 #include "sys/sys_public.h"
 
 //============================================================================
@@ -120,7 +121,7 @@ NET
 
 #define	MAX_PACKET_USERCMDS		32		// max number of usercmd_t in a packet
 
-#define	MAX_SNAPSHOT_ENTITIES	256
+#define MAX_SNAPSHOT_ENTITIES JAR_MP_SNAPSHOT_ENTITIES
 
 #define	PORT_ANY			-1
 
@@ -156,7 +157,7 @@ qboolean	Sys_IsLANAddress (const netadr_t *adr);
 void		Sys_ShowIP(void);
 
 
-#define	MAX_MSGLEN				49152		// max length of a message, which may
+#define MAX_MSGLEN JAR_MP_MESSAGE_BYTES		// max length of a message, which may
 											// be fragmented into multiple packets
 
 //rww - 6/28/02 - Changed from 16384 to match sof2's. This does seem rather huge, but I guess it doesn't really hurt anything.
@@ -211,7 +212,7 @@ PROTOCOL
 ==============================================================
 */
 
-#define	PROTOCOL_VERSION	26
+#define	PROTOCOL_VERSION	1051
 
 #define	UPDATE_SERVER_NAME			"updatejk3.ravensoft.com"
 #define MASTER_SERVER_NAME			"masterjk3.ravensoft.com"
@@ -221,7 +222,7 @@ PROTOCOL
 
 #define	PORT_MASTER			29060
 #define	PORT_UPDATE			29061
-#define	PORT_SERVER			29070	//...+9 more for multiple servers
+#define	PORT_SERVER			JAR_DEFAULT_HOST_PORT	//...+9 more for multiple servers
 #define	NUM_SERVER_PORTS	4		// broadcast scan this many ports after PORT_SERVER so a single machine can run multiple servers
 
 // the svc_strings[] array in cl_parse.c should mirror this

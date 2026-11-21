@@ -27,6 +27,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "client.h"
 #include "client_ui.h"
+#include "ui/ui_jar.h"
+#include "qcommon/jar_context.h"
 
 #ifndef _WIN32
 #include <cmath>
@@ -565,6 +567,13 @@ void CL_MouseMove( usercmd_t *cmd ) {
 		return;
 	}
 
+ // The bound USE action owns this gesture, regardless of which key is bound.
+ uint32_t token=0;jar::context::Token(Cvar_VariableString("jar_physgunHeld"),token);
+ if(jar::context::RotateGesture(UI_JAR_OverlayActive(),cl.frame.ps.weapon==WP_PHYSGUN,token,cmd->buttons,BUTTON_ATTACK,BUTTON_USE,BUTTON_ALT_ATTACK)){
+  const float yaw=std::max(-180.f,std::min(180.f,-m_yaw->value*mx*4));
+  const float turnPitch=std::max(-180.f,std::min(180.f,-pitch*my*4));
+  Cbuf_AddText(va("jar_sb rotateheld %u %.4f %.4f\n",token,yaw,turnPitch));return;
+ }
 	// add mouse X/Y movement to cmd
 	if ( in_strafe.active ) {
 		cmd->rightmove = ClampChar( cmd->rightmove + m_side->value * mx );
@@ -608,6 +617,8 @@ void CL_MouseMove( usercmd_t *cmd ) {
 CL_CmdButtons
 ==============
 */
+#include "ui/ui_jar.h"
+#include "qcommon/jar_overlay_input.h"
 void CL_CmdButtons( usercmd_t *cmd ) {
 	int		i;
 
@@ -623,6 +634,8 @@ void CL_CmdButtons( usercmd_t *cmd ) {
 		in_buttons[i].wasPressed = qfalse;
 	}
 
+    static uint32_t overlayBlockedButtons=0;
+    cmd->buttons=jar::overlay::FilterButtons(cmd->buttons,UI_JAR_OverlayActive(),BUTTON_WALKING,overlayBlockedButtons);
 	if ( Key_GetCatcher( ) ) {
 		//cmd->buttons |= BUTTON_TALK;
 	}
@@ -695,6 +708,7 @@ usercmd_t CL_CreateCmd( void ) {
 
 	// get basic movement from joystick
 	CL_JoystickMove( &cmd );
+    if(UI_JAR_OverlayTyping()){cmd.forwardmove=cmd.rightmove=cmd.upmove=0;cmd.buttons=0;VectorCopy(oldAngles,cl.viewangles);}
 
 	// check to make sure the angles haven't wrapped
 	if ( cl.viewangles[PITCH] - oldAngles[PITCH] > 90 ) {

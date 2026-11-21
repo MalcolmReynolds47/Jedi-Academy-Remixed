@@ -293,6 +293,13 @@ int cmdcmp( const void *a, const void *b ) {
 }
 
 static consoleCommand_t	commands[] = {
+	{ "+jar_menu", CG_JAR_MenuDown },
+	{ "+jar_context", CG_JAR_ContextDown },
+	{ "-jar_context", CG_JAR_MenuUp },
+	{ "-jar_menu", CG_JAR_MenuUp },
+	{ "jar_undo", CG_JAR_Undo },
+	{ "jar_distance_in", CG_JAR_DistanceIn },
+	{ "jar_distance_out", CG_JAR_DistanceOut },
 	{ "+scores",					CG_ScoresDown_f },
 	{ "-scores",					CG_ScoresUp_f },
 	{ "briefing",					CG_SiegeBriefing_f },

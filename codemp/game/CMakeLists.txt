@@ -32,6 +32,9 @@ if(WIN32)
 endif(WIN32)
 set(MPGameDefines ${MPSharedDefines} "_GAME" )
 set(MPGameGameFiles
+	"${MPDir}/game/g_jar_sandbox.c"
+	"${MPDir}/game/jar_mp_section_admission.cpp"
+	"${MPDir}/game/jar_mp_section_admission.h"
 	"${MPDir}/game/ai_main.c"
 	"${MPDir}/game/ai_util.c"
 	"${MPDir}/game/ai_wpnav.c"
@@ -146,6 +149,7 @@ source_group("game" FILES ${MPGameGameFiles})
 set(MPGameFiles ${MPGameFiles} ${MPGameGameFiles})
 
 set(MPGameCommonFiles
+	"${MPDir}/qcommon/md4.cpp"
 	"${MPDir}/qcommon/q_shared.c"
 	"${MPDir}/qcommon/disablewarnings.h"
 	"${MPDir}/qcommon/q_shared.h"
@@ -208,7 +212,18 @@ set(MPGameUiFiles
 source_group("ui" FILES ${MPGameUiFiles})
 set(MPGameFiles ${MPGameFiles} ${MPGameUiFiles})
 
+if(NOT TARGET box3d)
+    set(BOX3D_PROFILE OFF CACHE BOOL "No external profiler" FORCE)
+    add_subdirectory("${CMAKE_SOURCE_DIR}/lib/box3d" "${CMAKE_BINARY_DIR}/box3d")
+    set_property(TARGET box3d PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+    if(MSVC)
+        target_compile_options(box3d PRIVATE /fp:precise)
+    endif()
+endif()
+list(APPEND MPGameFiles "${MPDir}/game/jar_mp_physics.cpp" "${SPDir}/game/jar_physics.cpp")
+list(APPEND MPGameLibraries box3d)
 add_library(${MPGame} SHARED ${MPGameFiles})
+set_property(TARGET ${MPGame} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 
 if(NOT MSVC)
 	# remove "lib" prefix for .so/.dylib files
@@ -227,22 +242,22 @@ if(MakeApplicationBundles AND BuildMPEngine)
 elseif(WIN32)
 	install(TARGETS ${MPGame}
 		RUNTIME
-		DESTINATION "${JKAInstallDir}/OpenJK"
+		DESTINATION "${JKAInstallDir}"
 		COMPONENT ${JKAMPCoreComponent})
 
 	# Use OpenJK modules as default
 	install(TARGETS ${MPGame}
 		RUNTIME
-		DESTINATION "${JKAInstallDir}/base"
+		DESTINATION "${JKAInstallDir}"
 		COMPONENT ${JKAMPCoreComponent})
 else()
 	install(TARGETS ${MPGame}
 		LIBRARY
-		DESTINATION "${JKAInstallDir}/OpenJK"
+		DESTINATION "${JKAInstallDir}"
 		COMPONENT ${JKAMPCoreComponent})
 	install(TARGETS ${MPGame}
 		LIBRARY
-		DESTINATION "${JKAInstallDir}/base"
+		DESTINATION "${JKAInstallDir}"
 		COMPONENT ${JKAMPCoreComponent})
 endif()
 

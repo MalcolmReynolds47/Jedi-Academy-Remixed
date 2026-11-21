@@ -442,6 +442,8 @@ to actually render the visible surfaces for this view
 */
 static void RB_BeginDrawingView (void) {
 	int clearBits = GL_DEPTH_BUFFER_BIT;
+	const fog_t *roomFog = backEnd.refdef.doLAGoggles ? nullptr :
+		R_RiftCameraFog(backEnd.viewParms.riftFogRoom);
 
 	// sync with gl if needed
 	if ( r_finish->integer == 1 && !glState.finishCalled ) {
@@ -508,7 +510,7 @@ static void RB_BeginDrawingView (void) {
 		}
 	}
 
-	if ( !( backEnd.refdef.rdflags & RDF_NOWORLDMODEL ) && ( r_DynamicGlow->integer && !g_bRenderGlowingObjects ) )
+	if ( !( backEnd.refdef.rdflags & (RDF_NOWORLDMODEL | RDF_JAR_SECTION_SKY) ) && ( r_DynamicGlow->integer && !g_bRenderGlowingObjects ) )
 	{
 		if (tr.world && tr.world->globalFog != -1)
 		{ //this is because of a bug in multiple scenes I think, it needs to clear for the second scene but it doesn't normally.
@@ -518,6 +520,12 @@ static void RB_BeginDrawingView (void) {
 			clearBits |= GL_COLOR_BUFFER_BIT;
 		}
 	}
+	if (roomFog && !g_bRenderGlowingObjects &&
+		((clearBits & GL_COLOR_BUFFER_BIT) || !skyboxportal))
+	{
+		clearBits |= GL_COLOR_BUFFER_BIT;
+		qglClearColor(roomFog->parms.color[0], roomFog->parms.color[1], roomFog->parms.color[2], 1.0f);
+	}
 	// If this pass is to just render the glowing objects, don't clear the depth buffer since
 	// we're sharing it with the main scene (since the main scene has already been rendered). -AReis
 	if ( g_bRenderGlowingObjects )
@@ -525,6 +533,10 @@ static void RB_BeginDrawingView (void) {
 		clearBits &= ~GL_DEPTH_BUFFER_BIT;
 	}
 
+	if (backEnd.viewParms.portalMonitor) {
+		qglClearColor(0.12f, 0.12f, 0.12f, 1.0f);
+		clearBits = GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT;
+	}
 	if (clearBits)
 	{
 		qglClear( clearBits );
@@ -546,7 +558,7 @@ static void RB_BeginDrawingView (void) {
 	backEnd.skyRenderedThisView = qfalse;
 
 	// clip to the plane of the portal
-	if ( backEnd.viewParms.isPortal ) {
+	if ( backEnd.viewParms.isPortal && !backEnd.viewParms.portalMonitor ) {
 		float	plane[4];
 		double	plane2[4];
 
@@ -626,7 +638,7 @@ RB_RenderDrawSurfList
 //number of possible surfs we can postrender.
 //note that postrenders lack much of the optimization that the standard sort-render crap does,
 //so it's slower.
-#define MAX_POST_RENDERS	128
+#define MAX_POST_RENDERS	(128 * JAR_CAPACITY_MULTIPLIER)
 
 typedef struct
 {
@@ -649,7 +661,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	int				depthRange, oldDepthRange;
 	int				i;
 	drawSurf_t		*drawSurf;
-	unsigned int	oldSort;
+	uint64_t	oldSort;
 	float			originalTime;
 	trRefEntity_t	*curEnt;
 	postRender_t	*pRender;
@@ -673,7 +685,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	oldFogNum = -1;
 	oldDepthRange = qfalse;
 	oldDlighted = qfalse;
-	oldSort = (unsigned int) -1;
+	oldSort = ~uint64_t(0);
 	depthRange = qfalse;
 
 	backEnd.pc.c_surfaces += numDrawSurfs;
@@ -744,7 +756,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 				fogNum = oldFogNum;
 				dlighted = oldDlighted;
 
-				oldSort = (unsigned int)-1; //invalidate this thing, cause we may want to postrender more surfs of the same sort
+				oldSort = ~uint64_t(0); //invalidate this thing, cause we may want to postrender more surfs of the same sort
 
 				//continue without bothering to begin a draw surf
 				continue;
@@ -752,7 +764,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 		}
 
 		if (shader != oldShader || fogNum != oldFogNum || dlighted != oldDlighted
-			|| ( entityNum != oldEntityNum && !shader->entityMergable ) )
+			|| ( entityNum != oldEntityNum && (!shader->entityMergable || fogNum != 0) ) )
 		{
 			if (oldShader != NULL) {
 				RB_EndSurface();
@@ -1307,6 +1319,8 @@ RB_DrawSurfs
 
 =============
 */
+#include "../rd-common/tr_monitor_classic.inc"
+
 const void	*RB_DrawSurfs( const void *data ) {
 	const drawSurfsCommand_t	*cmd;
 
@@ -1320,6 +1334,10 @@ const void	*RB_DrawSurfs( const void *data ) {
 	backEnd.refdef = cmd->refdef;
 	backEnd.viewParms = cmd->viewParms;
 
+	if (backEnd.viewParms.portalMonitor) {
+		RB_DrawPortalMonitor(*cmd);
+		return cmd + 1;
+	}
 	RB_RenderDrawSurfList( cmd->drawSurfs, cmd->numDrawSurfs );
 
 	// Dynamic Glow/Flares:

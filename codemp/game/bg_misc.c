@@ -265,7 +265,7 @@ int WeaponReadyAnim[WP_NUM_WEAPONS] =
 
 	//NOT VALID (e.g. should never really be used):
 	BOTH_STAND1,//WP_EMPLACED_GUN,
-	TORSO_WEAPONREADY1//WP_TURRET,
+	TORSO_WEAPONREADY1, TORSO_WEAPONREADY3, TORSO_WEAPONREADY2 //WP_TURRET, Physgun, Toolgun
 };
 
 int WeaponReadyLegsAnim[WP_NUM_WEAPONS] =
@@ -291,7 +291,7 @@ int WeaponReadyLegsAnim[WP_NUM_WEAPONS] =
 
 	//NOT VALID (e.g. should never really be used):
 	BOTH_STAND1,//WP_EMPLACED_GUN,
-	BOTH_STAND1//WP_TURRET,
+	BOTH_STAND1, BOTH_STAND1, BOTH_STAND1 //WP_TURRET, Physgun, Toolgun
 };
 
 int WeaponAttackAnim[WP_NUM_WEAPONS] =
@@ -317,7 +317,7 @@ int WeaponAttackAnim[WP_NUM_WEAPONS] =
 
 	//NOT VALID (e.g. should never really be used):
 	BOTH_STAND1,//WP_EMPLACED_GUN,
-	BOTH_ATTACK1//WP_TURRET,
+	BOTH_ATTACK1, BOTH_ATTACK3, BOTH_ATTACK2 //WP_TURRET, Physgun, Toolgun
 };
 
 void BG_FixWeaponAttackAnim(void) {
@@ -1679,6 +1679,37 @@ Only in One Flag CTF games
 		""					// description
 	},
 
+	{
+		"weapon_physgun",
+		"sound/weapons/w_pkup.wav",
+        { "models/weapons2/concussion/c_rifle_w.glm",
+		0, 0, 0},
+/* view */		"models/weapons2/concussion/c_rifle.md3",
+/* icon */		"jar/icons/physgun",
+/* pickup *///	"E11 Blaster Rifle",
+		100,
+		IT_WEAPON,
+		WP_PHYSGUN,
+/* precache */ "",
+/* sounds */ "",
+		"Physgun"				// description
+	},
+	{
+		"weapon_toolgun",
+		"sound/weapons/w_pkup.wav",
+        { "models/weapons2/blaster_pistol/blaster_pistol_w.glm",
+		0, 0, 0},
+/* view */		"models/weapons2/blaster_pistol/blaster_pistol.md3",
+/* icon */		"jar/icons/toolgun",
+/* pickup *///	"E11 Blaster Rifle",
+		100,
+		IT_WEAPON,
+		WP_TOOLGUN,
+/* precache */ "",
+/* sounds */ "",
+		"Toolgun"				// description
+	},
+
 	// end of list marker
 	{NULL}
 };
@@ -2540,33 +2571,7 @@ void BG_AddPredictableEventToPlayerstate( int newEvent, int eventParm, playerSta
 BG_TouchJumpPad
 ========================
 */
-void BG_TouchJumpPad( playerState_t *ps, entityState_t *jumppad ) {
-	// spectators don't use jump pads
-	if ( ps->pm_type != PM_NORMAL && ps->pm_type != PM_JETPACK && ps->pm_type != PM_FLOAT ) {
-		return;
-	}
-
-	// if we didn't hit this same jumppad the previous frame
-	// then don't play the event sound again if we are in a fat trigger
-	/*
-	if ( ps->jumppad_ent != jumppad->number ) {
-		vec3_t angles;
-		float p;
-
-		vectoangles( jumppad->origin2, angles);
-		p = fabs( AngleNormalize180( angles[PITCH] ) );
-		effectNum =  (p<45) ? 0 : 1;
-	}
-	*/
-
-	// remember hitting this jumppad this frame
-	ps->jumppad_ent = jumppad->number;
-	ps->jumppad_frame = ps->pmove_framecount;
-	// give the player the velocity from the jumppad
-	VectorCopy( jumppad->origin2, ps->velocity );
-	// fix: no more force draining after bouncing the jumppad
-	ps->fd.forcePowersActive &= ~(1<<FP_LEVITATION);
-}
+#include "bg_jar_native_jumppad.inc"
 
 /*
 =================

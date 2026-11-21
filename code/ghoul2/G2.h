@@ -26,18 +26,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 class CMiniHeap;
 
-// defines to setup the
-#define		ENTITY_WIDTH 12
-#define		MODEL_WIDTH	10
-#define		BOLT_WIDTH	10
-
-#define		MODEL_AND	((1<<MODEL_WIDTH)-1)
-#define		BOLT_AND	((1<<BOLT_WIDTH)-1)
-#define		ENTITY_AND	((1<<ENTITY_WIDTH)-1)
-
-#define		BOLT_SHIFT	0
-#define		MODEL_SHIFT	(BOLT_SHIFT + BOLT_WIDTH)
-#define		ENTITY_SHIFT (MODEL_SHIFT + MODEL_WIDTH)
+#include "qcommon/jar_bolt.h"
 
 //rww - RAGDOLL_BEGIN
 class CRagDollUpdateParams;
@@ -178,6 +167,8 @@ qboolean	G2API_SetGhoul2ModelFlags(CGhoul2Info *ghlInfo, const int flags);
 int			G2API_GetGhoul2ModelFlags(CGhoul2Info *ghlInfo);
 
 qboolean	G2API_GetAnimFileName(CGhoul2Info *ghlInfo, char **filename);
+qboolean G2API_JAR_ModelBounds(CGhoul2Info_v&, int, vec3_t, vec3_t);
+qboolean G2API_JAR_ModelGeometry(CGhoul2Info_v&, int, vec3_t, vec3_t, void*, void (*)(void*, const float*));
 void		G2API_CollisionDetect(CCollisionRecord *collRecMap, CGhoul2Info_v &ghoul2, const vec3_t angles, const vec3_t position,
 									int frameNumber, int entNum, vec3_t rayStart, vec3_t rayEnd, vec3_t scale, CMiniHeap *G2VertSpace,
 									EG2_Collision eG2TraceType, int useLod, float fRadius);
@@ -215,8 +206,8 @@ void		G2_GetBoltMatrixLow(CGhoul2Info &ghoul2,int boltNum,const vec3_t scale,mdx
 void		G2_TimingModel(boneInfo_t &bone,int time,int numFramesInFile,int &currentFrame,int &newFrame,float &lerp);
 
 
-bool G2_SetupModelPointers(CGhoul2Info_v &ghoul2); // returns true if any model is properly set up
-bool G2_SetupModelPointers(CGhoul2Info *ghlInfo); // returns true if the model is properly set up
+qboolean G2_SetupModelPointers(CGhoul2Info_v &ghoul2); // returns true if any model is properly set up
+qboolean G2_SetupModelPointers(CGhoul2Info *ghlInfo); // returns true if the model is properly set up
 
 //#ifdef _G2_GORE	// These exist regardless, non-gore versions are empty
 void		G2API_AddSkinGore(CGhoul2Info_v &ghoul2,SSkinGoreData &gore);

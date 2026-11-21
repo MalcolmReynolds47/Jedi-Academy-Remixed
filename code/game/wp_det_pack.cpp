@@ -25,37 +25,13 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_functions.h"
 #include "wp_saber.h"
 #include "w_local.h"
+#include "g_sandbox_charges.h"
 
 //-----------------------
 //	Det Pack
 //-----------------------
 
-//---------------------------------------------------------
-void charge_stick( gentity_t *self, gentity_t *other, trace_t *trace )
-//---------------------------------------------------------
-{
-	self->s.eType = ET_GENERAL;
-
-	// make us so we can take damage
-	self->clipmask = MASK_SHOT;
-	self->contents = CONTENTS_SHOTCLIP;
-	self->takedamage = qtrue;
-	self->health = 25;
-
-	self->e_DieFunc = dieF_WP_ExplosiveDie;
-
-	VectorSet( self->maxs, 10, 10, 10 );
-	VectorScale( self->maxs, -1, self->mins );
-
-	self->activator = self->owner;
-	self->owner = NULL;
-
-	self->e_TouchFunc = touchF_NULL;
-	self->e_ThinkFunc = thinkF_NULL;
-	self->nextthink = -1;
-
-	WP_Stick( self, trace, 1.0f );
-}
+#include "wp_det_pack_stick.inc"
 
 //---------------------------------------------------------
 static void WP_DropDetPack( gentity_t *self, vec3_t start, vec3_t dir )
@@ -71,6 +47,7 @@ static void WP_DropDetPack( gentity_t *self, vec3_t start, vec3_t dir )
 	WP_TraceSetStart( self, start, vec3_origin, vec3_origin );//make sure our start point isn't on the other side of a wall
 
 	gentity_t	*missile = CreateMissile( start, forwardVec, 300, 10000, self, qfalse );
+	if (!missile) return;
 
 	missile->fxID = G_EffectIndex( "detpack/explosion" ); // if we set an explosion effect, explode death can use that instead
 

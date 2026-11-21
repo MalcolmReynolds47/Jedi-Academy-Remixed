@@ -23,6 +23,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 // sv_game.c -- interface to the game dll
 #include "server.h"
+#include "qcommon/jar_mp_model_hull.h"
 #include "botlib/botlib.h"
 #include "qcommon/stringed_ingame.h"
 #include "qcommon/RoffSystem.h"
@@ -127,6 +128,7 @@ Called on a normal map change, not on a map_restart
 */
 
 void SV_InitGameProgs( void ) {
+	JAR_MP_ClearModelHulls();
 	//FIXME these are temp while I make bots run in vm
 	extern int	bot_enable;
 

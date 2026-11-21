@@ -1,3 +1,5 @@
+#include "qcommon/jar_appearance.h"
+#include "qcommon/jar_diagnostics.h"
 /*
 ===========================================================================
 Copyright (C) 1999 - 2005, Id Software, Inc.
@@ -25,6 +27,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../server/exe_headers.h"
 
 #include "snd_local.h"
+#include "qcommon/jar_audio_catalog.h"
+#include <algorithm>
 #include "cl_mp3.h"
 
 #include <string>
@@ -767,6 +771,12 @@ static qboolean S_LoadSound_Actual( sfx_t *sfx )
 		len = strlen(sLoadName);
 	}
 
+    char overlay[MAX_QPATH];
+    if (jar::SoundOverlay(overlay,sizeof(overlay),sLoadName,Cvar_Get("jar_soundPack","stock",CVAR_ARCHIVE)->string,
+        [](const char *path) { return FS_ReadFile(path,nullptr)>0; })) {
+        JAR_Log(2,"appearance","sound_overlay","source=%s selected=%s",sLoadName,overlay);
+        Q_strncpyz(sLoadName,overlay,sizeof(sLoadName)); len=strlen(sLoadName); psExt=sLoadName+len-4;
+    }
 	if (!S_LoadSound_FileLoadAndNameAdjuster(sLoadName, &data, &size, len))
 	{
 		return qfalse;
@@ -1049,3 +1059,5 @@ void S_PreProcessLipSync(sfx_t *sfx)
 	sfx->lipSyncData[j] = sample;
 }
 #endif
+
+#include "jar_audio_decode.inc"

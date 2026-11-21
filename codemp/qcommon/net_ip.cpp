@@ -101,6 +101,7 @@ static struct sockaddr_in	socksRelayAddr;
 
 static SOCKET	ip_socket = INVALID_SOCKET;
 static SOCKET	socks_socket = INVALID_SOCKET;
+static int	boundPort;
 
 #define	MAX_IPS		16
 static	int		numIP;
@@ -826,13 +827,14 @@ void NET_OpenIP( void )
 	// a different net_port for each one
 
 	if ( net_enabled->integer & NET_ENABLEV4 ) {
-		for ( int i=0 ; i < 10 ; i++ ) {
+		for ( int i=0 ; i < 10 && port <= 65535 - i ; i++ ) {
 			ip_socket = NET_IPSocket( net_ip->string, port + i, &err );
 			if ( ip_socket != INVALID_SOCKET ) {
-				Cvar_SetValue( "net_port", port + i );
+				boundPort = port + i;
+				Cvar_SetValue( "net_port", boundPort );
 
 				if ( net_socksEnabled->integer )
-					NET_OpenSocks( port + i );
+					NET_OpenSocks( boundPort );
 				break;
 			}
 			else {
@@ -939,6 +941,8 @@ void NET_Config( qboolean enableNetworking ) {
 	}
 
 	if ( stop ) {
+		boundPort = 0;
+		usingSocks = qfalse;
 		if ( ip_socket != INVALID_SOCKET ) {
 			closesocket( ip_socket );
 			ip_socket = INVALID_SOCKET;
@@ -954,6 +958,37 @@ void NET_Config( qboolean enableNetworking ) {
 		if ( net_enabled->integer )
 			NET_OpenIP();
 	}
+}
+
+// A graphical host needs the exact advertised port. Leave the existing socket
+// in place if the new bind fails, and keep the native startup scan for clients
+// and dedicated servers started through the command line.
+static void NET_JAR_HostPort_f()
+{
+	const int port = Cmd_Argc() == 2 ? JAR_HostPort(Cmd_Argv(1)) : 0;
+	Cvar_Set("ui_jarHostPortStatus", "0");
+	if (!port || !networkingEnabled || !(net_enabled->integer & NET_ENABLEV4))
+		return;
+
+	if (ip_socket == INVALID_SOCKET || port != boundPort) {
+		int error;
+		const SOCKET newSocket = NET_IPSocket(net_ip->string, port, &error);
+		if (newSocket == INVALID_SOCKET)
+			return;
+		if (ip_socket != INVALID_SOCKET)
+			closesocket(ip_socket);
+		ip_socket = newSocket;
+		boundPort = port;
+		if (socks_socket != INVALID_SOCKET) {
+			closesocket(socks_socket);
+			socks_socket = INVALID_SOCKET;
+		}
+		usingSocks = qfalse;
+		if (net_socksEnabled->integer)
+			NET_OpenSocks(port);
+	}
+	Cvar_SetValue("net_port", port);
+	Cvar_Set("ui_jarHostPortStatus", "1");
 }
 
 /*
@@ -976,6 +1011,7 @@ void NET_Init( void ) {
 	NET_Config( qtrue );
 
 	Cmd_AddCommand ("net_restart", NET_Restart_f, "Restart the networking sub-system" );
+	Cmd_AddCommand ("jar_host_port", NET_JAR_HostPort_f, "Bind the exact UDP port for a JA:R host" );
 }
 
 /*

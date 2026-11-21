@@ -51,7 +51,7 @@ void Seeker_Strafe( void );
 //------------------------------------
 void NPC_Seeker_Precache(void)
 {
-	G_SoundIndex("sound/chars/seeker/misc/fire.wav");
+	// Firing uses blaster/muzzle_flash; the old fire.wav is absent from retail.
 	G_SoundIndex( "sound/chars/seeker/misc/hiss.wav");
 	G_EffectIndex( "env/small_explode");
 }
@@ -318,6 +318,7 @@ void Seeker_Fire( void )
 	VectorMA( NPC->currentOrigin, 15, dir, muzzle );
 
 	missile = CreateMissile( muzzle, dir, 1000, 10000, NPC );
+	if (!missile) return;
 
 	G_PlayEffect( "blaster/muzzle_flash", NPC->currentOrigin, dir );
 

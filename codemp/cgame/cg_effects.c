@@ -25,6 +25,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // of event processing
 
 #include "cg_local.h"
+#include "game/jar_mp_section_city_event.h"
 
 /*
 ==================
@@ -799,7 +800,7 @@ Fun chunk spewer
 */
 
 void CG_Chunks( int owner, vec3_t origin, const vec3_t normal, const vec3_t mins, const vec3_t maxs,
-						float speed, int numChunks, material_t chunkType, int customChunk, float baseScale )
+						float speed, int numChunks, material_t chunkType, int customChunk, float baseScale, const vec3_t boxAngles )
 {
 	localEntity_t	*le;
 	refEntity_t		*re;
@@ -868,6 +869,10 @@ void CG_Chunks( int owner, vec3_t origin, const vec3_t normal, const vec3_t mins
 	{
 		baseScale = 1.0f;
 	}
+
+	// City debris carries brush-local bounds and the world-space midpoint.
+	jarCityDebrisFrame_t box;
+	if ( boxAngles ) JAR_MP_CityDebrisFrame( origin, boxAngles, mins, maxs, &box );
 
 	// Chunks
 	for( i = 0; i < numChunks; i++ )
@@ -954,6 +959,7 @@ void CG_Chunks( int owner, vec3_t origin, const vec3_t normal, const vec3_t mins
 				r = Q_flrand(0.0f, 1.0f) * 0.8f + 0.1f;
 				re->origin[j] = ( r * mins[j] + ( 1 - r ) * maxs[j] );
 			}
+			if ( boxAngles ) JAR_MP_CityDebrisPoint( &box, re->origin );
 			VectorCopy( re->origin, le->pos.trBase );
 
 			// Move out from center of thing, otherwise you can end up things moving across the brush in an undesirable direction.  Visually looks wrong

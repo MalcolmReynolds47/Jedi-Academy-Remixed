@@ -140,6 +140,8 @@ static void CG_ConfigStringModified( void ) {
 		CG_StartMusic( qtrue );
 	} else if ( num == CS_SERVERINFO ) {
 		CG_ParseServerinfo();
+	} else if ( num >= CS_BSP_MODELS && num < CS_BSP_MODELS+MAX_SUB_BSP ) {
+		CG_RegisterBSPModels();
 	} else if ( num >= CS_MODELS && num < CS_MODELS+MAX_MODELS ) {
 		cgs.model_draw[ num-CS_MODELS ] = cgi_R_RegisterModel( str );
 //		OutputDebugString(va("### CG_ConfigStringModified(): cgs.model_draw[%d] = \"%s\"\n",num-CS_MODELS,str));

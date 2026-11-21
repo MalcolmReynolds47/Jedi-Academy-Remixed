@@ -1,0 +1,35 @@
+// Original JA:R missing-media fallback, GPL-2.0-only.
+// Cosmetic primitives only. Native projectile physics/damage remain unchanged.
+Particle
+{
+    life 40
+    rgb
+    {
+        start 0.35 0.85 1
+    }
+    size
+    {
+        start 6
+    }
+    shaders
+    [
+        gfx/effects/whiteFlare
+    ]
+}
+Line
+{
+    life 40
+    origin2 -120 0 0
+    rgb
+    {
+        start 0.35 0.85 1
+    }
+    size
+    {
+        start 2.5
+    }
+    shaders
+    [
+        gfx/misc/whiteLine2
+    ]
+}

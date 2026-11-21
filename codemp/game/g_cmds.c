@@ -3444,6 +3444,7 @@ void ClientCommand( int clientNum ) {
 	}
 
 	trap->Argv( 0, cmd, sizeof( cmd ) );
+	if (JAR_MP_Command(ent,cmd)) return;
 
 	//rww - redirect bot commands
 	if ( strstr( cmd, "bot_" ) && AcceptBotCommand( cmd, ent ) )

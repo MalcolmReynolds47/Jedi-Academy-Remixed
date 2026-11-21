@@ -27,14 +27,14 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../qcommon/q_shared.h"
 
 #define	MAX_DLIGHTS		32			// can't be increased, because bit flags are used on surfaces
-#define	REFENTITYNUM_BITS	11		// can't be increased without changing drawsurf bit packing
+#define REFENTITYNUM_BITS JAR_MP_REFENTITY_BITS // draw-surface keys are 64 bit
 #define	REFENTITYNUM_MASK	((1<<REFENTITYNUM_BITS) - 1)
 // the last N-bit number (2^REFENTITYNUM_BITS - 1) is reserved for the special world refentity,
 //  and this is reflected by the value of MAX_REFENTITIES (which therefore is not a power-of-2)
 #define	MAX_REFENTITIES		((1<<REFENTITYNUM_BITS) - 1)
 #define	REFENTITYNUM_WORLD	((1<<REFENTITYNUM_BITS) - 1)
 
-#define	MAX_MINI_ENTITIES	1024
+#define MAX_MINI_ENTITIES 16384
 
 // renderfx flags
 #define	RF_MINLIGHT			0x00001	// allways have some light (viewmodel, some items)
@@ -74,6 +74,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define RF_ALPHA_DEPTH		0x100000 //depth write on alpha model
 
 #define RF_FORCEPOST		0x200000 //force it to post-render -rww
+#define RF_JAR_SECTION_ARENA 0x08000000
+#define RF_JAR_SECTION_BACKDROP 0x10000000
+#define RF_JAR_SECTION_FOG 0x20000000
 
 // refdef flags
 #define RDF_NOWORLDMODEL	1		// used for player configuration screen
@@ -85,6 +88,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define RDF_AUTOMAP			32		//means this scene is to draw the automap -rww
 #define	RDF_NOFOG			64		//no global fog in this scene (but still brush fog) -rww
 #define RDF_ForceSightOn	128		//using force sight
+#define RDF_JAR_SECTION_SKY 1024
 
 extern int	skyboxportal;
 extern int	drawskyboxportal;

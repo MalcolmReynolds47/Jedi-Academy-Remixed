@@ -51,6 +51,7 @@ typedef struct
 	vec3_t		previous_origin;
 	vec3_t		previous_velocity;
 	int			previous_waterlevel;
+	int			ladderLevel;
 } pml_t;
 
 

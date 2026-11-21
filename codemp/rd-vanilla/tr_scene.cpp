@@ -46,6 +46,8 @@ static	int			r_numpolyverts;
 
 int					skyboxportal;
 int					drawskyboxportal;
+static bool sectionSkyPortal;
+#include "../../code/rd-common/tr_rift_fog.inc"
 
 /*
 ====================
@@ -54,6 +56,7 @@ R_InitNextFrame
 ====================
 */
 void R_InitNextFrame( void ) {
+	R_ResetGhoul2Surfaces();
 	backEndData->commands.used = 0;
 
 	r_firstSceneDrawSurf = 0;
@@ -68,6 +71,7 @@ void R_InitNextFrame( void ) {
 	r_firstSceneMiniEntity = 0;
 
 	r_numpolys = 0;
+	backEndData->numJarPortals = 0;
 	r_firstScenePoly = 0;
 
 	r_numpolyverts = 0;
@@ -81,6 +85,11 @@ RE_ClearScene
 ====================
 */
 void RE_ClearScene( void ) {
+	if (sectionSkyPortal) {
+		skyboxportal = drawskyboxportal = 0;
+		sectionSkyPortal = false;
+	}
+	R_ClearBSPGridInstances();
 	r_firstSceneDlight = r_numdlights;
 	r_firstSceneEntity = r_numentities;
 	r_firstScenePoly = r_numpolys;
@@ -112,6 +121,7 @@ void R_AddPolygonSurfaces( void ) {
 	tr.shiftedEntityNum = tr.currentEntityNum << QSORT_REFENTITYNUM_SHIFT;
 
 	for ( i = 0, poly = tr.refdef.polys; i < tr.refdef.numPolys ; i++, poly++ ) {
+		if (tr.viewParms.portalMonitor && poly->jarPortal) continue;
 		sh = R_GetShaderByHandle( poly->hShader );
 		R_AddDrawSurf( (surfaceType_t *)poly, sh, poly->fogIndex, qfalse );
 	}
@@ -152,6 +162,7 @@ void RE_AddPolyToScene( qhandle_t hShader, int numVerts, const polyVert_t *verts
 		}
 
 		poly = &backEndData->polys[r_numpolys];
+		poly->jarPortal=nullptr;poly->jarFallback=0;poly->jarSelected=false;poly->jarMonitorShader=0;
 		poly->surfaceType = SF_POLY;
 		poly->hShader = hShader;
 		poly->numVerts = numVerts;
@@ -206,6 +217,9 @@ RE_AddRefEntityToScene
 
 =====================
 */
+#include "../../code/qcommon/jar_portal.h"
+#include "../../code/rd-common/tr_portal_submit.inc"
+
 void RE_AddRefEntityToScene( const refEntity_t *ent ) {
 	if ( !tr.registered ) {
 		return;
@@ -434,6 +448,7 @@ void RE_RenderScene( const refdef_t *fd ) {
 	if (fd->rdflags & RDF_SKYBOXPORTAL)
 	{
 		skyboxportal = 1;
+		sectionSkyPortal = (fd->rdflags & RDF_JAR_SECTION_SKY) != 0;
 	}
 	else
 	{
@@ -520,6 +535,8 @@ void RE_RenderScene( const refdef_t *fd ) {
 	// each scene / view.
 	tr.frameSceneNum++;
 	tr.sceneCount++;
+	R_BuildBSPGridInstances(&tr.refdef);
+	R_AssignRiftFog(tr.refdef, 0);
 
 	// setup view parms for the initial view
 	//
@@ -543,6 +560,7 @@ void RE_RenderScene( const refdef_t *fd ) {
 	VectorCopy( fd->viewaxis[2], parms.ori.axis[2] );
 
 	VectorCopy( fd->vieworg, parms.pvsOrigin );
+	parms.riftFogRoom = R_RiftFogRoomAtPoint(fd->vieworg);
 
 	R_RenderView( &parms );
 

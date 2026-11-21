@@ -48,6 +48,8 @@ typedef enum {
 	WP_BRYAR_OLD,
 	WP_EMPLACED_GUN,
 	WP_TURRET,
+	WP_PHYSGUN,
+	WP_TOOLGUN,
 
 //	WP_GAUNTLET,
 //	WP_MACHINEGUN,			// Bryar
@@ -61,7 +63,7 @@ typedef enum {
 } weapon_t;
 
 //anything > this will be considered not player useable
-#define LAST_USEABLE_WEAPON			WP_BRYAR_OLD
+#define LAST_USEABLE_WEAPON			WP_TOOLGUN
 
 typedef enum //# ammo_e
 {

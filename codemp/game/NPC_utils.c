@@ -23,6 +23,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 //NPC_utils.cpp
 
 #include "b_local.h"
+#include "../../shared/qcommon/jar_galak_surfaces.h"
 #include "icarus/Q3_Interface.h"
 #include "ghoul2/G2.h"
 
@@ -1015,45 +1016,7 @@ void NPC_SetBoneAngles(gentity_t *ent, char *bone, vec3_t angles)
 #define TURN_ON				0x00000000
 #define TURN_OFF			0x00000100
 
-void NPC_SetSurfaceOnOff(gentity_t *ent, const char *surfaceName, int surfaceFlags)
-{
-	int i = 0;
-	qboolean foundIt = qfalse;
-
-	while (i < BG_NUM_TOGGLEABLE_SURFACES && bgToggleableSurfaces[i])
-	{
-		if (!Q_stricmp(surfaceName, bgToggleableSurfaces[i]))
-		{ //got it
-			foundIt = qtrue;
-			break;
-		}
-		i++;
-	}
-
-	if (!foundIt)
-	{
-		Com_Printf("WARNING: Tried to toggle NPC surface that isn't in toggleable surface list (%s)\n", surfaceName);
-		return;
-	}
-
-	if (surfaceFlags == TURN_ON)
-	{ //Make sure the entitystate values reflect this surface as on now.
-		ent->s.surfacesOn |= (1 << i);
-		ent->s.surfacesOff &= ~(1 << i);
-	}
-	else
-	{ //Otherwise make sure they're off.
-		ent->s.surfacesOn &= ~(1 << i);
-		ent->s.surfacesOff |= (1 << i);
-	}
-
-	if (!ent->ghoul2)
-	{
-		return;
-	}
-
-	trap->G2API_SetSurfaceOnOff(ent->ghoul2, surfaceName, surfaceFlags);
-}
+#include "g_npc_surfaces.inc"
 
 //rww - cheap check to see if an armed client is looking in our general direction
 qboolean NPC_SomeoneLookingAtMe(gentity_t *ent)
@@ -1541,7 +1504,7 @@ qboolean NPC_FacePosition( vec3_t position, qboolean doPitch )
 	NPC_UpdateAngles( qtrue, qtrue );
 
 	//Find the delta between our goal and our current facing
-	yawDelta = AngleNormalize360( NPCS.NPCInfo->desiredYaw - ( SHORT2ANGLE( NPCS.ucmd.angles[YAW] + NPCS.client->ps.delta_angles[YAW] ) ) );
+	yawDelta = AngleDelta( NPCS.NPCInfo->desiredYaw, SHORT2ANGLE( NPCS.ucmd.angles[YAW] + NPCS.client->ps.delta_angles[YAW] ) );
 
 	//See if we are facing properly
 	if ( fabs( yawDelta ) > VALID_ATTACK_CONE )
@@ -1551,7 +1514,7 @@ qboolean NPC_FacePosition( vec3_t position, qboolean doPitch )
 	{
 		//Find the delta between our goal and our current facing
 		float currentAngles = ( SHORT2ANGLE( NPCS.ucmd.angles[PITCH] + NPCS.client->ps.delta_angles[PITCH] ) );
-		float pitchDelta = NPCS.NPCInfo->desiredPitch - currentAngles;
+		float pitchDelta = AngleDelta( NPCS.NPCInfo->desiredPitch, currentAngles );
 
 		//See if we are facing properly
 		if ( fabs( pitchDelta ) > VALID_ATTACK_CONE )

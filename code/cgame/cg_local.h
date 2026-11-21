@@ -602,6 +602,7 @@ extern	vmCvar_t		cg_drawGun;
 extern	vmCvar_t		cg_autoswitch;
 extern	vmCvar_t		cg_simpleItems;
 extern	vmCvar_t		cg_fov;
+extern vmCvar_t jar_sceneBrightness;
 extern	vmCvar_t		cg_fovAspectAdjust;
 extern	vmCvar_t		cg_endcredits;
 extern	vmCvar_t		cg_updatedDataPadForcePower1;
@@ -790,6 +791,8 @@ void CG_EntityEvent( centity_t *cent, vec3_t position );
 //
 vec3_t *CG_SetEntitySoundPosition( centity_t *cent );
 void CG_AddPacketEntities( qboolean isPortal );
+qboolean CG_DrawSectionSky();
+bool CG_RiftSectionAir(const vec3_t point);
 void CG_Beam( centity_t *cent, int color );
 void CG_AdjustPositionForMover( const vec3_t in, int moverNum, int atTime, vec3_t out );
 
@@ -967,9 +970,14 @@ void	cgi_RE_InitRendererTerrain( const char *terrainInfo );
 // model collision
 void	cgi_CM_LoadMap( const char *mapname, qboolean subBSP );
 int		cgi_CM_NumInlineModels( void );
+qboolean cgi_CM_BSPModelInfo(const char*,int*,int*);
 clipHandle_t cgi_CM_InlineModel( int index );		// 0 = world, 1+ = bmodels
 clipHandle_t cgi_CM_TempBoxModel( const vec3_t mins, const vec3_t maxs );//, const int contents );
 int		cgi_CM_PointContents( const vec3_t p, clipHandle_t model );
+qboolean cgi_CM_SectionSky(int modelIndex, const vec3_t localPoint);
+qboolean cgi_CM_RiftSectionAir(int modelIndex, const vec3_t localPoint);
+qboolean cgi_CM_SectionPVS(int modelIndex,const vec3_t localView,const vec3_t localPoint);
+bool CG_SiegeKorribanMediaVisible(const gentity_t* entity,const vec3_t point);
 int		cgi_CM_TransformedPointContents( const vec3_t p, clipHandle_t model, const vec3_t origin, const vec3_t angles );
 void	cgi_CM_BoxTrace( trace_t *results, const vec3_t start, const vec3_t end,
 						  const vec3_t mins, const vec3_t maxs,
@@ -1033,6 +1041,10 @@ qboolean	cgi_R_inPVS( vec3_t p1, vec3_t p2 );
 
 // polys are intended for simple wall marks, not really for doing
 // significant construction
+#include "qcommon/jar_portal.h"
+#include "qcommon/jar_reflection_probe.h"
+void cgi_R_AddPortalToScene(const jar::portal::View*);
+int cgi_R_SetReflectionProbes(const jar::reflection::Probe*, int count);
 void	cgi_R_AddPolyToScene( qhandle_t hShader , int numVerts, const polyVert_t *verts );
 void	cgi_R_AddLightToScene( const vec3_t org, float intensity, float r, float g, float b );
 void	cgi_R_RenderScene( const refdef_t *fd );
@@ -1232,5 +1244,7 @@ void	CG_RunLightStyles( void );
 void	CG_SetLightstyle( int i );
 
 int CG_MagicFontToReal( int menuFontIndex );
+
+void CG_RegisterBSPModels(void);
 
 #endif	//__CG_LOCAL_H__

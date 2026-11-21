@@ -25,6 +25,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #define	CG_PLAYERS_CPP
 #include "cg_media.h"
+#include "qcommon/jar_saber_extension.h"
+extern vmCvar_t jar_saberExtension;
 #include "FxScheduler.h"
 #include "../game/ghoul2_shared.h"
 #include "../game/anims.h"
@@ -36,6 +38,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define	CG_SWINGSPEED		0.3f
 
 #include "animtable.h"
+#include "qcommon/jar_force_enlightenment.h"
 
 extern qboolean WP_SaberBladeUseSecondBladeStyle( saberInfo_t *saber, int bladeNum );
 extern void WP_SaberSwingSound( gentity_t *ent, int saberNum, swingType_t swingType );
@@ -1657,13 +1660,15 @@ static void CG_BreathPuffs( centity_t *cent, vec3_t angles, vec3_t origin )
 								== 3 - Draw only under water bubbles (when under water)	*/
 
 	if ( !client
-		|| cg_drawBreath.integer == 0
 		|| !cg.renderingThirdPerson
 		|| client->ps.pm_type == PM_DEAD
 		|| client->breathPuffTime > cg.time )
 	{
 		return;
 	}
+	const bool localCold = CG_RiftSectionAir(origin);
+	if (!cg_drawBreath.integer && !localCold)
+		return;
 
 	// Get the head-front bolt/tag.
 	int bolt = gi.G2API_AddBolt( &cent->gent->ghoul2[cent->gent->playerModel], "*head_front" );
@@ -1677,7 +1682,8 @@ static void CG_BreathPuffs( centity_t *cent, vec3_t angles, vec3_t origin )
 	gi.G2API_GetBoltMatrix( cent->gent->ghoul2, cent->gent->playerModel, bolt, &boltMatrix, angles, origin, cg.time, cgs.model_draw, cent->currentState.modelScale );
 	gi.G2API_GiveMeVectorFromMatrix( boltMatrix, ORIGIN, vEffectOrigin );
 
-	int contents = cgi_CM_PointContents( vEffectOrigin, 0 );
+	int contents = localCold ? CG_PointContents(vEffectOrigin, cent->currentState.number) :
+		cgi_CM_PointContents(vEffectOrigin, 0);
 	if ( contents & ( CONTENTS_SLIME | CONTENTS_LAVA ) )	// If they're submerged in something bad, leave.
 	{
 		return;
@@ -1689,7 +1695,8 @@ static void CG_BreathPuffs( centity_t *cent, vec3_t angles, vec3_t origin )
 		CG_PlayEffectBolted( "misc/waterbreath", cent->gent->playerModel, bolt, cent->currentState.clientNum, vEffectOrigin );
 	}
 	// Draw cold breath effect.
-	else if ( cg_drawBreath.integer == 1 || cg_drawBreath.integer == 2 )
+	else if ( localCold ? !(contents & CONTENTS_WATER) :
+		(cg_drawBreath.integer == 1 || cg_drawBreath.integer == 2) )
 	{
 		CG_PlayEffectBolted( "misc/breath", cent->gent->playerModel, bolt, cent->currentState.clientNum, vEffectOrigin );
 	}
@@ -4440,7 +4447,7 @@ qboolean CG_PlayerCanSeeCent( centity_t *cent )
 		return qtrue;
 	}
 
-	if ( g_entities[0].client->ps.forcePowerLevel[FP_SEE] < FORCE_LEVEL_2
+	if ( jar::enlightenment::Rank(g_entities[0].client->ps,FP_SEE) < FORCE_LEVEL_2
 		&& cent->currentState.eType != ET_PLAYER )
 	{//TEST: level 1 only sees force hints and enemies
 		return qfalse;
@@ -4449,7 +4456,7 @@ qboolean CG_PlayerCanSeeCent( centity_t *cent )
 	float dot = 0.25f;//1.0f;
 	float range = 512.0f;
 
-	switch ( g_entities[0].client->ps.forcePowerLevel[FP_SEE] )
+	switch ( jar::enlightenment::Rank(g_entities[0].client->ps,FP_SEE) )
 	{
 	case FORCE_LEVEL_1:
 		//dot = 0.95f;
@@ -4572,7 +4579,7 @@ void CG_AddForceSightShell( refEntity_t *ent, centity_t *cent )
 			break;
 		}
 
-	if ( g_entities[0].client->ps.forcePowerLevel[FP_SEE] > FORCE_LEVEL_2 )
+	if ( jar::enlightenment::Rank(g_entities[0].client->ps,FP_SEE) > FORCE_LEVEL_2 )
 	{//TEST: level 3 also displays health
 		if ( cent->gent && cent->gent->health > 0 && cent->gent->max_health > 0 )
 		{//draw a health bar over them
@@ -4581,7 +4588,7 @@ void CG_AddForceSightShell( refEntity_t *ent, centity_t *cent )
 	}
 
 	/*
-	if ( g_entities[0].client->ps.forcePowerLevel[FP_SEE] < FORCE_LEVEL_2 )
+	if ( jar::enlightenment::Rank(g_entities[0].client->ps,FP_SEE) < FORCE_LEVEL_2 )
 	{ //only level 2+ can see players through walls
 		ent->renderfx &= ~RF_NODEPTH;
 	}
@@ -4950,8 +4957,8 @@ void CG_AddRefEntityWithPowerups( refEntity_t *ent, int powerups, centity_t *cen
 
 		ent->renderfx &= ~RF_RGB_TINT;
 		//ent->renderfx &= ~RF_FORCE_ENT_ALPHA;
-		if ( cent->gent->client->ps.forcePowerLevel[FP_PROTECT] > FORCE_LEVEL_1
-			|| cent->gent->client->ps.forcePowerLevel[FP_ABSORB] > FORCE_LEVEL_1 )
+		if ( jar::enlightenment::Rank(cent->gent->client->ps,FP_PROTECT) > FORCE_LEVEL_1
+			|| jar::enlightenment::Rank(cent->gent->client->ps,FP_ABSORB) > FORCE_LEVEL_1 )
 		{
 			ent->customShader = cgs.media.forceShell;
 		}
@@ -4971,7 +4978,7 @@ void CG_AddRefEntityWithPowerups( refEntity_t *ent, int powerups, centity_t *cen
 
 		ent->renderfx &= ~RF_RGB_TINT;
 		//ent->renderfx &= ~RF_FORCE_ENT_ALPHA;
-		if ( cent->gent->client->ps.forcePowerLevel[FP_PROTECT] > FORCE_LEVEL_1 )
+		if ( jar::enlightenment::Rank(cent->gent->client->ps,FP_PROTECT) > FORCE_LEVEL_1 )
 		{
 			ent->customShader = cgs.media.forceShell;
 		}
@@ -4991,7 +4998,7 @@ void CG_AddRefEntityWithPowerups( refEntity_t *ent, int powerups, centity_t *cen
 
 		ent->renderfx &= ~RF_RGB_TINT;
 		//ent->renderfx &= ~RF_FORCE_ENT_ALPHA;
-		if ( cent->gent->client->ps.forcePowerLevel[FP_ABSORB] > FORCE_LEVEL_1 )
+		if ( jar::enlightenment::Rank(cent->gent->client->ps,FP_ABSORB) > FORCE_LEVEL_1 )
 		{
 			ent->customShader = cgs.media.forceShell;
 		}
@@ -5134,6 +5141,8 @@ static void CG_G2SetHeadAnim( centity_t *cent, int anim )
 	}
 }
 
+#include "cg_jar_face.inc"
+
 static qboolean CG_G2PlayerHeadAnims( centity_t *cent )
 {
 	if(!ValidAnimFileIndex(cent->gent->client->clientInfo.animFileIndex))
@@ -5228,8 +5237,10 @@ static qboolean CG_G2PlayerHeadAnims( centity_t *cent )
 	if (anim != -1)
 	{
 		CG_G2SetHeadAnim( cent, anim );
+		CG_JAR_ApplyFace(cent);
 		return qtrue;
 	}
+	CG_JAR_ApplyFace(cent);
 	return qfalse;
 }
 
@@ -5928,7 +5939,7 @@ static void CG_CreateSaberMarks( vec3_t start, vec3_t end, vec3_t normal )
 	}
 }
 
-extern void FX_AddPrimitive( CEffect *effect, int killTime );
+extern bool FX_AddPrimitive( CEffect *effect, int killTime );
 //-------------------------------------------------------
 void CG_CheckSaberInWater( centity_t *cent, centity_t *scent, int saberNum, int modelIndex, vec3_t origin, vec3_t angles )
 {
@@ -7382,7 +7393,18 @@ extern vmCvar_t	cg_thirdPersonAlpha;
 								}
 								else
 								{
-									cent->gent->client->ps.saber[saberNum].blade[bladeNum].length += cent->gent->client->ps.saber[saberNum].blade[bladeNum].lengthMax/10 * cg.frametime/100;
+									auto &blade=cent->gent->client->ps.saber[saberNum].blade[bladeNum];
+                                    const bool protectedBlade=cent->currentState.number!=0 || cent->gent->NPC ||
+                                        cent->gent->client->ps.stats[STAT_HEALTH]<=0 || in_camera || cg.overrides.active ||
+                                        cent->gent->client->ps.saberInFlight || G_IsRidingVehicle(cent->gent) ||
+                                        cent->gent->client->ps.saber[saberNum].type==SABER_SITH_SWORD ||
+                                        (cent->gent->client->ps.viewEntity>0 && cent->gent->client->ps.viewEntity<ENTITYNUM_WORLD) ||
+                                        (cent->gent->client->ps.eFlags&(EF_IN_ATST|EF_LOCKED_TO_WEAPON|EF_HELD_BY_RANCOR|EF_HELD_BY_SAND_CREATURE|EF_HELD_BY_WAMPA));
+                                    const float before=blade.length;
+                                    blade.length=jar::ExtendSaber(before,blade.lengthMax,cg.frametime,jar_saberExtension.integer,protectedBlade);
+                                    if (gi.JAR_Log && cent->currentState.number==0)
+                                        gi.JAR_Log(3,"melee","saber_extend","saber=%d blade=%d mode=%d protected=%d before=%.3f after=%.3f max=%.3f frame_ms=%d",
+                                            saberNum,bladeNum,jar_saberExtension.integer,protectedBlade,before,blade.length,blade.lengthMax,cg.frametime);
 								}
 							}
 							if ( cent->gent->client->ps.saber[saberNum].blade[bladeNum].length > cent->gent->client->ps.saber[saberNum].blade[bladeNum].lengthMax )
@@ -7828,7 +7850,7 @@ extern vmCvar_t	cg_thirdPersonAlpha;
 				//FIXME: if the target is absorbing or blocking lightning w/saber, draw a beam from my hand to his (hand?chest?saber?)
 				vec3_t tAng, fxDir;
 				VectorCopy( cent->lerpAngles, tAng );
-				if ( cent->gent->client->ps.forcePowerLevel[FP_LIGHTNING] > FORCE_LEVEL_2 )
+				if ( jar::enlightenment::Rank(cent->gent->client->ps,FP_LIGHTNING) > FORCE_LEVEL_2 )
 				{//arc
 					vec3_t	fxAxis[3];
 					AnglesToAxis( tAng, fxAxis );
@@ -7861,7 +7883,7 @@ extern vmCvar_t	cg_thirdPersonAlpha;
 			{//doing the draining and not on a single person
 				vec3_t tAng, fxDir;
 				VectorCopy( cent->lerpAngles, tAng );
-				if ( cent->gent->client->ps.forcePowerLevel[FP_DRAIN] > FORCE_LEVEL_2 )
+				if ( jar::enlightenment::Rank(cent->gent->client->ps,FP_DRAIN) > FORCE_LEVEL_2 )
 				{//arc
 					vec3_t	fxAxis[3];
 					AnglesToAxis( tAng, fxAxis );

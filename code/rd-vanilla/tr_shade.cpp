@@ -27,6 +27,11 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../server/exe_headers.h"
 
 #include "tr_local.h"
+#include "rd-common/jar_ui_clock.h"
+#define JAR_CLASSIC_SP
+#include "../rd-common/tr_bsp_fog_context.inc"
+#undef JAR_CLASSIC_SP
+
 
 /*
 
@@ -868,7 +873,7 @@ static void ProjectDlightTexture2( void ) {
 		//and screw the tri up -rww
 		if (r_drawfog->value == 2 &&
 			tr.world &&
-			(tess.fogNum == tr.world->globalFog || tess.fogNum == tr.world->numfogs))
+			RB_BSPFogIsGlobal(tess.fogNum, true))
 		{
 			fogging = qglIsEnabled(GL_FOG);
 
@@ -1225,7 +1230,7 @@ static void ProjectDlightTexture( void ) {
 		//and screw the tri up -rww
 		if (r_drawfog->value == 2 &&
 			tr.world &&
-			(tess.fogNum == tr.world->globalFog || tess.fogNum == tr.world->numfogs))
+			RB_BSPFogIsGlobal(tess.fogNum, true))
 		{
 			fogging = qglIsEnabled(GL_FOG);
 
@@ -1331,7 +1336,8 @@ Blends a fog texture on top of everything else
 ===================
 */
 static void RB_FogPass( void ) {
-	fog_t		*fog;
+	const fog_t fogValue = RB_BSPFog(tess.fogNum);
+	const fog_t *fog = &fogValue;
 	int			i;
 
 	qglEnableClientState( GL_COLOR_ARRAY );
@@ -1340,7 +1346,6 @@ static void RB_FogPass( void ) {
 	qglEnableClientState( GL_TEXTURE_COORD_ARRAY);
 	qglTexCoordPointer( 2, GL_FLOAT, 0, tess.svars.texcoords[0] );
 
-	fog = tr.world->fogs + tess.fogNum;
 
 	for ( i = 0; i < tess.numVertexes; i++ ) {
 		byteAlias_t *ba = (byteAlias_t *)&tess.svars.colors[i];
@@ -1496,7 +1501,8 @@ static void ComputeColors( shaderStage_t *pStage, alphaGen_t forceAlphaGen, colo
 			break;
 		case CGEN_FOG:
 			{
-				const fog_t *fog = tr.world->fogs + tess.fogNum;
+				const fog_t fogValue = RB_BSPFog(tess.fogNum);
+				const fog_t *fog = &fogValue;
 
 				for ( i = 0; i < tess.numVertexes; i++ ) {
 					byteAlias_t *ba = (byteAlias_t *)&tess.svars.colors[i];
@@ -1804,12 +1810,12 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 #ifndef JK2_MODE
 	bool	UseGLFog = false;
 	bool	FogColorChange = false;
-	fog_t	*fog = NULL;
+	const fog_t fogValue = RB_BSPFog(tess.fogNum);
+	const fog_t *fog = &fogValue;
 
-	if (tess.fogNum && tess.shader->fogPass && (tess.fogNum == tr.world->globalFog || tess.fogNum == tr.world->numfogs)
+	if (tess.fogNum && tess.shader->fogPass && RB_BSPFogIsGlobal(tess.fogNum, true)
 		&& r_drawfog->value == 2)
 	{	// only gl fog global fog and the "special fog"
-		fog = tr.world->fogs + tess.fogNum;
 
 		if (tr.rangedFog)
 		{ //ranged fog, used for sniper scope
@@ -2147,7 +2153,7 @@ void RB_StageIteratorGeneric( void )
 #ifdef JK2_MODE
 	if (tess.fogNum && tess.shader->fogPass && r_drawfog->value)
 #else
-	if (tr.world && (tess.fogNum != tr.world->globalFog || r_drawfog->value != 2) && r_drawfog->value && tess.fogNum && tess.shader->fogPass)
+	if (tr.world && (!RB_BSPFogIsGlobal(tess.fogNum) || r_drawfog->value != 2) && r_drawfog->value && tess.fogNum && tess.shader->fogPass)
 #endif
 	{
 		RB_FogPass();
@@ -2186,7 +2192,7 @@ void RB_StageIteratorGeneric( void )
 	//don't disable the hardware fog til after we do surface sprites
 	if (r_drawfog->value == 2 &&
 		tess.fogNum && tess.shader->fogPass &&
-		(tess.fogNum == tr.world->globalFog || tess.fogNum == tr.world->numfogs))
+		RB_BSPFogIsGlobal(tess.fogNum, true))
 	{
 		qglDisable(GL_FOG);
 	}
@@ -2198,6 +2204,9 @@ void RB_StageIteratorGeneric( void )
 ** RB_EndSurface
 */
 void RB_EndSurface( void ) {
+    static cvar_t *uiMotion = ri.Cvar_Get("jar_uiMotion","1",CVAR_ARCHIVE);
+    JAR_UIClock uiClock(backEnd.projection2D && !uiMotion->integer,backEnd.refdef.floatTime,backEnd.refdef.time);
+
 	shaderCommands_t *input;
 
 	input = &tess;

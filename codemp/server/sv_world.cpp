@@ -26,6 +26,11 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "server.h"
 #include "ghoul2/ghoul2_shared.h"
 #include "qcommon/cm_public.h"
+#include "../game/jar_mp_prop.h"
+#include "qcommon/jar_mp_hull_trace.h"
+
+void SV_JAR_PickGhoul(CGhoul2Info_v&,const vec3_t origin,const vec3_t angles,vec3_t scale,
+	const vec3_t start,const vec3_t end,float& fraction,vec3_t normal);
 
 /*
 ================
@@ -226,7 +231,7 @@ void SV_LinkEntity( sharedEntity_t *gEnt ) {
 	// encode the size into the entityState_t for client prediction
 	if ( gEnt->r.bmodel ) {
 		gEnt->s.solid = SOLID_BMODEL;		// a solid_box will never create this value
-	} else if ( gEnt->r.contents & ( CONTENTS_SOLID | CONTENTS_BODY ) ) {
+	} else if ( (gEnt->r.contents & (CONTENTS_SOLID | CONTENTS_BODY)) || JAR_MP_AmmoRackClip(&gEnt->s) ) {
 		// assume that x/y are equal and symetric
 		i = gEnt->r.maxs[0];
 		if (i<1)
@@ -483,6 +488,16 @@ SV_ClipToEntity
 
 ====================
 */
+static bool SV_TracePropHull(trace_t& trace, const sharedEntity_t& entity,
+ const vec3_t start, const vec3_t end, const vec3_t mins, const vec3_t maxs)
+{
+ if (!JAR_MP_ModelHullState(&entity.s)) return false;
+ char model[MAX_QPATH];
+ SV_GetConfigstring(CS_MODELS + entity.s.modelindex, model, sizeof(model));
+ return JAR_MP_TraceModelHull(trace, model, entity.s, entity.r.currentOrigin,
+  entity.r.currentAngles, start, end, mins, maxs, entity.r.contents, false);
+}
+
 void SV_ClipToEntity( trace_t *trace, const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, int entityNum, int contentmask, int capsule ) {
 	sharedEntity_t	*touch;
 	clipHandle_t	clipHandle;
@@ -494,10 +509,12 @@ void SV_ClipToEntity( trace_t *trace, const vec3_t start, const vec3_t mins, con
 
 	// if it doesn't have any brushes of a type we
 	// are looking for, ignore it
-	if ( ! ( contentmask & touch->r.contents ) ) {
+	const bool ammoRack = JAR_MP_AmmoRackClip(&touch->s);
+	if ( ammoRack ? !JAR_MP_AmmoRackClipTrace(contentmask) : !(contentmask & touch->r.contents) ) {
 		trace->fraction = 1.0;
 		return;
 	}
+	if (!capsule && SV_TracePropHull(*trace, *touch, start, end, mins, maxs)) return;
 
 	// might intersect, so do an exact clip
 	clipHandle = SV_ClipHandleForEntity (touch);
@@ -509,9 +526,15 @@ void SV_ClipToEntity( trace_t *trace, const vec3_t start, const vec3_t mins, con
 		angles = vec3_origin;	// boxes don't rotate
 	}
 
+	// The temporary collision box carries BODY internally. Report the
+	// authored clip contents for this rack to the calling trace.
+	const int boxMask = ammoRack ? contentmask | CONTENTS_BODY : contentmask;
 	CM_TransformedBoxTrace ( trace, (float *)start, (float *)end,
-		(float *)mins, (float *)maxs, clipHandle,  contentmask,
+		(float *)mins, (float *)maxs, clipHandle, boxMask,
 		origin, angles, capsule);
+	if ( ammoRack && (trace->fraction < 1 || trace->startsolid) ) {
+		trace->contents = touch->r.contents;
+	}
 
 	if ( trace->fraction < 1 ) {
 		trace->entityNum = touch->s.number;
@@ -566,6 +589,10 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 			return;
 		}
 		touch = SV_GentityNum( touchlist[i] );
+		if ((clip->traceFlags & JAR_TRACE_SPAWN_OVERLAP) && !touch->r.bmodel &&
+			((touch->s.eType == ET_GENERAL && touch->s.generic1 == 250) || touch->s.eType == ET_NPC)) {
+			continue;
+		}
 
 		// see if we should ignore this entity
 		if ( clip->passEntityNum != ENTITYNUM_NONE ) {
@@ -602,7 +629,13 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 
 		// if it doesn't have any brushes of a type we
 		// are looking for, ignore it
-		if ( ! ( clip->contentmask & touch->r.contents ) ) {
+		const bool ammoRack = JAR_MP_AmmoRackClip(&touch->s);
+		const bool physgun = (clip->traceFlags & JAR_TRACE_PHYS_GUN) != 0;
+		const bool pickup = physgun && touch->s.eType == ET_ITEM && (touch->r.contents & CONTENTS_TRIGGER);
+		if ( !pickup && (ammoRack ? !JAR_MP_AmmoRackClipTrace(clip->contentmask) : !(clip->contentmask & touch->r.contents)) ) {
+			continue;
+		}
+		if (physgun && JAR_MP_PhysgunBox(&touch->s, touch->classname)) {
 			continue;
 		}
 
@@ -622,9 +655,37 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 			angles = vec3_origin;	// boxes don't rotate
 		}
 
-		CM_TransformedBoxTrace ( &trace, (float *)clip->start, (float *)clip->end,
-			(float *)clip->mins, (float *)clip->maxs, clipHandle,  clip->contentmask,
-			origin, angles, clip->capsule);
+		const int boxMask = ammoRack ? clip->contentmask | CONTENTS_BODY : clip->contentmask;
+		if (clip->capsule || !SV_TracePropHull(trace, *touch, clip->start, clip->end, clip->mins, clip->maxs))
+			CM_TransformedBoxTrace ( &trace, (float *)clip->start, (float *)clip->end,
+				(float *)clip->mins, (float *)clip->maxs, clipHandle, boxMask,
+				origin, angles, clip->capsule);
+		if ( ammoRack && (trace.fraction < 1 || trace.startsolid) ) {
+			trace.contents = touch->r.contents;
+		}
+		if (physgun && touch->ghoul2 && !touch->r.bmodel &&
+			(trace.startsolid || trace.fraction < clip->trace.fraction)) {
+			vec3_t modelAngles;
+			VectorCopy(touch->r.currentAngles,modelAngles);
+			if(!touch->m_pVehicle && touch->playerState) {
+				modelAngles[PITCH]=modelAngles[ROLL]=0;
+				if(touch->s.number<MAX_CLIENTS)modelAngles[YAW]=touch->s.apos.trBase[YAW];
+			}
+			float fraction=clip->trace.fraction;
+			vec3_t normal;
+			SV_JAR_PickGhoul(*static_cast<CGhoul2Info_v*>(touch->ghoul2),touch->r.currentOrigin,
+				modelAngles,touch->modelScale,clip->start,clip->end,fraction,normal);
+			if(fraction<clip->trace.fraction){
+				vec3_t delta;
+				VectorSubtract(clip->end,clip->start,delta);
+				clip->trace.fraction=fraction;
+				clip->trace.entityNum=touch->s.number;
+				clip->trace.contents=touch->r.contents;
+				VectorMA(clip->start,fraction,delta,clip->trace.endpos);
+				VectorCopy(normal,clip->trace.plane.normal);
+			}
+			continue;
+		}
 
 
 		if (clip->traceFlags & G2TRFLAG_DOGHOULTRACE)
@@ -829,6 +890,22 @@ Ghoul2 Insert End
 		maxs = vec3_origin;
 	}
 
+	if (traceFlags & JAR_TRACE_SINGLE_BRUSH) {
+		*results = {};
+		results->fraction = 1;
+		results->entityNum = ENTITYNUM_NONE;
+		VectorCopy(end, results->endpos);
+		if (passEntityNum < 0 || passEntityNum >= sv.num_entities ||
+			!SV_GentityNum(passEntityNum)->r.bmodel) return;
+		SV_ClipToEntity(results, start, mins, maxs, end, passEntityNum, contentmask, capsule);
+		if (results->fraction < 1 || results->startsolid) results->entityNum = passEntityNum;
+		else {
+			results->entityNum = ENTITYNUM_NONE;
+			VectorCopy(end, results->endpos);
+		}
+		return;
+	}
+
 	Com_Memset ( &clip, 0, sizeof ( moveclip_t ) );
 
 	// clip to world
@@ -904,8 +981,12 @@ int SV_PointContents( const vec3_t p, int passEntityNum ) {
 		// might intersect, so do an exact clip
 		clipHandle = SV_ClipHandleForEntity( hit );
 
-		c2 = CM_TransformedPointContents (p, clipHandle, hit->r.currentOrigin, hit->r.currentAngles);
-
+		trace_t trace;
+		if (SV_TracePropHull(trace, *hit, p, p, nullptr, nullptr))
+			c2 = trace.startsolid ? hit->r.contents : 0;
+		else
+			c2 = CM_TransformedPointContents (p, clipHandle, hit->r.currentOrigin, hit->r.currentAngles);
+		if (c2 && JAR_MP_AmmoRackClip(&hit->s)) c2 = hit->r.contents;
 		contents |= c2;
 	}
 

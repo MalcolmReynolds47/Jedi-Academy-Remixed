@@ -3081,27 +3081,29 @@ void ForceThrow( gentity_t *self, qboolean pull )
 		if (tr.fraction != 1.0 &&
 			tr.entityNum != ENTITYNUM_NONE)
 		{
-			if (!g_entities[tr.entityNum].client && g_entities[tr.entityNum].s.eType == ET_NPC)
+			const int rackItem = pull ? JAR_MP_RackAimItem(self, tr.entityNum, tfrom, tto) : ENTITYNUM_NONE;
+			const int target = rackItem == ENTITYNUM_NONE ? tr.entityNum : rackItem;
+			if (!g_entities[target].client && g_entities[target].s.eType == ET_NPC)
 			{ //g2animent
-				if (g_entities[tr.entityNum].s.genericenemyindex < level.time)
+				if (g_entities[target].s.genericenemyindex < level.time)
 				{
-					g_entities[tr.entityNum].s.genericenemyindex = level.time + 2000;
+					g_entities[target].s.genericenemyindex = level.time + 2000;
 				}
 			}
 
 			numListedEntities = 0;
-			entityList[numListedEntities] = tr.entityNum;
+			entityList[numListedEntities] = target;
 
 			if (pull)
 			{
-				if (!ForcePowerUsableOn(self, &g_entities[tr.entityNum], FP_PULL))
+				if (!ForcePowerUsableOn(self, &g_entities[target], FP_PULL))
 				{
 					return;
 				}
 			}
 			else
 			{
-				if (!ForcePowerUsableOn(self, &g_entities[tr.entityNum], FP_PUSH))
+				if (!ForcePowerUsableOn(self, &g_entities[target], FP_PUSH))
 				{
 					return;
 				}
@@ -3200,6 +3202,8 @@ void ForceThrow( gentity_t *self, qboolean pull )
 			continue;
 		}
 		if ( !(ent->inuse) )
+			continue;
+		if (!pull && JAR_MP_RackParent(ent) != ENTITYNUM_NONE)
 			continue;
 		if ( ent->s.eType != ET_MISSILE )
 		{
@@ -3302,7 +3306,8 @@ void ForceThrow( gentity_t *self, qboolean pull )
 
 		//really should have a clear LOS to this thing...
 		trap->Trace( &tr, self->client->ps.origin, vec3_origin, vec3_origin, ent_org, self->s.number, MASK_SHOT, qfalse, 0, 0 );
-		if ( tr.fraction < 1.0f && tr.entityNum != ent->s.number )
+		if (tr.fraction < 1.0f && tr.entityNum != ent->s.number &&
+			(!pull || !JAR_MP_RackPullLine(ent, &tr, ent_org)))
 		{//must have clear LOS
 			//try from eyes too before you give up
 			vec3_t eyePoint;
@@ -3310,7 +3315,8 @@ void ForceThrow( gentity_t *self, qboolean pull )
 			eyePoint[2] += self->client->ps.viewheight;
 			trap->Trace( &tr, eyePoint, vec3_origin, vec3_origin, ent_org, self->s.number, MASK_SHOT, qfalse, 0, 0 );
 
-			if ( tr.fraction < 1.0f && tr.entityNum != ent->s.number )
+			if (tr.fraction < 1.0f && tr.entityNum != ent->s.number &&
+				(!pull || !JAR_MP_RackPullLine(ent, &tr, ent_org)))
 			{
 				continue;
 			}
@@ -3569,6 +3575,10 @@ void ForceThrow( gentity_t *self, qboolean pull )
 				{
 					G_ReflectMissile( self, push_list[x], forward );
 				}
+			}
+			else if (pull && JAR_MP_RackParent(push_list[x]) != ENTITYNUM_NONE)
+			{
+				JAR_MP_RackPull(self, push_list[x]);
 			}
 			else if ( !Q_stricmp( "func_static", push_list[x]->classname ) )
 			{//force-usable func_static

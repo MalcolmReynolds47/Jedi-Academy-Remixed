@@ -24,6 +24,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // g_utils.c -- misc utility functions for game module
 
 #include "g_local.h"
+#include "jar_galak.h"
+#include "g_jar_sandbox.h"
 #include "bg_saga.h"
 #include "qcommon/q_shared.h"
 
@@ -402,7 +404,7 @@ void G_FreeFakeClient(gclient_t **cl)
 }
 
 //allocate a veh object
-#define MAX_VEHICLES_AT_A_TIME		512//128
+#define MAX_VEHICLES_AT_A_TIME JAR_MP_ENTITY_SLOTS
 static Vehicle_t g_vehiclePool[MAX_VEHICLES_AT_A_TIME];
 static qboolean g_vehiclePoolOccupied[MAX_VEHICLES_AT_A_TIME];
 static qboolean g_vehiclePoolInit = qfalse;
@@ -446,17 +448,7 @@ void G_FreeVehicleObject(Vehicle_t *pVeh)
 	}
 }
 
-gclient_t *gClPtrs[MAX_GENTITIES];
-
-void G_CreateFakeClient(int entNum, gclient_t **cl)
-{
-	//trap->TrueMalloc((void **)cl, sizeof(gclient_t));
-	if (!gClPtrs[entNum])
-	{
-		gClPtrs[entNum] = (gclient_t *) BG_Alloc(sizeof(gclient_t));
-	}
-	*cl = gClPtrs[entNum];
-}
+#include "g_jar_client_storage.inc"
 
 //call this on game shutdown to run through and get rid of all the lingering client pointers.
 void G_CleanAllFakeClients(void)
@@ -558,52 +550,9 @@ gentity_t *G_PickTarget (char *targetname)
 	return choice[rand() % num_choices];
 }
 
-void GlobalUse(gentity_t *self, gentity_t *other, gentity_t *activator)
-{
-	if (!self || (self->flags & FL_INACTIVE))
-	{
-		return;
-	}
+#include "g_jar_native_use.inc"
 
-	if (!self->use)
-	{
-		return;
-	}
-	self->use(self, other, activator);
-}
 
-void G_UseTargets2( gentity_t *ent, gentity_t *activator, const char *string ) {
-	gentity_t		*t;
-
-	if ( !ent ) {
-		return;
-	}
-
-	if (ent->targetShaderName && ent->targetShaderNewName) {
-		float f = level.time * 0.001;
-		AddRemap(ent->targetShaderName, ent->targetShaderNewName, f);
-		trap->SetConfigstring(CS_SHADERSTATE, BuildShaderStateConfig());
-	}
-
-	if ( !string || !string[0] ) {
-		return;
-	}
-
-	t = NULL;
-	while ( (t = G_Find (t, FOFS(targetname), string)) != NULL ) {
-		if ( t == ent ) {
-			trap->Print ("WARNING: Entity used itself.\n");
-		} else {
-			if ( t->use ) {
-				GlobalUse(t, ent, activator);
-			}
-		}
-		if ( !ent->inuse ) {
-			trap->Print("entity was removed while using targets\n");
-			return;
-		}
-	}
-}
 /*
 ==============================
 G_UseTargets
@@ -615,14 +564,7 @@ match (string)self.target and call their .use function
 
 ==============================
 */
-void G_UseTargets( gentity_t *ent, gentity_t *activator )
-{
-	if (!ent)
-	{
-		return;
-	}
-	G_UseTargets2(ent, activator, ent->target);
-}
+
 
 
 /*
@@ -805,56 +747,7 @@ instead of being removed and recreated, which can cause interpolated
 angles and bad trails.
 =================
 */
-gentity_t *G_Spawn( void ) {
-	int			i, force;
-	gentity_t	*e;
-
-	e = NULL;	// shut up warning
-	i = 0;		// shut up warning
-	for ( force = 0 ; force < 2 ; force++ ) {
-		// if we go through all entities and can't find one to free,
-		// override the normal minimum times before use
-		e = &g_entities[MAX_CLIENTS];
-		for ( i = MAX_CLIENTS ; i<level.num_entities ; i++, e++) {
-			if ( e->inuse ) {
-				continue;
-			}
-
-			// the first couple seconds of server time can involve a lot of
-			// freeing and allocating, so relax the replacement policy
-			if ( !force && e->freetime > level.startTime + 2000 && level.time - e->freetime < 1000 )
-			{
-				continue;
-			}
-
-			// reuse this slot
-			G_InitGentity( e );
-			return e;
-		}
-		if ( i != MAX_GENTITIES ) {
-			break;
-		}
-	}
-	if ( i == ENTITYNUM_MAX_NORMAL ) {
-		/*
-		for (i = 0; i < MAX_GENTITIES; i++) {
-			trap->Print("%4i: %s\n", i, g_entities[i].classname);
-		}
-		*/
-		G_SpewEntList();
-		trap->Error( ERR_DROP, "G_Spawn: no free entities" );
-	}
-
-	// open up a new slot
-	level.num_entities++;
-
-	// let the server system know that there are more entities
-	trap->LocateGameData( (sharedEntity_t *)level.gentities, level.num_entities, sizeof( gentity_t ),
-		&level.clients[0].ps, sizeof( level.clients[0] ) );
-
-	G_InitGentity( e );
-	return e;
-}
+#include "g_jar_entity_pool.inc"
 
 /*
 =================
@@ -876,55 +769,7 @@ qboolean G_EntitiesFree( void ) {
 	return qfalse;
 }
 
-#define MAX_G2_KILL_QUEUE 256
-
-int gG2KillIndex[MAX_G2_KILL_QUEUE];
-int gG2KillNum = 0;
-
-void G_SendG2KillQueue(void)
-{
-	char g2KillString[1024];
-	int i = 0;
-
-	if (!gG2KillNum)
-	{
-		return;
-	}
-
-	Com_sprintf(g2KillString, 1024, "kg2");
-
-	while (i < gG2KillNum && i < 64)
-	{ //send 64 at once, max...
-		Q_strcat(g2KillString, 1024, va(" %i", gG2KillIndex[i]));
-		i++;
-	}
-
-	trap->SendServerCommand(-1, g2KillString);
-
-	//Clear the count because we just sent off the whole queue
-	gG2KillNum -= i;
-	if (gG2KillNum < 0)
-	{ //hmm, should be impossible, but I'm paranoid as we're far past beta.
-		assert(0);
-		gG2KillNum = 0;
-	}
-}
-
-void G_KillG2Queue(int entNum)
-{
-	if (gG2KillNum >= MAX_G2_KILL_QUEUE)
-	{ //This would be considered a Bad Thing.
-#ifdef _DEBUG
-		Com_Printf("WARNING: Exceeded the MAX_G2_KILL_QUEUE count for this frame!\n");
-#endif
-		//Since we're out of queue slots, just send it now as a seperate command (eats more bandwidth, but we have no choice)
-		trap->SendServerCommand(-1, va("kg2 %i", entNum));
-		return;
-	}
-
-	gG2KillIndex[gG2KillNum] = entNum;
-	gG2KillNum++;
-}
+#include "g_jar_g2_queue.inc"
 
 /*
 =================
@@ -934,6 +779,7 @@ Marks the entity as free
 =================
 */
 void G_FreeEntity( gentity_t *ed ) {
+	NPC_GalakMech_ClearBeam(ed);
 	//gentity_t *te;
 
 	if (ed->isSaberEntity)
@@ -951,6 +797,10 @@ void G_FreeEntity( gentity_t *ed ) {
 	if ( ed->neverFree ) {
 		return;
 	}
+	if ( ed->client || ed->NPC ) {
+		AI_ForgetGroupEntity( ed );
+	}
+	JAR_MP_Forget(ed->s.number);
 
 	//rww - this may seem a bit hackish, but unfortunately we have no access
 	//to anything ghoul2-related on the server and thus must send a message

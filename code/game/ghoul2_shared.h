@@ -98,6 +98,9 @@ surfaceInfo_t():
 #define	BONE_ANIM_NO_LERP			0x1000
 #define BONE_ANIM_TOTAL				(BONE_ANIM_NO_LERP| BONE_ANIM_OVERRIDE | BONE_ANIM_OVERRIDE_LOOP | BONE_ANIM_OVERRIDE_FREEZE | BONE_ANIM_BLEND )
 
+// Metadata for JA:R-owned facial accents; not part of the angle operation mask.
+#define BONE_ANGLES_JAR_FACE 0x8000
+
 #define BONE_INDEX_INVALID			-1
 
 /*#define MDXABONEDEF				// used in the mdxformat.h file to stop redefinitions of the bone struct.
@@ -631,6 +634,7 @@ class CGhoul2Info_v
 		return InfoArray().Get(mItem);
 	}
 public:
+	int DiagnosticHandle() const { return mItem; }
 	CGhoul2Info_v()
 	{
 		mItem=0;
@@ -801,7 +805,10 @@ enum EG2_Collision
 {
 	G2_NOCOLLIDE,
 	G2_COLLIDE,
-	G2_RETURNONHIT
+	G2_RETURNONHIT,
+	G2_PHYSGUN, // Physgun point query, resolved before native Ghoul2 dispatch.
+	G2_BRUSH_ONLY, // Host and linked BSP collision, with no Ghoul2 query.
+	G2_SINGLE_BRUSH // Only the BSP entity supplied in passEntityNum.
 };
 
 

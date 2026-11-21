@@ -28,6 +28,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "bg_saga.h"
 #include "bg_vehicles.h"
 #include "g_nav.h"
+#include "g_jar_sandbox.h"
 
 extern void G_DebugPrint( int level, const char *format, ... );
 
@@ -231,6 +232,7 @@ void NPC_SetMiscDefaultData( gentity_t *ent )
 	{//if a cinematic guy, default us to wait bState
 		ent->NPC->behaviorState = BS_CINEMATIC;
 	}
+	if (ent->client->NPC_class==CLASS_GALAKMECH) NPC_GalakMech_Init(ent);
 	if ( ent->client->NPC_class == CLASS_BOBAFETT )
 	{//set some stuff, precache
 		Boba_Precache();
@@ -473,10 +475,7 @@ void NPC_SetMiscDefaultData( gentity_t *ent )
 					}
 					break;
 				}
-				if ( !Q_stricmp( "galak_mech", ent->NPC_type ) )
-				{//starts with armor
-					NPC_GalakMech_Init( ent );
-				}
+
 			}
 		}
 		break;
@@ -865,10 +864,11 @@ void NPC_Begin (gentity_t *ent)
 	gclient_t	*client;
 	usercmd_t	ucmd;
 	gentity_t	*spawnPoint = NULL;
+	const qboolean allowOverlap = JAR_MP_AllowNPCOverlap(ent);
 
 	memset( &ucmd, 0, sizeof( ucmd ) );
 
-	if ( !(ent->spawnflags & SFB_NOTSOLID) )
+	if ( !allowOverlap && !(ent->spawnflags & SFB_NOTSOLID) )
 	{//No NPCs should telefrag
 		if (NPC_SpotWouldTelefrag(ent))
 		{
@@ -1068,7 +1068,7 @@ void NPC_Begin (gentity_t *ent)
 
 	if(!(ent->spawnflags & 64))
 	{
-		G_KillBox( ent );
+		if (!allowOverlap) G_KillBox( ent );
 		trap->LinkEntity ((sharedEntity_t *)ent);
 	}
 
@@ -1265,30 +1265,10 @@ void NPC_Begin (gentity_t *ent)
 			}
 		}
 	}
+	JAR_MP_CopyNPCReady(ent);
 }
 
-gNPC_t *gNPCPtrs[MAX_GENTITIES];
-
-gNPC_t *New_NPC_t(int entNum)
-{
-	gNPC_t *ptr;
-
-	if (!gNPCPtrs[entNum])
-	{
-		gNPCPtrs[entNum] = (gNPC_t *)BG_Alloc (sizeof(gNPC_t));
-	}
-
-	ptr = gNPCPtrs[entNum];
-
-	if (ptr)
-	{
-		// clear it...
-		//
-		memset(ptr, 0, sizeof( *ptr ) );
-	}
-
-	return ptr;
-}
+#include "g_jar_npc_storage.inc"
 
 /*
 -------------------------
@@ -1399,7 +1379,7 @@ gentity_t *NPC_Spawn_Do( gentity_t *ent )
 		}
 	}
 
-	newent = G_Spawn();
+	newent = G_TrySpawn();
 
 	if ( newent == NULL )
 	{
@@ -1420,7 +1400,7 @@ gentity_t *NPC_Spawn_Do( gentity_t *ent )
 	//newent->client = (gclient_s *)G_Alloc (sizeof(gclient_s));
 	G_CreateFakeClient(newent->s.number, &newent->client);
 
-	newent->NPC->tempGoal = G_Spawn();
+	newent->NPC->tempGoal = G_TrySpawn();
 
 	if ( newent->NPC->tempGoal == NULL )
 	{
@@ -1942,7 +1922,7 @@ extern void NPC_PrecacheAnimationCFG( const char *NPC_type );
 void NPC_Precache ( gentity_t *spawner );
 void NPC_PrecacheType( char *NPC_type )
 {
-	gentity_t *fakespawner = G_Spawn();
+	gentity_t *fakespawner = G_TrySpawn();
 	if ( fakespawner )
 	{
 		fakespawner->NPC_type = NPC_type;
@@ -3950,9 +3930,9 @@ void SP_NPC_Droid_Protocol( gentity_t *self)
 NPC_Spawn_f
 */
 
-gentity_t *NPC_SpawnType( gentity_t *ent, char *npc_type, char *targetname, qboolean isVehicle )
+gentity_t *NPC_SpawnTypeAt( gentity_t *ent, char *npc_type, char *targetname, qboolean isVehicle, const vec3_t point, const vec3_t angles )
 {
-	gentity_t		*NPCspawner = G_Spawn();
+	gentity_t		*NPCspawner = G_TrySpawn();
 	vec3_t			forward, end;
 	trace_t			trace;
 
@@ -3976,11 +3956,12 @@ gentity_t *NPC_SpawnType( gentity_t *ent, char *npc_type, char *targetname, qboo
 		return NULL;
 	}
 
-	if ( !ent || !ent->client )
-	{//screw you, go away
+	if ( (!ent || !ent->client) && (!point || !angles) )
+	{//Legacy relative spawns need a player; explicit server transforms do not.
 		return NULL;
 	}
 
+	if(point){VectorCopy(point,end);}else{
 	//rwwFIXMEFIXME: Care about who is issuing this command/other clients besides 0?
 	//Spawn it at spot of first player
 	//FIXME: will gib them!
@@ -3993,10 +3974,11 @@ gentity_t *NPC_SpawnType( gentity_t *ent, char *npc_type, char *targetname, qboo
 	trap->Trace(&trace, trace.endpos, NULL, NULL, end, 0, MASK_SOLID, qfalse, 0, 0);
 	VectorCopy(trace.endpos, end);
 	end[2] += 24;
+	}
 	G_SetOrigin(NPCspawner, end);
 	VectorCopy(NPCspawner->r.currentOrigin, NPCspawner->s.origin);
 	//set the yaw so that they face away from player
-	NPCspawner->s.angles[1] = ent->client->ps.viewangles[1];
+	if(angles){VectorCopy(angles,NPCspawner->s.angles);}else NPCspawner->s.angles[1] = ent->client->ps.viewangles[1];
 
 	trap->LinkEntity((sharedEntity_t *)NPCspawner);
 
@@ -4098,6 +4080,8 @@ gentity_t *NPC_SpawnType( gentity_t *ent, char *npc_type, char *targetname, qboo
 	return (NPC_Spawn_Do( NPCspawner ));
 }
 
+gentity_t *NPC_SpawnType(gentity_t *ent,char *type,char *target,qboolean vehicle){return NPC_SpawnTypeAt(ent,type,target,vehicle,NULL,NULL);}
+
 void NPC_Spawn_f( gentity_t *ent )
 {
 	char	npc_type[1024];
@@ -4116,7 +4100,7 @@ void NPC_Spawn_f( gentity_t *ent )
 		trap->Argv(3, targetname, 1024);
 	}
 
-	NPC_SpawnType( ent, npc_type, targetname, isVehicle );
+	JAR_MP_TrackConsoleNPC(ent, NPC_SpawnType(ent,npc_type,targetname,isVehicle));
 }
 
 /*

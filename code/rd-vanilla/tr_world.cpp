@@ -24,6 +24,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../server/exe_headers.h"
 
 #include "tr_local.h"
+#include "../../shared/qcommon/jar_yavin_sky.h"
 
 /*
 =================
@@ -364,7 +365,10 @@ void R_AddBrushModelSurfaces ( trRefEntity_t *ent ) {
 
 	R_DlightBmodel( bmodel, qfalse );
 
+	const int sectionPass = ent->e.renderfx & (RF_JAR_SECTION_ARENA | RF_JAR_SECTION_BACKDROP);
 	for ( i = 0 ; i < bmodel->numSurfaces ; i++ ) {
+		if (sectionPass && !jar::sectionSky::SubmitSurface(bmodel->numSurfaces,i,sectionPass==RF_JAR_SECTION_BACKDROP))
+			continue;
 		R_AddWorldSurface( bmodel->firstSurface + i, tr.currentEntity->dlightBits, qtrue );
 	}
 }
@@ -639,7 +643,7 @@ static void R_RecursiveWorldNode( mnode_t *node, int planeBits, int dlightBits )
 R_PointInLeaf
 ===============
 */
-static mnode_t *R_PointInLeaf( vec3_t p ) {
+static mnode_t *R_PointInLeaf( const vec3_t p ) {
 	mnode_t		*node;
 	float		d;
 	cplane_t	*plane;
@@ -685,15 +689,14 @@ R_inPVS
 =================
 */
 
-qboolean R_inPVS( vec3_t p1, vec3_t p2 ) {
+qboolean R_inPVS( const vec3_t p1, const vec3_t p2, byte *mask ) {
 	mnode_t *leaf;
-	byte	*vis;
 
 	leaf = R_PointInLeaf( p1 );
-	vis = ri.CM_ClusterPVS( leaf->cluster );
+	mask = ri.CM_ClusterPVS( leaf->cluster );
 	leaf = R_PointInLeaf( p2 );
 
-	if ( !(vis[leaf->cluster>>3] & (1<<(leaf->cluster&7))) ) {
+	if ( !(mask[leaf->cluster>>3] & (1<<(leaf->cluster&7))) ) {
 		return qfalse;
 	}
 	return qtrue;
@@ -794,7 +797,7 @@ void R_AddWorldSurfaces (void) {
 	}
 
 	tr.currentEntityNum = REFENTITYNUM_WORLD;
-	tr.shiftedEntityNum = tr.currentEntityNum << QSORT_REFENTITYNUM_SHIFT;
+	tr.shiftedEntityNum = uint64_t(tr.currentEntityNum) << QSORT_REFENTITYNUM_SHIFT;
 
 	// determine which leaves are in the PVS / areamask
 	R_MarkLeaves ();

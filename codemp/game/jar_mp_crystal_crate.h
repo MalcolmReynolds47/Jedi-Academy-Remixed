@@ -1,0 +1,30 @@
+// Stock crystal crate assets and portable controller settings. GPL-2.0-only.
+#pragma once
+
+#define JAR_MP_CRYSTAL_CRATE_ID 93844316u
+#define JAR_MP_CRYSTAL_CRATE_MODEL "models/map_objects/imperial/crate1.md3"
+#define JAR_MP_CRYSTAL_CRATE_PART_MODEL "models/map_objects/mp/crystal_blue.md3"
+#define JAR_MP_CRYSTAL_CRATE_HIT_EFFECT "sparks/spark_nosnd"
+#define JAR_MP_CRYSTAL_CRATE_BLAST_EFFECT "thermal/explosion"
+#define JAR_MP_CRYSTAL_CRATE_DEBRIS_EFFECT "chunks/metalexplode"
+#define JAR_MP_CRYSTAL_CRATE_SOUND "sound/weapons/explosions/cargoexplode.wav"
+#define JAR_MP_CRYSTAL_CRATE_SOLID_CONTENTS (CONTENTS_SOLID|CONTENTS_OPAQUE|CONTENTS_BODY|CONTENTS_MONSTERCLIP|CONTENTS_BOTCLIP)
+
+enum {
+ JAR_MP_CRYSTAL_CRATE_TAG = 8, JAR_MP_CRYSTAL_CRATE_PART_TAG = 246,
+ JAR_MP_CRYSTAL_CRATE_SHOT_ONLY = 1, JAR_MP_CRYSTAL_CRATE_MILLI = 1000,
+ JAR_MP_CRYSTAL_CRATE_MAX_DAMAGE = 1000, JAR_MP_CRYSTAL_CRATE_MAX_HEALTH = 1000,
+ JAR_MP_CRYSTAL_CRATE_MIN_RADIUS = 1, JAR_MP_CRYSTAL_CRATE_MAX_RADIUS = 1024,
+ JAR_MP_CRYSTAL_CRATE_DEFAULT_HEALTH = 80, JAR_MP_CRYSTAL_CRATE_DEFAULT_MASS = 40,
+ JAR_MP_CRYSTAL_CRATE_DEFAULT_HIT_DAMAGE = 16, JAR_MP_CRYSTAL_CRATE_DEFAULT_HIT_RADIUS = 32000,
+ JAR_MP_CRYSTAL_CRATE_DEFAULT_BLAST_DAMAGE = 40, JAR_MP_CRYSTAL_CRATE_DEFAULT_BLAST_RADIUS = 80,
+ JAR_MP_CRYSTAL_CRATE_PART_HEIGHT = 25, JAR_MP_CRYSTAL_CRATE_HIT_HEIGHT = 38,
+ JAR_MP_CRYSTAL_CRATE_BLAST_HEIGHT = 19, JAR_MP_CRYSTAL_CRATE_PAIN_INTERVAL = 100
+};
+
+static inline qboolean JAR_MP_CrystalCrateRootState(const entityState_t *state) {
+ return state->eType == ET_GENERAL && state->generic1 == 250 && state->bolt2 == JAR_MP_CRYSTAL_CRATE_TAG;
+}
+static inline qboolean JAR_MP_CrystalCrateShotOnly(const entityState_t *state) {
+ return JAR_MP_CrystalCrateRootState(state) && !state->solid && !(state->eFlags & EF_NODRAW);
+}

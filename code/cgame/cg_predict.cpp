@@ -31,6 +31,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "cg_media.h"
 
 #include "../game/g_vehicles.h"
+#include "../game/g_sandbox_angular.h"
+#include "../game/g_workshop.h"
 
 static	pmove_t		cg_pmove;
 
@@ -122,6 +124,12 @@ void CG_ClipMoveToEntities ( const vec3_t start, const vec3_t mins, const vec3_t
 			continue;
 		}
 
+		// The live SP brush may have broken since this snapshot's solid list.
+		if ( ent->solid == SOLID_BMODEL && cent->gent &&
+			!cent->gent->s.solid && !cent->gent->linked ) {
+			continue;
+		}
+
 		if ( ent->eType == ET_PUSH_TRIGGER ) {
 			continue;
 		}
@@ -129,7 +137,9 @@ void CG_ClipMoveToEntities ( const vec3_t start, const vec3_t mins, const vec3_t
 			continue;
 		}
 
-		if ( ent->solid == SOLID_BMODEL ) {
+		const bool workshopProp=cent->gent && G_JAR_WorkshopTraceProp(cent->gent,cent->lerpOrigin,cent->lerpAngles,
+			start,end,mins,maxs,mask,&trace);
+		if (!workshopProp && ent->solid == SOLID_BMODEL) {
 			// special value for bmodel
 			cmodel = cgi_CM_InlineModel( ent->modelindex );
 			VectorCopy( cent->lerpAngles, angles );
@@ -139,7 +149,14 @@ void CG_ClipMoveToEntities ( const vec3_t start, const vec3_t mins, const vec3_t
 			//EvaluateTrajectory( &cent->currentState.pos, cg.snap->serverTime, origin );
 			VectorCopy( cent->lerpOrigin, origin );
 
-		} else {
+		} else if (!workshopProp && cent->gent && G_SandboxAngular(*cent->gent)) {
+			// The packed box uses a single XY radius. Reconstruct the same
+			// projected crate hull the server uses at this rendered pose.
+			G_SandboxAngularHull(cent->lerpAngles,bmins,bmaxs);
+			cmodel = cgi_CM_TempBoxModel(bmins,bmaxs);
+			VectorClear(angles);
+			VectorCopy(cent->lerpOrigin,origin);
+		} else if (!workshopProp) {
 			// encoded bbox
 			x = (ent->solid & 255);
 			zd = ((ent->solid>>8) & 255);
@@ -156,8 +173,8 @@ void CG_ClipMoveToEntities ( const vec3_t start, const vec3_t mins, const vec3_t
 		}
 
 
-		cgi_CM_TransformedBoxTrace ( &trace, start, end,
-			mins, maxs, cmodel,  mask, origin, angles);
+		if (!workshopProp)
+			cgi_CM_TransformedBoxTrace(&trace,start,end,mins,maxs,cmodel,mask,origin,angles);
 
 		if (trace.allsolid || trace.fraction < tr->fraction) {
 			trace.entityNum = ent->number;

@@ -27,6 +27,10 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../game/weapons.h"
 #include "../game/g_items.h"
 #include "../game/statindex.h"
+#ifndef JK2_MODE
+#include "../game/bg_public.h"
+#include "qcommon/jar_player_transfer.h"
+#endif
 #include "../qcommon/game_version.h"
 
 /*
@@ -43,12 +47,10 @@ qboolean qbLoadTransition = qfalse;
 //=========================================================
 // don't call this directly, it should only be called from SV_Map_f() or SV_MapTransition_f()
 //
-static bool SV_Map_( ForceReload_e eForceReload )
+static bool SV_MapExists(const char* map)
 {
-	char		*map = NULL;
 	char		expanded[MAX_QPATH] = {0};
 
-	map = Cmd_Argv(1);
 	if ( !*map ) {
 		Com_Printf ("no map specified\n");
 		return false;
@@ -72,6 +74,15 @@ static bool SV_Map_( ForceReload_e eForceReload )
 		}
 		return false;
 	}
+
+	return true;
+}
+
+static bool SV_Map_( ForceReload_e eForceReload )
+{
+	const char* map=Cmd_Argv(1);
+	if (!SV_MapExists(map))
+		return false;
 
 	if (map[0]!='_')
 	{
@@ -128,66 +139,8 @@ void SV_Player_EndOfLevelSave(void)
 						pState->saberLockTime
 						);
 #else
-				//				|general info				  |-force powers |-saber 1		|-saber 2										  |-general saber
-				s = va("%i %i %i %i %i %i %i %f %f %f %i %i %i %i %i %s %i %i %i %i %i %i %i %i %i %i %i %i %i %i %i %i %s %i %i %i %i %i %i %i %i %i %i %i %i %i %i %i %i %i %i %i %i",
-						pState->stats[STAT_HEALTH],
-						pState->stats[STAT_ARMOR],
-						pState->stats[STAT_WEAPONS],
-						pState->stats[STAT_ITEMS],
-						pState->weapon,
-						pState->weaponstate,
-						pState->batteryCharge,
-						pState->viewangles[0],
-						pState->viewangles[1],
-						pState->viewangles[2],
-						//force power data
-						pState->forcePowersKnown,
-						pState->forcePower,
-						pState->forcePowerMax,
-						pState->forcePowerRegenRate,
-						pState->forcePowerRegenAmount,
-						//saber 1 data
-						pState->saber[0].name,
-						pState->saber[0].blade[0].active,
-						pState->saber[0].blade[1].active,
-						pState->saber[0].blade[2].active,
-						pState->saber[0].blade[3].active,
-						pState->saber[0].blade[4].active,
-						pState->saber[0].blade[5].active,
-						pState->saber[0].blade[6].active,
-						pState->saber[0].blade[7].active,
-						pState->saber[0].blade[0].color,
-						pState->saber[0].blade[1].color,
-						pState->saber[0].blade[2].color,
-						pState->saber[0].blade[3].color,
-						pState->saber[0].blade[4].color,
-						pState->saber[0].blade[5].color,
-						pState->saber[0].blade[6].color,
-						pState->saber[0].blade[7].color,
-						//saber 2 data
-						pState->saber[1].name,
-						pState->saber[1].blade[0].active,
-						pState->saber[1].blade[1].active,
-						pState->saber[1].blade[2].active,
-						pState->saber[1].blade[3].active,
-						pState->saber[1].blade[4].active,
-						pState->saber[1].blade[5].active,
-						pState->saber[1].blade[6].active,
-						pState->saber[1].blade[7].active,
-						pState->saber[1].blade[0].color,
-						pState->saber[1].blade[1].color,
-						pState->saber[1].blade[2].color,
-						pState->saber[1].blade[3].color,
-						pState->saber[1].blade[4].color,
-						pState->saber[1].blade[5].color,
-						pState->saber[1].blade[6].color,
-						pState->saber[1].blade[7].color,
-						//general saber data
-						pState->saberStylesKnown,
-						pState->saberAnimLevel,
-						pState->saberLockEnemy,
-						pState->saberLockTime
-						);
+		const auto transfer=jar::playerTransfer::Encode(*pState);
+		s=transfer.c_str();
 #endif
 		Cvar_Set( sCVARNAME_PLAYERSAVE, s );
 
@@ -229,6 +182,7 @@ static void SV_MapTransition_f(void)
 	SCR_PrecacheScreenshot();
 #endif
 	SV_Player_EndOfLevelSave();
+	if (ge && ge->StageWorkshopTransition) ge->StageWorkshopTransition();
 
 	spawntarget = Cmd_Argv(2);
 	if ( *spawntarget != '\0' )
@@ -256,6 +210,7 @@ extern void SCR_UnprecacheScreenshot();
 #endif
 static void SV_Map_f( void )
 {
+	Cvar_Set("jar_inventoryTransferCount","0");
 	Cvar_Set( sCVARNAME_PLAYERSAVE, "");
 	Cvar_Set( "spawntarget", "" );
 	Cvar_Set("tier_storyinfo", "0");
@@ -274,22 +229,13 @@ static void SV_Map_f( void )
 	else if ( !Q_stricmp( cmd, "devmapall") )
 		eForceReload = eForceReload_ALL;
 
-	qboolean cheat = (qboolean)(!Q_stricmpn( cmd, "devmap", 6 ) );
-
-	// retain old cheat state
-	if ( !cheat && Cvar_VariableIntegerValue( "helpUsObi" ) )
-		cheat = qtrue;
-
-	if (SV_Map_( eForceReload ))
-	{
-		// set the cheat value
-		// if the level was started with "map <levelname>", then
-		// cheats will not be allowed.  If started with "devmap <levelname>"
-		// then cheats will be allowed
-		Cvar_Set( "helpUsObi", cheat ? "1" : "0" );
-	}
 #ifdef JK2_MODE
+	const bool cheat = !Q_stricmpn( cmd, "devmap", 6 ) || Cvar_VariableIntegerValue( "helpUsObi" );
+	if (SV_Map_( eForceReload ))
+		Cvar_Set( "helpUsObi", cheat ? "1" : "0" );
 	Cvar_Set( "cg_missionstatusscreen", "0" );
+#else
+	SV_Map_( eForceReload );
 #endif
 }
 
@@ -304,19 +250,21 @@ void SV_LoadTransition_f(void)
 	const char	*spawntarget;
 
 	map = Cmd_Argv(1);
-	if ( !*map ) {
+	if ( !SV_MapExists(map) ) {
 		return;
 	}
-
-	qbLoadTransition = qtrue;
 
 #ifdef JK2_MODE
 	SCR_PrecacheScreenshot();
 #endif
 	SV_Player_EndOfLevelSave();
 
-	//Save the full current state of the current map so we can return to it later
-	SG_WriteSavegame( va("hub/%s", sv_mapname->string), qfalse );
+	// The save writer uses va() internally, so keep the checkpoint name local.
+	char checkpoint[MAX_QPATH];
+	Com_sprintf(checkpoint,sizeof(checkpoint),"hub/%s",sv_mapname->string);
+	if (!SG_WriteSavegame(checkpoint,qfalse))
+		Com_Printf("Could not update the hub checkpoint for %s.\n",sv_mapname->string);
+	if (ge && ge->StageWorkshopTransition) ge->StageWorkshopTransition();
 
 	//set the spawntarget if there is one
 	spawntarget = Cmd_Argv(2);
@@ -329,6 +277,7 @@ void SV_LoadTransition_f(void)
 		Cvar_Set( "spawntarget", "" );
 	}
 
+	qbLoadTransition = qtrue;
 	if ( !SV_TryLoadTransition( map ) )
 	{//couldn't load a savegame
 		SV_Map_( eForceReload_NOTHING );

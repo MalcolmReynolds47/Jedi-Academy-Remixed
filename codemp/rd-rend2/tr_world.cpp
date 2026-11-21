@@ -359,7 +359,7 @@ static void R_AddWorldSurface(
 	}
 
 	R_AddDrawSurf( surf->data, entityNum, surf->shader, surf->fogIndex,
-			dlightBits, isPostRenderEntity, surf->cubemapIndex );
+			dlightBits, isPostRenderEntity, R_JAR_ProbeForSurface(surf, entity, entityNum) );
 
 	for ( int i = 0, numSprites = surf->numSurfaceSprites;
 			i < numSprites; ++i )
@@ -378,33 +378,7 @@ static void R_AddWorldSurface(
 =============================================================
 */
 
-/*
-=================
-R_AddBrushModelSurfaces
-=================
-*/
-void R_AddBrushModelSurfaces ( trRefEntity_t *ent, int entityNum ) {
-	model_t *pModel = R_GetModelByHandle( ent->e.hModel );
-	bmodel_t *bmodel = pModel->data.bmodel;
-	int clip = R_CullLocalBox( bmodel->bounds );
-	if ( clip == CULL_OUT ) {
-		return;
-	}
-
-	if (!(tr.viewParms.flags & VPF_DEPTHSHADOW))
-		R_DlightBmodel( bmodel, ent );
-
-	world_t *world = R_GetWorld(bmodel->worldIndex);
-	for ( int i = 0 ; i < bmodel->numSurfaces ; i++ ) {
-		int surf = bmodel->firstSurface + i;
-
-		if (world->surfacesViewCount[surf] != tr.viewCount)
-		{
-			world->surfacesViewCount[surf] = tr.viewCount;
-			R_AddWorldSurface(world->surfaces + surf, ent, entityNum, ent->needDlights, 0);
-		}
-	}
-}
+#include "tr_jar_brush_surfaces.inc"
 
 float GetQuadArea(vec3_t v1, vec3_t v2, vec3_t v3, vec3_t v4)
 {

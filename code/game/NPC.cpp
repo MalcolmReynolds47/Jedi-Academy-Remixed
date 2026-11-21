@@ -24,12 +24,20 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // NPC.cpp - generic functions
 //
 
+#include "g_local.h"
+#include "g_actor_lifetime.h"
+#include "g_galak_mech.h"
+#include "g_randomizer.h"
 #include "b_local.h"
 #include "anims.h"
 #include "g_functions.h"
 #include "say.h"
 #include "Q3_Interface.h"
 #include "g_vehicles.h"
+#include "g_npc_lod.h"
+#include "g_workshop_npc_order.h"
+#include "g_navigator.h"
+
 
 extern vec3_t playerMins;
 extern vec3_t playerMaxs;
@@ -82,16 +90,19 @@ usercmd_t		ucmd;
 visibility_t	enemyVisibility;
 
 void NPC_SetAnim(gentity_t	*ent,int setAnimParts,int anim,int setAnimFlags, int iBlend);
-static bState_t G_CurrentBState( gNPC_t *gNPC );
+#include "g_npc_behavior_state.h"
 
 extern int eventClearTime;
 
 void CorpsePhysics( gentity_t *self )
 {
+	const G_ActorLifetime actor(*self);
 	// run the bot through the server like it was a real client
 	memset( &ucmd, 0, sizeof( ucmd ) );
 	ClientThink( self->s.number, &ucmd );
+	if (!actor.Current()) return;
 	VectorCopy( self->s.origin, self->s.origin2 );
+	if (self->client->NPC_class == CLASS_GALAKMECH) GM_Dying(self);
 
 	//FIXME: match my pitch and roll for the slope of my groundPlane
 	if ( self->client->ps.groundEntityNum != ENTITYNUM_NONE && !(self->flags&FL_DISINTEGRATED) )
@@ -204,10 +215,12 @@ qboolean G_OkayToRemoveCorpse( gentity_t *self )
 
 void NPC_RemoveBody( gentity_t *self )
 {
+	const G_ActorLifetime actor(*self);
 	self->nextthink = level.time + FRAMETIME/2;
 
 	//run physics at 20fps
 	CorpsePhysics( self );
+	if (!actor.Current()) return;
 
 	if ( self->NPC->nextBStateThink <= level.time )
 	{//run logic at 10 fps
@@ -1031,6 +1044,7 @@ void NPC_ApplyScriptFlags (void)
 		// take from BSRemove
 		if( !gi.inPVS( NPC->currentOrigin, g_entities[0].currentOrigin ) )//FIXME: use cg.vieworg?
 		{
+			G_JAR_ForgetActor(NPC); // authored out-of-PVS removal
 			G_UseTargets2( NPC, NPC, NPC->target3 );
 			NPC->s.eFlags |= EF_NODRAW;
 			NPC->svFlags &= ~SVF_NPC;
@@ -1853,6 +1867,40 @@ extern void NPC_BehaviorSet_Trooper( int bState );
 extern bool NPC_IsTrooper( gentity_t *ent );
 extern bool Pilot_MasterUpdate();
 
+bool G_WorkshopNPCOrderScripted(gentity_t& actor)
+{
+	return actor.m_iIcarusID != IIcarusInterface::ICARUS_INVALID &&
+		(Q3_TaskIDPending(&actor, TID_MOVE_NAV) || IIcarusInterface::GetIcarus()->IsRunning(actor.m_iIcarusID));
+}
+
+static bool NPC_GoToWorkshopGoal(gentity_t& goal)
+{
+	int radius = int(goal.radius);
+	if (STEER::Reached(NPC, &goal, radius))
+	{
+		trace_t trace;
+		gi.trace(&trace, NPC->currentOrigin, nullptr, nullptr, goal.currentOrigin,
+			NPC->s.number, MASK_SOLID, G2_NOCOLLIDE, 0);
+		if (!trace.startsolid && !trace.allsolid && trace.fraction == 1.0f)
+		{
+			NPC_BSWait();
+			return true;
+		}
+		radius = 0;
+	}
+
+	// Move using the native steering and path grid without completing an ICARUS task.
+	auto* previousGoal = NPCInfo->goalEntity;
+	const int previousRadius = NPCInfo->goalRadius;
+	NPCInfo->goalEntity = &goal;
+	NPCInfo->goalRadius = radius;
+	NPC_MoveToGoal(qtrue);
+	NPCInfo->goalEntity = previousGoal;
+	NPCInfo->goalRadius = previousRadius;
+	NPC_UpdateAngles(qtrue, qtrue);
+	return false;
+}
+
 void NPC_RunBehavior( int team, int bState )
 {
 	//
@@ -1878,6 +1926,15 @@ void NPC_RunBehavior( int team, int bState )
 		NPC_BSEmplaced();
 		G_CheckCharmed( NPC );
 		return;
+	}
+	else if ( G_WorkshopRunNPCOrder(*NPC, g_entities[0], NPC_BSWait, [] {
+		if (NPC->client->ps.weapon == WP_SABER)
+			NPC_BSJedi_FollowLeader();
+		else
+			NPC_BSFollowLeader();
+	}, NPC_GoToWorkshopGoal) )
+	{
+		G_CheckCharmed(NPC);
 	}
 	else if ( NPC->client->NPC_class == CLASS_HOWLER )
 	{
@@ -2025,6 +2082,9 @@ void NPC_RunBehavior( int team, int bState )
 			case CLASS_MARK2:
 				NPC_BehaviorSet_Mark2( bState );
 				return;
+			case CLASS_GALAKMECH:
+				NPC_BSGM_Default();
+				return;
 			default:
 				break;
 			}
@@ -2134,20 +2194,7 @@ void NPC_RunBehavior( int team, int bState )
 	}
 }
 
-static bState_t G_CurrentBState( gNPC_t *gNPC )
-{
-	if ( gNPC->tempBehavior != BS_DEFAULT )
-	{//Overrides normal behavior until cleared
-		return (gNPC->tempBehavior);
-	}
 
-	if( gNPC->behaviorState == BS_DEFAULT )
-	{
-		gNPC->behaviorState = gNPC->defaultBehavior;
-	}
-
-	return (gNPC->behaviorState);
-}
 /*
 ===============
 NPC_ExecuteBState
@@ -2287,7 +2334,9 @@ void NPC_ExecuteBState ( gentity_t *self)//, int msec )
 
 	if ( !NPC->next_roff_time || NPC->next_roff_time < level.time )
 	{//If we were following a roff, we don't do normal pmoves.
+		const G_ActorLifetime actor(*NPC);
 		ClientThink( NPC->s.number, &ucmd );
+		if (!actor.Current()) return;
 	}
 	else
 	{
@@ -2364,6 +2413,46 @@ extern int AITime;
 #endif//	AI_TIMERS
 void NPC_Think ( gentity_t *self)//, int msec )
 {
+	if (!self || !self->inuse || !self->NPC || !self->client)
+	{
+		return;
+	}
+	const G_ActorLifetime actor(*self);
+
+	// A recovered actor keeps native navigation, animation and ICARUS ownership,
+	// but never runs combat AI or touches gameplay triggers.
+	if (G_JAR_IsActorStandin(self)) {
+		G_JAR_EnforceActorStandin(self);
+		self->nextthink=level.time+FRAMETIME/2;
+		SetNPCGlobals(self);
+		memset(&ucmd,0,sizeof(ucmd));
+		VectorClear(self->client->ps.moveDir);
+		if (!(self->svFlags&SVF_ICARUS_FREEZE) && !debugNPCFreeze->integer) {
+			if(self->delayScriptTime && self->delayScriptTime<=level.time) {
+				G_ActivateBehavior(self,BSET_DELAYED);self->delayScriptTime=0;
+			}
+			const int fireFlags=SCF_FIRE_WEAPON|SCF_FIRE_WEAPON_NO_ANIM;
+			const int savedFireFlags=NPCInfo->scriptFlags&fireFlags;
+			NPCInfo->scriptFlags&=~fireFlags;
+			if(G_CurrentBState(NPCInfo)==BS_WAIT)NPC_BSWait();
+			else NPC_BSCinematic(); // DEFAULT stays within the bounded cinematic controller.
+			NPCInfo->scriptFlags|=savedFireFlags;
+			const int leanFlags=NPCInfo->scriptFlags&(SCF_LEAN_LEFT|SCF_LEAN_RIGHT);
+			NPCInfo->scriptFlags&=~(SCF_LEAN_LEFT|SCF_LEAN_RIGHT);
+			NPC_ApplyScriptFlags(); // walking/crouching and authored safe removal
+			if(!G_JAR_IsActorStandin(self))return;
+			NPCInfo->scriptFlags|=leanFlags;
+			ucmd.buttons&=BUTTON_WALKING;
+			ucmd.serverTime=level.time-50;
+			if(!self->next_roff_time || self->next_roff_time<level.time) ClientThink(self->s.number,&ucmd);
+			else NPC_ApplyRoff();
+			if (!actor.Current()) return;
+			if(self->m_iIcarusID!=IIcarusInterface::ICARUS_INVALID && !stop_icarus)
+				IIcarusInterface::GetIcarus()->Update(self->m_iIcarusID);
+		}
+		if(G_JAR_IsActorStandin(self)) G_JAR_EnforceActorStandin(self);
+		return;
+	}
 	vec3_t	oldMoveDir;
 
 	self->nextthink = level.time + FRAMETIME/2;
@@ -2379,12 +2468,8 @@ void NPC_Think ( gentity_t *self)//, int msec )
 	{
 		NPC_UpdateAngles( qtrue, qtrue );
 		ClientThink(self->s.number, &ucmd);
+		if (!actor.Current()) return;
 		VectorCopy(self->s.origin, self->s.origin2 );
-		return;
-	}
-
-	if(!self || !self->NPC || !self->client)
-	{
 		return;
 	}
 
@@ -2408,6 +2493,7 @@ void NPC_Think ( gentity_t *self)//, int msec )
 	if ( self->client
 		&& self->client->NPC_class == CLASS_VEHICLE
 		&& self->NPC_type
+		&& self->m_pVehicle && self->m_pVehicle->m_pVehicleInfo
 		&& ( !self->m_pVehicle->m_pVehicleInfo->Inhabited( self->m_pVehicle ) ) )
 	{//empty swoop logic
 		if ( self->owner )
@@ -2418,9 +2504,10 @@ void NPC_Think ( gentity_t *self)//, int msec )
 			gentity_t *oldOwner = self->owner;
 			self->owner = NULL;//clear here for that SpotWouldTelefrag check...?
 
-			if ( VectorLengthSquared( dir2owner ) > 128*128
+			if ( !oldOwner->inuse || !oldOwner->client
+				|| VectorLengthSquared( dir2owner ) > 128*128
 				|| !(self->clipmask&oldOwner->clipmask)
-				|| (DotProduct( self->client->ps.velocity, oldOwner->client->ps.velocity ) < -200.0f &&!G_BoundsOverlap( self->absmin, self->absmin, oldOwner->absmin, oldOwner->absmax )) )
+				|| (DotProduct( self->client->ps.velocity, oldOwner->client->ps.velocity ) < -200.0f &&!G_BoundsOverlap( self->absmin, self->absmax, oldOwner->absmin, oldOwner->absmax )) )
 			{//all clear, become solid to our owner now
 				gi.linkentity( self );
 			}
@@ -2464,6 +2551,7 @@ void NPC_Think ( gentity_t *self)//, int msec )
 		//Which ucmd should we send?  Does it matter, since it gets overridden anyway?
 		NPCInfo->last_ucmd.serverTime = level.time - 50;
 		ClientThink( NPC->s.number, &ucmd );
+		if (!actor.Current()) return;
 		VectorCopy(self->s.origin, self->s.origin2 );
 		return;
 	}
@@ -2487,8 +2575,30 @@ void NPC_Think ( gentity_t *self)//, int msec )
 			NPCInfo->nextBStateThink = level.time + FRAMETIME;
 		}
 
-		//nextthink is set before this so something in here can override it
+		if (gi.Cvar_VariableIntegerValue("jar_npcThinkLOD") && g_entities[0].inuse && g_entities[0].client)
+        {
+            const bool scripted = self->m_iIcarusID != IIcarusInterface::ICARUS_INVALID &&
+                IIcarusInterface::GetIcarus()->IsRunning(self->m_iIcarusID);
+            const bool idle = !(NPCInfo->eFlags&workshopNPCOrderMask) && !scripted && !NPC->enemy && !NPCInfo->goalEntity &&
+                NPCInfo->tempBehavior == BS_DEFAULT &&
+                (NPCInfo->behaviorState == BS_DEFAULT || NPCInfo->behaviorState == BS_STAND_GUARD) &&
+                !NPC->next_roff_time && NPC->painDebounceTime <= level.time &&
+                !NPC->client->ps.forcePowersActive && NPC->client->ps.groundEntityNum != ENTITYNUM_NONE &&
+                VectorLengthSquared(NPC->client->ps.velocity) < 1.0f &&
+                !NPCInfo->last_ucmd.buttons && !NPCInfo->last_ucmd.forwardmove &&
+                !NPCInfo->last_ucmd.rightmove && !NPCInfo->last_ucmd.upmove;
+            const int normal = NPCInfo->nextBStateThink - level.time;
+            const int interval = jar::NpcDecisionInterval(true, idle,
+                DistanceSquared(NPC->currentOrigin, g_entities[0].currentOrigin), normal);
+            if (interval > normal) {
+                NPCInfo->nextBStateThink = jar::NpcNextDecision(level.time, interval, NPC->s.number, FRAMETIME/2);
+                if(gi.JAR_Log) gi.JAR_Log(3,"ai","deferred","entity=%d normal_ms=%d interval_ms=%d next=%d",NPC->s.number,normal,interval,NPCInfo->nextBStateThink);
+            }
+        }
+
+        //nextthink is set before this so something in here can override it
 		NPC_ExecuteBState( self );
+		if (!actor.Current()) return;
 
 #if	AI_TIMERS
 		int addTime = GetTime( startTime );
@@ -2518,6 +2628,7 @@ void NPC_Think ( gentity_t *self)//, int msec )
 			NPC_UpdateAngles(qtrue, qtrue);
 			memcpy( &ucmd, &NPCInfo->last_ucmd, sizeof( usercmd_t ) );
 			ClientThink(NPC->s.number, &ucmd);
+			if (!actor.Current()) return;
 		}
 		else
 		{
@@ -2534,6 +2645,7 @@ void NPC_Think ( gentity_t *self)//, int msec )
 
 void NPC_InitAI ( void )
 {
+	gi.cvar("jar_npcThinkLOD", "0", CVAR_ARCHIVE);
 	debugNPCAI = gi.cvar ( "d_npcai", "0", CVAR_CHEAT );
 	debugNPCFreeze = gi.cvar ( "d_npcfreeze", "0", CVAR_CHEAT);
 	d_JediAI = gi.cvar ( "d_JediAI", "0", CVAR_CHEAT );

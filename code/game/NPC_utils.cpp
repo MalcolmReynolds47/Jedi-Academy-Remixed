@@ -23,6 +23,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 //NPC_utils.cpp
 
 #include "b_local.h"
+#include "g_subbsp_ownership.h"
 #include "Q3_Interface.h"
 #include "g_navigator.h"
 #include "../cgame/cg_local.h"
@@ -896,6 +897,7 @@ extern stringID_table_t BSTable[];
 extern stringID_table_t BSETTable[];
 qboolean G_ActivateBehavior (gentity_t *self, int bset )
 {
+	G_SubBSPCapture subBspCapture(self);
 	bState_t	bSID = (bState_t)-1;
 	char *bs_name = NULL;
 

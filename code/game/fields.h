@@ -57,6 +57,7 @@ typedef enum
 //	F_FLOAT,
 	F_STRING,		// string
 //	F_VECTOR,
+	F_INTZERO,             // Integer handle recreated after load (never a pointer write)
 	F_NULL,				// A ptr to null out
 	F_ITEM,				// Item pointer handling
 //	F_MMOVE,			// Mmove pointer handling

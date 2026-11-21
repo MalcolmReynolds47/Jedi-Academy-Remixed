@@ -22,6 +22,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "cm_local.h"
+#include "../../shared/qcommon/jar_hoth_sky.h"
+#include "../../shared/qcommon/jar_yavin_sky.h"
+#include "../game/g_bsp_section_rift.h"
 
 class CPoint
 {
@@ -116,6 +119,45 @@ int CM_PointLeafnum_r( const vec3_t p, int num, clipMap_t *local ) {
 
 	return -1 - num;
 }
+
+static qboolean CM_StockSectionArea(int modelIndex, const vec3_t localPoint,
+                                    const char* resource, unsigned stockChecksum, int area) {
+    const int slot = CM_FindSubBSP(modelIndex);
+    if (slot < 0)
+        return qfalse;
+    char name[MAX_QPATH];
+    int first, count;
+    unsigned checksum;
+    if (CM_BSPModelAt(slot, name, sizeof(name), &first, &count, &checksum) != 1 ||
+        first != modelIndex || checksum != stockChecksum || strcmp(name, resource))
+        return qfalse;
+    if (!localPoint)
+        return qtrue;
+
+    clipMap_t* map;
+    const cmodel_t* model = CM_ClipHandleToModel(modelIndex, &map);
+    for (int axis = 0; axis < 3; ++axis) {
+        if (!(localPoint[axis] >= model->mins[axis] && localPoint[axis] <= model->maxs[axis]))
+            return qfalse;
+    }
+    if (!map->numNodes)
+        return qfalse;
+    const int leaf = CM_PointLeafnum_r(localPoint, 0, map);
+    return leaf >= 0 && leaf < map->numLeafs && map->leafs[leaf].cluster >= 0 &&
+        map->leafs[leaf].area == area ? qtrue : qfalse;
+}
+
+qboolean CM_SectionSky(int modelIndex, const vec3_t localPoint) {
+    return CM_StockSectionArea(modelIndex,localPoint,jar::hothSky::resource,jar::hothSky::checksum,jar::hothSky::arenaArea)||
+           CM_StockSectionArea(modelIndex,localPoint,jar::yavinSky::resource,jar::yavinSky::checksum,jar::yavinSky::arenaArea)?qtrue:qfalse;
+}
+
+qboolean CM_RiftSectionAir(int modelIndex, const vec3_t localPoint) {
+    return CM_StockSectionArea(modelIndex, localPoint, jar::rift::resource,
+                               jar::rift::checksum, jar::rift::arenaArea);
+}
+
+#include "cm_section_pvs.inc"
 
 int CM_PointLeafnum( const vec3_t p ) {
 	if ( !cmg.numNodes ) {	// map not loaded

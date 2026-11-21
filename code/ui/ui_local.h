@@ -250,4 +250,7 @@ void _UI_Refresh( int realtime );
 extern int registeredFontsCount;
 extern int registeredFonts[MAX_FONTS];
 
+// Apply native mission animation rectangles to the qualified JA:R layout.
+void UI_JAR_NativeAnimatedRect(menuDef_t*menu,const char*name,rectDef_t&rect);
+
 #endif

@@ -26,6 +26,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "cg_headers.h"
 
 #include "cg_media.h"
+#include "cg_breakable_effects.h"
 
 #if !defined(FX_SCHEDULER_H_INC)
 	#include "FxScheduler.h"
@@ -290,7 +291,8 @@ Adds an explosion to a misc model breakables
 -------------------------
 */
 
-void CG_MiscModelExplosion( vec3_t mins, vec3_t maxs, int size, material_t chunkType )
+void CG_MiscModelExplosion(const vec3_t mins, const vec3_t maxs, int size,
+						   material_t chunkType, const BreakableDebrisFrame *frame)
 {
 	int		ct = 13;
 	float	r;
@@ -299,6 +301,10 @@ void CG_MiscModelExplosion( vec3_t mins, vec3_t maxs, int size, material_t chunk
 
 	VectorAdd( mins, maxs, mid );
 	VectorScale( mid, 0.5f, mid );
+	if (frame)
+	{
+		frame->ToWorld(mid);
+	}
 
 	switch( chunkType )
 	{
@@ -375,6 +381,11 @@ void CG_MiscModelExplosion( vec3_t mins, vec3_t maxs, int size, material_t chunk
 			org[j] = ( r * mins[j] + ( 1 - r ) * maxs[j] );
 		}
 
+		if (frame)
+		{
+			frame->ToWorld(org);
+		}
+
 		// shoot effect away from center
 		VectorSubtract( org, mid, dir );
 		VectorNormalize( dir );
@@ -398,8 +409,9 @@ Fun chunk spewer
 -------------------------
 */
 
-void CG_Chunks( int owner, vec3_t origin, const vec3_t normal, const vec3_t mins, const vec3_t maxs,
-						float speed, int numChunks, material_t chunkType, int customChunk, float baseScale, int customSound = 0 )
+void CG_Chunks(int owner, const vec3_t origin, const vec3_t normal, const vec3_t mins, const vec3_t maxs,
+			   float speed, int numChunks, material_t chunkType, int customChunk, float baseScale,
+			   int customSound, const BreakableDebrisFrame *frame)
 {
 	localEntity_t	*le;
 	refEntity_t		*re;
@@ -416,11 +428,12 @@ void CG_Chunks( int owner, vec3_t origin, const vec3_t normal, const vec3_t mins
 		return;
 	}
 
+	const float *soundOrigin = frame ? origin : nullptr;
 	if ( customSound )
 	{
 		if ( cgs.sound_precache[customSound] )
 		{
-			cgi_S_StartSound( NULL, owner, CHAN_BODY, cgs.sound_precache[customSound] );
+			cgi_S_StartSound( soundOrigin, owner, CHAN_BODY, cgs.sound_precache[customSound] );
 		}
 	}
 	// Set up our chunk sound info...breaking sounds are done here so they are done once on breaking..some return instantly because the chunks are done with effects instead of models
@@ -429,21 +442,21 @@ void CG_Chunks( int owner, vec3_t origin, const vec3_t normal, const vec3_t mins
 	case MAT_GLASS:
 		if ( !customSound )
 		{
-			cgi_S_StartSound( NULL, owner, CHAN_BODY, cgs.media.glassChunkSound );
+			cgi_S_StartSound( soundOrigin, owner, CHAN_BODY, cgs.media.glassChunkSound );
 		}
 		return;
 		break;
 	case MAT_GRATE1:
 		if ( !customSound )
 		{
-			cgi_S_StartSound( NULL, owner, CHAN_BODY, cgs.media.grateSound );
+			cgi_S_StartSound( soundOrigin, owner, CHAN_BODY, cgs.media.grateSound );
 		}
 		return;
 		break;
 	case MAT_ELECTRICAL:// (sparks)
 		if ( !customSound )
 		{
-			cgi_S_StartSound( NULL, owner, CHAN_BODY, cgi_S_RegisterSound (va("sound/ambience/spark%d.wav", Q_irand(1, 6))) );
+			cgi_S_StartSound( soundOrigin, owner, CHAN_BODY, cgi_S_RegisterSound (va("sound/ambience/spark%d.wav", Q_irand(1, 6))) );
 		}
 		return;
 		break;
@@ -453,7 +466,7 @@ void CG_Chunks( int owner, vec3_t origin, const vec3_t normal, const vec3_t mins
 	case MAT_WHITE_METAL:  // not quite sure what this stuff is supposed to be...it's for Stu
 		if ( !customSound )
 		{
-			cgi_S_StartSound( NULL, owner, CHAN_BODY, cgs.media.rockBreakSound );
+			cgi_S_StartSound( soundOrigin, owner, CHAN_BODY, cgs.media.rockBreakSound );
 			bounce = LEBS_ROCK;
 		}
 		speedMod = 0.5f; // rock blows up less
@@ -461,7 +474,7 @@ void CG_Chunks( int owner, vec3_t origin, const vec3_t normal, const vec3_t mins
 	case MAT_GLASS_METAL:
 		if ( !customSound )
 		{
-			cgi_S_StartSound( NULL, owner, CHAN_BODY, cgs.media.glassChunkSound ); // FIXME: should probably have a custom sound
+			cgi_S_StartSound( soundOrigin, owner, CHAN_BODY, cgs.media.glassChunkSound ); // FIXME: should probably have a custom sound
 			bounce = LEBS_METAL;
 		}
 		break;
@@ -469,7 +482,7 @@ void CG_Chunks( int owner, vec3_t origin, const vec3_t normal, const vec3_t mins
 	case MAT_CRATE2:
 		if ( !customSound )
 		{
-			cgi_S_StartSound( NULL, owner, CHAN_BODY, cgs.media.crateBreakSound[Q_irand(0,1)] );
+			cgi_S_StartSound( soundOrigin, owner, CHAN_BODY, cgs.media.crateBreakSound[Q_irand(0,1)] );
 		}
 		break;
 	case MAT_METAL:
@@ -478,7 +491,7 @@ void CG_Chunks( int owner, vec3_t origin, const vec3_t normal, const vec3_t mins
 	case MAT_ELEC_METAL:// FIXME: maybe have its own sound?
 		if ( !customSound )
 		{
-			cgi_S_StartSound( NULL, owner, CHAN_BODY, cgs.media.chunkSound );
+			cgi_S_StartSound( soundOrigin, owner, CHAN_BODY, cgs.media.chunkSound );
 			bounce = LEBS_METAL;
 		}
 		speedMod = 0.8f; // metal blows up a bit more
@@ -487,7 +500,7 @@ void CG_Chunks( int owner, vec3_t origin, const vec3_t normal, const vec3_t mins
 		/*
 		if ( !customSound )
 		{
-			cgi_S_StartSound( NULL, owner, CHAN_BODY, cgi_S_RegisterSound( "" ));  FIXME:  needs a sound
+			cgi_S_StartSound( soundOrigin, owner, CHAN_BODY, cgi_S_RegisterSound( "" ));  FIXME:  needs a sound
 		}
 		*/
 		return;
@@ -574,6 +587,10 @@ void CG_Chunks( int owner, vec3_t origin, const vec3_t normal, const vec3_t mins
 			{
 				r = Q_flrand(0.0f, 1.0f) * 0.8f + 0.1f;
 				re->origin[j] = ( r * mins[j] + ( 1 - r ) * maxs[j] );
+			}
+			if (frame)
+			{
+				frame->ToWorld(re->origin);
 			}
 			VectorCopy( re->origin, le->pos.trBase );
 
@@ -789,7 +806,7 @@ void CG_InitGlass( void )
 #define TIME_DECAY_MED		0.04f
 #define TIME_DECAY_FAST		0.009f
 
-void CG_DoGlass( vec3_t verts[4], vec3_t normal, vec3_t dmgPt, vec3_t dmgDir, float dmgRadius )
+void CG_DoGlass( vec3_t verts[4], vec3_t normal, vec3_t dmgPt, vec3_t dmgDir, float dmgRadius, int maxShards )
 {
 	int		i, t;
 	int		mxHeight, mxWidth;
@@ -850,10 +867,20 @@ void CG_DoGlass( vec3_t verts[4], vec3_t normal, vec3_t dmgPt, vec3_t dmgDir, fl
 		timeDecay = ( timeDecay + TIME_DECAY_MED ) * 0.5f;
 	}
 
-	for ( z = 0.0f, i = 0; z < 1.0f; z += stepHeight, i++ )
+	if (maxShards==8||maxShards==12)
 	{
-		for ( x = 0.0f, t = 0; x < 1.0f; x += stepWidth, t++ )
+		mxWidth = width>=height ? 4 : maxShards/4;
+		mxHeight = maxShards/mxWidth;
+		stepWidth = 1.0f/mxWidth;
+		stepHeight = 1.0f/mxHeight;
+	}
+
+	for ( i = 0; i < mxHeight; ++i )
+	{
+		z = i*stepHeight;
+		for ( t = 0; t < mxWidth; ++t )
 		{
+			x = t*stepWidth;
 			// This is nasty..we do this because we don't want to add a random offset on the edge of the glass brush
 			//	...but we do in the center, otherwise the breaking scheme looks way too orderly
 			if ( t > 0 && t < mxWidth )

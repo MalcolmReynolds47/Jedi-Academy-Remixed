@@ -30,6 +30,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "icarus/GameInterface.h"
 #include "qcommon/timing.h"
 #include "NPCNav/navigator.h"
+#include "qcommon/qfiles.h"
+#include "../../shared/qcommon/jar_md3_surface.h"
+#include "qcommon/jar_mp_model_hull.h"
 
 botlib_export_t	*botlib_export;
 
@@ -1498,6 +1501,58 @@ static int SV_G2API_InitGhoul2Model( void **ghoul2Ptr, const char *fileName, int
 		g_G2AllocServer = 1;
 #endif
 	return re->G2API_InitGhoul2Model( (CGhoul2Info_v **)ghoul2Ptr, fileName, modelIndex, customSkin, customShader, modelFlags, lodBias );
+}
+
+static bool SV_JAR_InitPropModel(CGhoul2Info_v*& probe,const char* model){
+ if(re->G2API_InitGhoul2Model(&probe,model,0,0,0,0,0)<0||!probe)return false;
+  if(re->G2API_SkinlessModel(*probe,0)){
+   char skin[MAX_QPATH];Q_strncpyz(skin,model,sizeof(skin));char*slash=strrchr(skin,'/');
+   if(slash){slash[1]=0;Q_strcat(skin,sizeof(skin),"model_default.skin");qhandle_t handle=re->RegisterServerSkin(skin);if(handle)re->G2API_SetSkin(*probe,0,handle,handle);}
+  }
+ return true;
+}
+
+static qboolean SV_JAR_ModelPoseBounds(const char*model,int frame,int*frames,vec3_t low,vec3_t high){
+ if(frames)*frames=0;
+ CGhoul2Info_v* probe=nullptr;
+ const bool ok=SV_JAR_InitPropModel(probe,model)&&re->G2API_JAR_PoseBounds(*probe,frame,frames,low,high);
+ if(probe)re->G2API_CleanGhoul2Models(&probe);
+ return ok?qtrue:qfalse;
+}
+
+void SV_JAR_PickGhoul(CGhoul2Info_v& model,const vec3_t origin,const vec3_t angles,vec3_t scale,
+ const vec3_t start,const vec3_t end,float& fraction,vec3_t normal){
+ G2Trace_t hits{};
+ for(auto& hit:hits)hit.mEntityNum=-1;
+ vec3_t rayStart,rayEnd,delta;
+ VectorCopy(start,rayStart);
+ VectorCopy(end,rayEnd);
+ VectorSubtract(end,start,delta);
+ const float length=VectorNormalize(delta);
+ if(length<=0)return;
+ re->G2API_CollisionDetect(hits,model,angles,origin,sv.time,0,rayStart,rayEnd,scale,G2VertSpaceServer,0,0,0);
+ for(const auto& hit:hits){
+  if(hit.mEntityNum==-1)break;
+  vec3_t offset;
+  VectorSubtract(hit.mCollisionPosition,start,offset);
+  const float at=DotProduct(offset,delta)/length;
+  if(at>=0&&at<fraction){fraction=at;VectorCopy(hit.mCollisionNormal,normal);}
+ }
+}
+
+static qboolean SV_JAR_PickPropModel(const char* model,int frame,const vec3_t origin,const vec3_t angles,
+ const vec3_t start,const vec3_t end,float* fraction,vec3_t normal){
+ const char* extension=COM_GetExtension(model);
+ if(!Q_stricmp(extension,"md3")){
+  return jar::md3::PickFile(model,frame,origin,angles,start,end,*fraction,normal,
+   FS_FOpenFileRead,FS_Read,FS_FCloseFile)?qtrue:qfalse;
+ }
+ if(Q_stricmp(extension,"glm"))return qfalse;
+ CGhoul2Info_v* probe=nullptr;
+ vec3_t lo,hi,scale={1,1,1};
+ const qboolean ok=SV_JAR_InitPropModel(probe,model)?re->G2API_JAR_PoseBounds(*probe,frame,nullptr,lo,hi):qfalse;
+ if(ok)SV_JAR_PickGhoul(*probe,origin,angles,scale,start,end,*fraction,normal);
+ if(probe)re->G2API_CleanGhoul2Models(&probe);return ok;
 }
 
 static qboolean SV_G2API_SetSkin( void *ghoul2, int modelIndex, qhandle_t customSkin, qhandle_t renderSkin ) {
@@ -3119,6 +3174,11 @@ void SV_BindGame( void ) {
 		gi.G2API_OverrideServer					= SV_G2API_OverrideServer;
 		gi.G2API_GetSurfaceName					= SV_G2API_GetSurfaceName;
 
+		gi.JAR_CollisionPolygons = CM_JARCollisionPolygons;
+		gi.JAR_ModelPoseBounds = SV_JAR_ModelPoseBounds;
+		gi.BSPModelAt = CM_BSPModelAt;
+		gi.JAR_PickPropModel = SV_JAR_PickPropModel;
+		gi.JAR_VisitModelHull = JAR_MP_VisitModelHull;
 		GetGameAPI = (GetGameAPI_t)gvm->GetModuleAPI;
 		ret = GetGameAPI( GAME_API_VERSION, &gi );
 		if ( !ret ) {

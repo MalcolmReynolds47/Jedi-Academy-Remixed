@@ -29,7 +29,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #define Q3_INFINITE			16777216
 
-#define	GAME_API_VERSION	1
+#define	GAME_API_VERSION	9
 
 // entity->svFlags
 // the server does not know how to interpret most of the values
@@ -67,6 +67,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define G2TRFLAG_HITCORPSES		0x00000002 //will try g2 collision on the ent even if it's EF_DEAD
 #define G2TRFLAG_GETSURFINDEX	0x00000004 //will replace surfaceFlags with the ghoul2 surface index that was hit, if any.
 #define G2TRFLAG_THICK			0x00000008 //assures that the trace radius will be significantly large regardless of the trace box size.
+#define JAR_TRACE_PHYS_GUN		0x00000010 // Point query for the Physgun's surface anchor.
+#define JAR_TRACE_SPAWN_OVERLAP	0x00000020 // Sandbox placement permits overlap with props and NPCs.
+#define JAR_TRACE_SINGLE_BRUSH	0x00000040 // Trace only the BSP entity supplied in passEntityNum.
 
 //===============================================================
 
@@ -1093,6 +1096,12 @@ typedef struct gameImport_s {
 	void		(*G2API_CleanEntAttachments)			( void );
 	qboolean	(*G2API_OverrideServer)					( void *serverInstance );
 	void		(*G2API_GetSurfaceName)					( void *ghoul2, int surfNumber, int modelIndex, char *fillBuf );
+	int (*JAR_CollisionPolygons)(int model,int mask,void*context,qboolean(*emit)(void*,int,const float*,const float*));
+	qboolean (*JAR_ModelPoseBounds)(const char*,int,int*,vec3_t,vec3_t);
+	int (*BSPModelAt)(int index, char* name, int size, int* first, int* count, unsigned* checksum);
+	qboolean (*JAR_PickPropModel)(const char* model, int frame, const vec3_t origin, const vec3_t angles,
+		const vec3_t start, const vec3_t end, float* fraction, vec3_t normal);
+	qboolean (*JAR_VisitModelHull)(const char*,int,void*,void (*)(void*,const float*));
 } gameImport_t;
 
 typedef struct gameExport_s {

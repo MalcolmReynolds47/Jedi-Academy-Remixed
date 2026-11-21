@@ -110,6 +110,8 @@ if(BuildSPRdVanilla OR BuildJK2SPRdVanilla)
 		"${SPDir}/rd-vanilla/tr_light.cpp"
 		"${SPDir}/rd-vanilla/tr_local.h"
 		"${SPDir}/rd-vanilla/tr_main.cpp"
+		"${SPDir}/rd-vanilla/tr_sort.cpp"
+		"${SPDir}/rd-vanilla/tr_ghoul2_pool.cpp"
 		"${SPDir}/rd-vanilla/tr_marks.cpp"
 		"${SPDir}/rd-vanilla/tr_mesh.cpp"
 		"${SPDir}/rd-vanilla/tr_model.cpp"
@@ -193,7 +195,11 @@ if(BuildSPRdVanilla OR BuildJK2SPRdVanilla)
 	endfunction(add_sp_renderer_project)
 
 	if(BuildSPRdVanilla)
-		add_sp_renderer_project(${SPRDVanillaRenderer} "SP Vanilla Renderer" ${SPEngine} ${JKAInstallDir} ${JKASPClientComponent})
+		if(WIN32)
+			add_sp_renderer_project(${SPRDVanillaRenderer} "SP Vanilla Renderer" ${SPEngine} ${JARRuntimeInstallDir} ${JKASPClientComponent})
+		else()
+			add_sp_renderer_project(${SPRDVanillaRenderer} "SP Vanilla Renderer" ${SPEngine} ${JKAInstallDir} ${JKASPClientComponent})
+		endif()
 	endif(BuildSPRdVanilla)
 	if(BuildJK2SPRdVanilla)
 		set(SPRDVanillaDefines ${SPRDVanillaDefines} "JK2_MODE")

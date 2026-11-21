@@ -29,6 +29,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "bg_public.h"
 #include "g_items.h"
 #include "g_vehicles.h"
+#include "qcommon/jar_angular_trajectory.h"
+#include "qcommon/jar_force_enlightenment.h"
 
 
 extern weaponData_t weaponData[WP_NUM_WEAPONS];
@@ -440,9 +442,13 @@ qboolean	BG_CanItemBeGrabbed( const entityState_t *ent, const playerState_t *ps 
 		// pretty lame but for now you can always pick these up
 		return qtrue;
 
+	case IT_POWERUP:
+		return (item->giTag==PW_FORCE_BOON ||
+			jar::enlightenment::CanCollect(*ps,jar::enlightenment::PickupSide(item->giTag)))?qtrue:qfalse;
 
 	case IT_HOLDABLE:
-		if ( item->giTag >= INV_ELECTROBINOCULARS && item->giTag <= INV_SENTRY )
+		if (item->giTag < 0 || item->giTag >= INV_MAX) return qfalse;
+		if ( (item->giTag >= INV_ELECTROBINOCULARS && item->giTag <= INV_SENTRY) || item->giTag == INV_PORTABLE_SHIELD )
 		{
 			// hardcoded--can only pick up five of any holdable
 			if ( ps->inventory[item->giTag] >= 5 )
@@ -468,6 +474,7 @@ EvaluateTrajectory
 ================
 */
 void EvaluateTrajectory( const trajectory_t *tr, int atTime, vec3_t result ) {
+	if (jar::angular::Evaluate(*tr, atTime, result)) return;
 	float		deltaTime;
 	float		phase;
 
@@ -533,6 +540,7 @@ Returns current speed at given time
 ================
 */
 void EvaluateTrajectoryDelta( const trajectory_t *tr, int atTime, vec3_t result ) {
+	if (jar::angular::Velocity(*tr, atTime, result)) return;
 	float	deltaTime;
 	float	phase;
 

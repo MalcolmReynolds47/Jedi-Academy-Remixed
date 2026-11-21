@@ -1,3 +1,5 @@
+#include "qcommon/jar_diagnostics.h"
+#include "qcommon/jar_face.h"
 /*
 ===========================================================================
 Copyright (C) 1999 - 2005, Id Software, Inc.
@@ -327,21 +329,7 @@ void SV_AdjustAreaPortalState( gentity_t *ent, qboolean open ) {
 SV_GameAreaEntities
 ==================
 */
-qboolean	SV_EntityContact( const vec3_t mins, const vec3_t maxs, const gentity_t *gEnt ) {
-	const float	*origin, *angles;
-	clipHandle_t	ch;
-	trace_t			trace;
-
-	// check for exact collision
-	origin = gEnt->currentOrigin;
-	angles = gEnt->currentAngles;
-
-	ch = SV_ClipHandleForEntity( gEnt );
-	CM_TransformedBoxTrace ( &trace, vec3_origin, vec3_origin, mins, maxs,
-		ch, -1, origin, angles );
-
-	return trace.startsolid;
-}
+#include "sv_entity_contact.inc"
 
 
 /*
@@ -454,6 +442,11 @@ static qboolean SV_G2API_AttachG2Model( CGhoul2Info *ghlInfo, CGhoul2Info *ghlIn
 static void SV_G2API_CleanGhoul2Models( CGhoul2Info_v &ghoul2 )
 {
 	return re.G2API_CleanGhoul2Models( ghoul2 );
+}
+
+static qboolean SV_G2API_JAR_ModelBounds(CGhoul2Info_v& g,int time,vec3_t low,vec3_t high) { return re.G2API_JAR_ModelBounds(g,time,low,high); }
+static qboolean SV_G2API_JAR_ModelGeometry(CGhoul2Info_v& g,int time,vec3_t low,vec3_t high,void* context,void (*emit)(void*,const float*)) {
+	return re.G2API_JAR_ModelGeometry(g,time,low,high,context,emit);
 }
 
 static void SV_G2API_CollisionDetect(
@@ -896,6 +889,14 @@ void SV_InitGameProgs (void) {
 
 	// load a new game dll
 	import.Printf = Com_Printf;
+	import.JAR_Log = JAR_Log;
+	import.JAR_LogLevel = JAR_LogLevel;
+	import.JAR_CollisionPolygons = CM_JARCollisionPolygons;
+	import.JAR_WorldBounds = CM_GetWorldBounds;
+	import.JAR_WorldTrace = CM_BoxTrace;
+	import.JAR_TraceMovingHull = SV_TraceMovingHull;
+	import.JAR_TraceSceneryHull = SV_TraceSceneryHull;
+	import.JAR_DiagnosticsCount = JAR_DiagnosticsCount;
 	import.WriteCam = Com_WriteCam;
 	import.FlushCamFile = Com_FlushCamFile;
 	import.Error = Com_Error;
@@ -915,6 +916,8 @@ void SV_InitGameProgs (void) {
 	import.pointcontents = SV_PointContents;
 	import.totalMapContents = CM_TotalMapContents;
 	import.SetBrushModel = SV_SetBrushModel;
+	import.BSPModelAt = CM_BSPModelAt;
+	import.RegisterBSPModel = CM_RegisterBSPModel;
 
 	import.inPVS = SV_inPVS;
 	import.inPVSIgnorePortals = SV_inPVSIgnorePortals;
@@ -950,6 +953,7 @@ void SV_InitGameProgs (void) {
 	import.AreasConnected = CM_AreasConnected;
 
 	import.VoiceVolume = s_entityWavVol;
+	import.JAR_VoiceEnergy = S_JAR_VoiceEnergy;
 
 	import.Malloc = G_ZMalloc_Helper;
 	import.Free = Z_Free;
@@ -959,6 +963,8 @@ void SV_InitGameProgs (void) {
 	import.G2API_AttachEnt = SV_G2API_AttachEnt;
 	import.G2API_AttachG2Model = SV_G2API_AttachG2Model;
 	import.G2API_CollisionDetect = SV_G2API_CollisionDetect;
+	import.G2API_JAR_ModelBounds = SV_G2API_JAR_ModelBounds;
+	import.G2API_JAR_ModelGeometry = SV_G2API_JAR_ModelGeometry;
 	import.G2API_DetachEnt = SV_G2API_DetachEnt;
 	import.G2API_DetachG2Model = SV_G2API_DetachG2Model;
 	import.G2API_GetAnimFileName = SV_G2API_GetAnimFileName;
@@ -1051,7 +1057,7 @@ void SV_InitGameProgs (void) {
 #ifdef JK2_MODE
 	const char *gamename = "jospgame";
 #else
-	const char *gamename = "jagame";
+	const char *gamename = "jar_game";
 #endif
 
 	GetGameAPIProc *GetGameAPI;

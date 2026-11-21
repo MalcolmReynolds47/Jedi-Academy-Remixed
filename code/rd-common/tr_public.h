@@ -25,14 +25,17 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #pragma once
 
 #include "tr_types.h"
+#include "qcommon/jar_portal.h"
+#include "qcommon/jar_reflection_probe.h"
 #include "../qcommon/qcommon.h"
 
 #include "../ghoul2/G2.h"
 #include "../ghoul2/ghoul2_gore.h"
 
-#define	REF_API_VERSION		18
+#define	REF_API_VERSION		1024 // JA:R posed prop geometry
 
 typedef struct {
+	void (*JAR_Log)(int level, const char *category, const char *event, const char *format, ...);
 	void				(QDECL *Printf)						( int printLevel, const char *fmt, ...) __attribute__ ((format (printf, 2, 3)));
 	void				(QDECL *Error)						( int errorLevel, const char *fmt, ...) NORETURN_PTR __attribute__ ((format (printf, 2, 3)));
 
@@ -40,7 +43,7 @@ typedef struct {
 	int					(*Milliseconds)						( void );
 
 	void				(*Hunk_ClearToMark)					( void );
-	void*				(*Malloc)							( int iSize, memtag_t eTag, qboolean zeroIt, int iAlign );
+	void*				(*Z_Malloc)							( int iSize, memtag_t eTag, qboolean zeroIt, int iAlign );
 	int					(*Z_Free)							( void *memory );
 	int					(*Z_MemSize)						( memtag_t eTag );
 	void				(*Z_MorphMallocTag)					( void *pvBuffer, memtag_t eDesiredTag );
@@ -178,7 +181,9 @@ typedef struct {
 	// Nothing is drawn until R_RenderScene is called.
 	void	(*ClearScene)( void );
 	void	(*AddRefEntityToScene)( const refEntity_t *re );
-	void	(*AddPolyToScene)( qhandle_t hShader , int numVerts, const polyVert_t *verts );
+	void (*AddPortalToScene)(const jar::portal::View*);
+	int (*SetReflectionProbes)(const jar::reflection::Probe*, int count);
+	void	(*AddPolyToScene)( qhandle_t hShader , int numVerts, const polyVert_t *verts, int numPolys );
 	void	(*AddLightToScene)( const vec3_t org, float intensity, float r, float g, float b );
 	void	(*RenderScene)( const refdef_t *fd );
 	qboolean(*GetLighting)( const vec3_t org, vec3_t ambientLight, vec3_t directedLight, vec3_t lightDir);
@@ -225,7 +230,7 @@ typedef struct {
 				   int maxPoints, vec3_t pointBuffer, int maxFragments, markFragment_t *fragmentBuffer );
 
 	//model stuff
-	void	(*LerpTag)( orientation_t *tag,  qhandle_t model, int startFrame, int endFrame,
+	int		(*LerpTag)( orientation_t *tag,  qhandle_t model, int startFrame, int endFrame,
 					 float frac, const char *tagName );
 	void	(*ModelBounds)( qhandle_t model, vec3_t mins, vec3_t maxs );
 
@@ -250,7 +255,7 @@ typedef struct {
 	// Misc
 	void	(*R_InitWorldEffects)(void);
 	void	(*R_ClearStuffToStopGhoul2CrashingThings)(void);
-	qboolean (*R_inPVS)(vec3_t p1, vec3_t p2);
+	qboolean (*inPVS)( const vec3_t p1, const vec3_t p2, byte *mask );
 
 	void	(*SVModelInit)(void);
 
@@ -283,6 +288,8 @@ typedef struct {
 	void		(*G2API_AnimateG2Models)(CGhoul2Info_v &ghoul2, int AcurrentTime, CRagDollUpdateParams *params);
 	qboolean	(*G2API_AttachEnt)(int *boltInfo, CGhoul2Info *ghlInfoTo, int toBoltIndex, int entNum, int toModelNum);
 	qboolean	(*G2API_AttachG2Model)(CGhoul2Info *ghlInfo, CGhoul2Info *ghlInfoTo, int toBoltIndex, int toModel);
+	qboolean (*G2API_JAR_ModelBounds)(CGhoul2Info_v&, int, vec3_t, vec3_t);
+	qboolean (*G2API_JAR_ModelGeometry)(CGhoul2Info_v&, int, vec3_t, vec3_t, void*, void (*)(void*, const float*));
 	void		(*G2API_CollisionDetect)(CCollisionRecord *collRecMap, CGhoul2Info_v &ghoul2, const vec3_t angles,
 					const vec3_t position, int AframeNumber, int entNum, vec3_t rayStart, vec3_t rayEnd, vec3_t scale,
 					CMiniHeap *, EG2_Collision eG2TraceType, int useLod, float fRadius);

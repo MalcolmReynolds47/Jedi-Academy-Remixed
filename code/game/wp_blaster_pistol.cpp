@@ -24,6 +24,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "b_local.h"
 #include "wp_saber.h"
 #include "w_local.h"
+#include "qcommon/jar_force_enlightenment.h"
 
 
 //---------------
@@ -41,7 +42,7 @@ void WP_FireBryarPistol( gentity_t *ent, qboolean alt_fire )
 	WP_TraceSetStart( ent, start, vec3_origin, vec3_origin );//make sure our start point isn't on the other side of a wall
 
 	if ( !(ent->client->ps.forcePowersActive&(1<<FP_SEE))
-		|| ent->client->ps.forcePowerLevel[FP_SEE] < FORCE_LEVEL_2 )
+		|| jar::enlightenment::Rank(ent->client->ps,FP_SEE) < FORCE_LEVEL_2 )
 	{//force sight 2+ gives perfect aim
 		//FIXME: maybe force sight level 3 autoaims some?
 		if ( ent->NPC && ent->NPC->currentAim < 5 )
@@ -68,6 +69,7 @@ void WP_FireBryarPistol( gentity_t *ent, qboolean alt_fire )
 	WP_MissileTargetHint(ent, start, forwardVec);
 
 	gentity_t	*missile = CreateMissile( start, forwardVec, BRYAR_PISTOL_VEL, 10000, ent, alt_fire );
+	if (!missile) return;
 
 	missile->classname = "bryar_proj";
 	if ( ent->s.weapon == WP_BLASTER_PISTOL

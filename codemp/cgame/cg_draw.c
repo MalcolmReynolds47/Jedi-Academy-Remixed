@@ -27,6 +27,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "cg_local.h"
 
 #include "game/bg_saga.h"
+#include "game/jar_mp_emplaced.h"
+#include "../../shared/qcommon/jar_tool_style.h"
 
 #include "ui/ui_shared.h"
 #include "ui/ui_public.h"
@@ -5329,75 +5331,8 @@ qboolean CG_WorldCoordToScreenCoord( vec3_t worldCoord, int *x, int *y ) {
 	return qfalse;
 }
 
-/*
-====================
-CG_SaberClashFlare
-====================
-*/
 int cg_saberFlashTime = 0;
 vec3_t cg_saberFlashPos = {0, 0, 0};
-void CG_SaberClashFlare( void )
-{
-	int				t, maxTime = 150;
-	vec3_t dif;
-	vec4_t color;
-	int x,y;
-	float v, len;
-	trace_t tr;
-
-	t = cg.time - cg_saberFlashTime;
-
-	if ( t <= 0 || t >= maxTime )
-	{
-		return;
-	}
-
-	// Don't do clashes for things that are behind us
-	VectorSubtract( cg_saberFlashPos, cg.refdef.vieworg, dif );
-
-	if ( DotProduct( dif, cg.refdef.viewaxis[0] ) < 0.2 )
-	{
-		return;
-	}
-
-	CG_Trace( &tr, cg.refdef.vieworg, NULL, NULL, cg_saberFlashPos, -1, CONTENTS_SOLID );
-
-	if ( tr.fraction < 1.0f )
-	{
-		return;
-	}
-
-	len = VectorNormalize( dif );
-
-	// clamp to a known range
-	/*
-	if ( len > 800 )
-	{
-		len = 800;
-	}
-	*/
-	if ( len > 1200 )
-	{
-		return;
-	}
-
-	v = ( 1.0f - ((float)t / maxTime )) * ((1.0f - ( len / 800.0f )) * 2.0f + 0.35f);
-	if (v < 0.001f)
-	{
-		v = 0.001f;
-	}
-
-	if ( !CG_WorldCoordToScreenCoord( cg_saberFlashPos, &x, &y ) ) {
-		return;
-	}
-
-	VectorSet4( color, 0.8f, 0.8f, 0.8f, 1.0f );
-	trap->R_SetColor( color );
-
-	CG_DrawPic( x - ( v * 300 ), y - ( v * 300 ),
-				v * 600, v * 600,
-				trap->R_RegisterShader( "gfx/effects/saberFlare" ));
-}
 
 void CG_DottedLine( float x1, float y1, float x2, float y2, float dotSize, int numDots, vec4_t color, float alpha )
 {
@@ -6048,8 +5983,15 @@ qboolean CG_CalcVehicleMuzzlePoint( int entityNum, vec3_t start, vec3_t d_f, vec
 }
 
 //calc the muzzle point from the e-web itself
-void CG_CalcEWebMuzzlePoint(centity_t *cent, vec3_t start, vec3_t d_f, vec3_t d_rt, vec3_t d_up)
+static qboolean CG_CalcEWebMuzzlePoint(centity_t *cent, vec3_t start, vec3_t d_f, vec3_t d_rt, vec3_t d_up)
 {
+	if (JAR_MP_EWebState(&cent->currentState)) {
+		if (!CG_JAR_EWebOperator(cent, &cg.snap->ps) || !CG_JAR_EWebMuzzle(cent, start, d_f))
+			return qfalse;
+		VectorClear(d_rt);
+		VectorClear(d_up);
+		return qtrue;
+	}
 	int bolt = trap->G2API_AddBolt(cent->ghoul2, 0, "*cannonflash");
 
 	assert(bolt != -1);
@@ -6069,6 +6011,7 @@ void CG_CalcEWebMuzzlePoint(centity_t *cent, vec3_t start, vec3_t d_f, vec3_t d_
 		VectorClear( d_rt );//don't really need this, do we?
 		VectorClear( d_up );//don't really need this, do we?
 	}
+	return bolt != -1;
 }
 
 /*
@@ -6083,10 +6026,19 @@ static void CG_ScanForCrosshairEntity( void ) {
 	int			content;
 	int			ignore;
 	qboolean	bVehCheckTraceFromCamPos = qfalse;
+	const qboolean physgunAim = cg.predictedPlayerState.weapon == WP_PHYSGUN && !cg.predictedPlayerState.m_iVehicleNum;
 
 	ignore = cg.predictedPlayerState.clientNum;
 
-	if ( cg_dynamicCrosshair.integer )
+	if (physgunAim)
+	{
+		vec3_t forward;
+		VectorCopy(cg.predictedPlayerState.origin,start);
+		start[2] += cg.predictedPlayerState.viewheight;
+		AngleVectors(cg.predictedPlayerState.viewangles,forward,NULL,NULL);
+		VectorMA(start,JAR_TOOL_AIM_RANGE,forward,end);
+	}
+	else if ( cg_dynamicCrosshair.integer )
 	{
 		vec3_t d_f, d_rt, d_up;
 		/*
@@ -6134,9 +6086,11 @@ static void CG_ScanForCrosshairEntity( void ) {
 			}
 		}
 		else if (cg.snap && cg.snap->ps.weapon == WP_EMPLACED_GUN && cg.snap->ps.emplacedIndex &&
-			cg_entities[cg.snap->ps.emplacedIndex].ghoul2 && cg_entities[cg.snap->ps.emplacedIndex].currentState.weapon == WP_NONE)
-		{ //locked into our e-web, calc the muzzle from it
-			CG_CalcEWebMuzzlePoint(&cg_entities[cg.snap->ps.emplacedIndex], start, d_f, d_rt, d_up);
+			cg_entities[cg.snap->ps.emplacedIndex].ghoul2 && cg_entities[cg.snap->ps.emplacedIndex].currentState.weapon == WP_NONE &&
+			CG_CalcEWebMuzzlePoint(&cg_entities[cg.snap->ps.emplacedIndex], start, d_f, d_rt, d_up))
+		{
+			if (JAR_MP_EWebState(&cg_entities[cg.snap->ps.emplacedIndex].currentState))
+				ignore = cg.snap->ps.emplacedIndex;
 		}
 		else
 		{
@@ -6190,7 +6144,11 @@ static void CG_ScanForCrosshairEntity( void ) {
 		VectorMA( start, 131072, cg.refdef.viewaxis[0], end );
 	}
 
-	if ( cg_dynamicCrosshair.integer && cg_dynamicCrosshairPrecision.integer )
+	if (physgunAim)
+	{
+		CG_Trace(&trace,start,vec3_origin,vec3_origin,end,ignore,JAR_PHYSGUN_MP_AIM_MASK);
+	}
+	else if ( cg_dynamicCrosshair.integer && cg_dynamicCrosshairPrecision.integer )
 	{ //then do a trace with ghoul2 models in mind
 		CG_G2Trace( &trace, start, vec3_origin, vec3_origin, end,
 			ignore, CONTENTS_SOLID|CONTENTS_BODY );
@@ -7048,7 +7006,10 @@ void CG_DrawEWebHealth(void)
 	vec4_t cColor;
 	float x = EWEBHEALTH_X;
 	float y = EWEBHEALTH_Y;
-	centity_t *eweb = &cg_entities[cg.predictedPlayerState.emplacedIndex];
+	const centity_t *eweb = &cg_entities[cg.predictedPlayerState.emplacedIndex];
+	const qboolean portable = JAR_MP_EWebState(&eweb->currentState);
+	if (portable && (!CG_JAR_EWebOperator(eweb, &cg.snap->ps) || eweb->currentState.maxhealth <= 0))
+		return;
 	float percent = ((float)eweb->currentState.health/eweb->currentState.maxhealth)*EWEBHEALTH_H;
 
 	if (percent > EWEBHEALTH_H)
@@ -7091,6 +7052,9 @@ void CG_DrawEWebHealth(void)
 
 	//then draw the other part greyed out
 	CG_FillRect(x+1.0f, y+1.0f, EWEBHEALTH_W-1.0f, EWEBHEALTH_H-percent, cColor);
+	if (portable)
+		CG_DrawProportionalString(x + EWEBHEALTH_W * 0.5f, y + EWEBHEALTH_H + 3,
+			va("%d", JAR_MP_EWebAmmo(&eweb->currentState)), UI_CENTER | UI_SMALLFONT | UI_DROPSHADOW, colorTable[CT_HUD_ORANGE]);
 }
 
 //draw meter showing cloak fuel when it's not full
@@ -8036,7 +8000,6 @@ static void CG_Draw2D( void ) {
 		CG_DrawSpectator();
 		CG_DrawCrosshair(NULL, 0);
 		CG_DrawCrosshairNames();
-		CG_SaberClashFlare();
 	} else {
 		// don't draw any status if dead or the scoreboard is being explicitly shown
 		if ( !cg.showScores && cg.snap->ps.stats[STAT_HEALTH] > 0 ) {
@@ -8097,7 +8060,6 @@ static void CG_Draw2D( void ) {
 				CG_DrawFlagStatus();
 			}
 
-			CG_SaberClashFlare();
 
 			if (cg_drawStatus.integer)
 			{
@@ -8462,6 +8424,7 @@ void CG_DrawActive( stereoFrame_t stereoView ) {
 
 	// draw status bar and other floating elements
  	CG_Draw2D();
+	CG_JAR_Draw();
 }
 
 

@@ -4,6 +4,7 @@
 
 
 #include "ojk_saved_game.h"
+#include "jar_savegame.h"
 #include <algorithm>
 #include <memory>
 #include "ojk_saved_game_helper.h"
@@ -80,7 +81,7 @@ bool SavedGame::open(
 			INT_ID('_', 'V', 'E', 'R'),
 			sg_version))
 		{
-			if (sg_version != iSAVEGAME_VERSION)
+			if (!jar::ReadableSaveVersion(sg_version,iSAVEGAME_VERSION))
 			{
 				is_succeed = false;
 
@@ -90,6 +91,7 @@ bool SavedGame::open(
 					sg_version,
 					iSAVEGAME_VERSION);
 			}
+			else version_=sg_version;
 		}
 		else
 		{
@@ -109,7 +111,7 @@ bool SavedGame::open(
 }
 
 bool SavedGame::create(
-	const std::string& base_file_name)
+	const std::string& base_file_name, bool workshopState)
 {
 	close();
 
@@ -139,7 +141,8 @@ bool SavedGame::create(
 
 	is_writable_ = true;
 
-	const int sg_version = iSAVEGAME_VERSION;
+	const int sg_version = jar::WriteSaveVersion(iSAVEGAME_VERSION,Cvar_VariableIntegerValue("jar_actorRecoverySaveVersion")!=0,workshopState);
+	version_=sg_version;
 
 	SavedGameHelper sgsh(this);
 
@@ -158,6 +161,7 @@ bool SavedGame::create(
 
 void SavedGame::close()
 {
+	version_=0;
 	if (file_handle_ != 0)
 	{
 		::FS_FCloseFile(file_handle_);

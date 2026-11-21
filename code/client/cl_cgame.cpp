@@ -1,3 +1,4 @@
+#include "qcommon/jar_live_randomizer.h"
 /*
 ===========================================================================
 Copyright (C) 1999 - 2005, Id Software, Inc.
@@ -29,6 +30,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../ui/ui_shared.h"
 
 #include "client.h"
+#include "jar_soundscape.h"
 #include "vmachine.h"
 #include "qcommon/stringed_ingame.h"
 #include "sys/sys_loadlib.h"
@@ -53,8 +55,6 @@ extern void AS_ParseSets( void );
 extern sfxHandle_t AS_GetBModelSound( const char *name, int stage );
 extern void	AS_AddPrecacheEntry( const char *name );
 extern menuDef_t *Menus_FindByName(const char *p);
-
-extern qboolean R_inPVS( vec3_t p1, vec3_t p2 );
 
 void UI_SetActiveMenu( const char* menuname,const char *menuID );
 
@@ -424,6 +424,7 @@ CL_ShutdonwCGame
 */
 void CL_ShutdownCGame( void ) {
 	cls.cgameStarted = qfalse;
+	CL_JAR_ResetSoundscape();
 
 	if ( !cgvm.entryPoint) {
 		return;
@@ -874,6 +875,15 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 	case CG_CM_LOADMAP:
 		CL_CM_LoadMap( (const char *) VMA(1), (qboolean)(args[2] != 0) );
 		return 0;
+	case CG_CM_BSPMODELINFO:
+		return CM_BSPModelInfo((const char*)VMA(1),(int*)VMA(2),(int*)VMA(3));
+	case CG_CM_SECTION_SKY:
+		return CM_SectionSky(args[1], (const float*)VMA(2));
+	case CG_CM_RIFTSECTIONAIR:
+		return CM_RiftSectionAir(args[1], (const float*)VMA(2));
+	case CG_CM_SECTION_PVS:
+		return CM_SectionPVS(args[1],(const float*)VMA(2),(const float*)VMA(3));
+
 	case CG_CM_NUMINLINEMODELS:
 		return CM_NumInlineModels();
 	case CG_CM_INLINEMODEL:
@@ -949,6 +959,12 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 		return 0;
 	case CG_S_RESPATIALIZE:
 		S_Respatialize( args[1], (const float *) VMA(2), (float(*)[3]) VMA(3), (qboolean)(args[4] != 0) );
+		if (cls.state==CA_ACTIVE&&cl.frame.valid) {
+			vec3_t ear;
+			VectorCopy(cl.frame.ps.origin,ear);
+			ear[2]+=cl.frame.ps.viewheight;
+			CL_JAR_UpdateSoundscape(cl.serverTime,ear,cl.frame.ps.clientNum);
+		}
 		return 0;
 	case CG_S_REGISTERSOUND:
 		return S_RegisterSound( (const char *) VMA(1) );
@@ -1001,12 +1017,16 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 		return 0;
 
 	case CG_R_INPVS:
-		return re.R_inPVS((float *) VMA(1), (float *) VMA(2));
+		return re.inPVS((float *) VMA(1), (float *) VMA(2), (byte *) VMA(3));
 
 	case CG_R_GETLIGHTING:
 		return re.GetLighting( (const float * ) VMA(1), (float *) VMA(2), (float *) VMA(3), (float *) VMA(4) );
+	case CG_R_SETREFLECTIONPROBES:
+		return re.SetReflectionProbes((const jar::reflection::Probe*)VMA(1),args[2]);
+	case CG_R_ADDPORTALTOSCENE:
+		re.AddPortalToScene((const jar::portal::View*)VMA(1));return 0;
 	case CG_R_ADDPOLYTOSCENE:
-		re.AddPolyToScene( args[1], args[2], (const polyVert_t *) VMA(3) );
+		re.AddPolyToScene( args[1], args[2], (const polyVert_t *) VMA(3), 1 );
 		return 0;
 	case CG_R_ADDLIGHTTOSCENE:
 		re.AddLightToScene( (const float *) VMA(1), VMF(2), VMF(3), VMF(4), VMF(5) );
@@ -1404,6 +1424,7 @@ void CL_InitCGame( void ) {
 	info = cl.gameState.stringData + cl.gameState.stringOffsets[ CS_SERVERINFO ];
 	mapname = Info_ValueForKey( info, "mapname" );
 	Com_sprintf( cl.mapname, sizeof( cl.mapname ), "maps/%s.bsp", mapname );
+	CL_JAR_LoadSoundscape(mapname);
 
 	cls.state = CA_LOADING;
 
@@ -1431,6 +1452,8 @@ void CL_InitCGame( void ) {
 		Com_TouchMemory();
 	}
 
+	// Resume saved live overrides after native cgame/cheat initialization.
+    JAR_RandomizerResumeAfterLoad();
 	// clear anything that got printed
 	Con_ClearNotify ();
 }

@@ -23,6 +23,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "server.h"
+#include <algorithm>
 #include "ghoul2/G2.h"
 #include "qcommon/cm_public.h"
 #include "qcommon/MiniHeap.h"
@@ -271,13 +272,13 @@ void SV_Startup( void ) {
 
 	svs.clients = (struct client_s *)Z_Malloc (sizeof(client_t) * sv_maxclients->integer, TAG_CLIENTS, qtrue );
 	if ( com_dedicated->integer ) {
-		svs.numSnapshotEntities = sv_maxclients->integer * PACKET_BACKUP * MAX_SNAPSHOT_ENTITIES;
+		svs.numSnapshotEntities = std::min(sv_maxclients->integer * PACKET_BACKUP * MAX_SNAPSHOT_ENTITIES, JAR_MP_SNAPSHOT_HISTORY_LIMIT);
 		Cvar_Set( "r_ghoul2animsmooth", "0");
 		Cvar_Set( "r_ghoul2unsqashaftersmooth", "0");
 
 	} else {
 		// we don't need nearly as many when playing locally
-		svs.numSnapshotEntities = sv_maxclients->integer * 4 * MAX_SNAPSHOT_ENTITIES;
+		svs.numSnapshotEntities = std::min(sv_maxclients->integer * 4 * MAX_SNAPSHOT_ENTITIES, JAR_MP_SNAPSHOT_HISTORY_LIMIT);
 	}
 	SV_ChallengeInit();
 	svs.initialized = qtrue;
@@ -363,10 +364,10 @@ void SV_ChangeMaxClients( void ) {
 
 	// allocate new snapshot entities
 	if ( com_dedicated->integer ) {
-		svs.numSnapshotEntities = sv_maxclients->integer * PACKET_BACKUP * MAX_SNAPSHOT_ENTITIES;
+		svs.numSnapshotEntities = std::min(sv_maxclients->integer * PACKET_BACKUP * MAX_SNAPSHOT_ENTITIES, JAR_MP_SNAPSHOT_HISTORY_LIMIT);
 	} else {
 		// we don't need nearly as many when playing locally
-		svs.numSnapshotEntities = sv_maxclients->integer * 4 * MAX_SNAPSHOT_ENTITIES;
+		svs.numSnapshotEntities = std::min(sv_maxclients->integer * 4 * MAX_SNAPSHOT_ENTITIES, JAR_MP_SNAPSHOT_HISTORY_LIMIT);
 	}
 }
 
@@ -591,6 +592,9 @@ Ghoul2 Insert End
 	FS_Restart( sv.checksumFeed );
 
 	CM_LoadMap( va("maps/%s.bsp", server), qfalse, &checksum );
+	vec3_t worldMins, worldMaxs;
+	CM_GetWorldBounds(worldMins, worldMaxs);
+	Cvar_Set("sv_jarMapBottom", va("%.9g", worldMins[2]));
 
 	SV_SendMapChange();
 
@@ -966,6 +970,8 @@ void SV_Init (void) {
 	sv_floodProtectSlow = Cvar_Get ("sv_floodProtectSlow", "1", CVAR_ARCHIVE | CVAR_SERVERINFO, "Use original method of delaying commands with flood protection" );
 	// systeminfo
 	Cvar_Get ("sv_cheats", "1", CVAR_SYSTEMINFO | CVAR_ROM, "Allow cheats on server if set to 1" );
+	cvar_t *hostCheats = Cvar_Get("jar_hostCheats", "0", 0, "Allow cheats on JA:R hosts started with map");
+	Cvar_CheckRange(hostCheats, 0, 1, qtrue);
 	sv_serverid = Cvar_Get ("sv_serverid", "0", CVAR_SYSTEMINFO | CVAR_ROM );
 	sv_pure = Cvar_Get ("sv_pure", "0", CVAR_SYSTEMINFO, "Pure server" );
 	Cvar_Get ("sv_paks", "", CVAR_SYSTEMINFO | CVAR_ROM );
@@ -996,6 +1002,7 @@ void SV_Init (void) {
 	sv_padPackets = Cvar_Get ("sv_padPackets", "0", 0);
 	sv_killserver = Cvar_Get ("sv_killserver", "0", 0);
 	sv_mapChecksum = Cvar_Get ("sv_mapChecksum", "", CVAR_ROM);
+	Cvar_Get("sv_jarMapBottom", "-65536", CVAR_ROM);
 	sv_lanForceRate = Cvar_Get ("sv_lanForceRate", "1", CVAR_ARCHIVE_ND );
 
 	sv_filterCommands = Cvar_Get( "sv_filterCommands", "1", CVAR_ARCHIVE );

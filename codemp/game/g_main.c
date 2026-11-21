@@ -216,6 +216,7 @@ void G_InitGame( int levelTime, int randomSeed, int restart ) {
 	// set some level globals
 	memset( &level, 0, sizeof( level ) );
 	level.time = levelTime;
+	JAR_MP_Init();
 	level.startTime = levelTime;
 
 	level.follow1 = level.follow2 = -1;
@@ -447,6 +448,8 @@ void G_ShutdownGame( int restart ) {
 	gentity_t *ent;
 
 //	trap->Print ("==== ShutdownGame ====\n");
+
+	JAR_MP_Shutdown(); // Snapshot native actors before their client/model storage is freed.
 
 	G_CleanAllFakeClients(); //get rid of dynamically allocated fake client structs.
 
@@ -3077,6 +3080,11 @@ void G_RunFrame( int levelTime ) {
 			continue;
 		}
 
+		if (ent->client && ent->client->inSpaceIndex) {
+			JAR_MP_SpaceFrame(ent);
+			if (!ent->inuse) continue;
+		}
+
 		// clear events that are too old
 		if ( level.time - ent->eventTime > EVENT_VALID_MSEC ) {
 			if ( ent->s.event ) {
@@ -3169,39 +3177,6 @@ void G_RunFrame( int levelTime ) {
 		if ( i < MAX_CLIENTS )
 		{
 			G_CheckClientTimeouts ( ent );
-
-			if (ent->client->inSpaceIndex && ent->client->inSpaceIndex != ENTITYNUM_NONE)
-			{ //we're in space, check for suffocating and for exiting
-                gentity_t *spacetrigger = &g_entities[ent->client->inSpaceIndex];
-
-				if (!spacetrigger->inuse ||
-					!G_PointInBounds(ent->client->ps.origin, spacetrigger->r.absmin, spacetrigger->r.absmax))
-				{ //no longer in space then I suppose
-                    ent->client->inSpaceIndex = 0;
-				}
-				else
-				{ //check for suffocation
-                    if (ent->client->inSpaceSuffocation < level.time)
-					{ //suffocate!
-						if (ent->health > 0 && ent->takedamage)
-						{ //if they're still alive..
-							G_Damage(ent, spacetrigger, spacetrigger, NULL, ent->client->ps.origin, Q_irand(50, 70), DAMAGE_NO_ARMOR, MOD_SUICIDE);
-
-							if (ent->health > 0)
-							{ //did that last one kill them?
-								//play the choking sound
-								G_EntitySound(ent, CHAN_VOICE, G_SoundIndex(va( "*choke%d.wav", Q_irand( 1, 3 ) )));
-
-								//make them grasp their throat
-								ent->client->ps.forceHandExtend = HANDEXTEND_CHOKE;
-								ent->client->ps.forceHandExtendTime = level.time + 2000;
-							}
-						}
-
-						ent->client->inSpaceSuffocation = level.time + Q_irand(100, 200);
-					}
-				}
-			}
 
 			if (ent->client->isHacking)
 			{ //hacking checks
@@ -3311,7 +3286,7 @@ void G_RunFrame( int levelTime ) {
 				}
 			}
 
-			if((!level.intermissiontime)&&!(ent->client->ps.pm_flags&PMF_FOLLOW) && ent->client->sess.sessionTeam != TEAM_SPECTATOR)
+			if((!level.intermissiontime)&&!(ent->client->ps.pm_flags&PMF_FOLLOW) && ent->client->sess.sessionTeam != TEAM_SPECTATOR && !JAR_MP_ActorControlled(ent))
 			{
 				WP_ForcePowersUpdate(ent, &ent->client->pers.cmd );
 				WP_SaberPositionUpdate(ent, &ent->client->pers.cmd);
@@ -3340,9 +3315,11 @@ void G_RunFrame( int levelTime ) {
 				}
 			}
 
-			WP_ForcePowersUpdate(ent, &ent->client->pers.cmd );
-			WP_SaberPositionUpdate(ent, &ent->client->pers.cmd);
-			WP_SaberStartMissileBlockCheck(ent, &ent->client->pers.cmd);
+			if (!JAR_MP_ActorControlled(ent)) {
+				WP_ForcePowersUpdate(ent, &ent->client->pers.cmd );
+				WP_SaberPositionUpdate(ent, &ent->client->pers.cmd);
+				WP_SaberStartMissileBlockCheck(ent, &ent->client->pers.cmd);
+			}
 		}
 
 		G_RunThink( ent );
@@ -3388,6 +3365,7 @@ void G_RunFrame( int levelTime ) {
 	trap->PrecisionTimer_Start(&timer_GameChecks);
 #endif
 	// see if it is time to do a tournament restart
+	JAR_MP_Frame();
 	CheckTournament();
 
 	// see if it is time to end the level

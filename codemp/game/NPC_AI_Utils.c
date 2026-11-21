@@ -537,6 +537,14 @@ void AI_GetGroup( gentity_t *self )
 	AI_SetClosestBuddy( self->NPC->group );
 }
 
+static gentity_t *AI_LivingGroupMember( int number )
+{
+	if ( number < MAX_CLIENTS || number >= level.num_entities )
+		return NULL;
+	gentity_t *member = &g_entities[number];
+	return member->inuse && member->client && member->NPC && member->health > 0 ? member : NULL;
+}
+
 void AI_SetNewGroupCommander( AIGroupInfo_t *group )
 {
 	gentity_t *member = NULL;
@@ -545,9 +553,9 @@ void AI_SetNewGroupCommander( AIGroupInfo_t *group )
 	group->commander = NULL;
 	for ( i = 0; i < group->numGroup; i++ )
 	{
-		member = &g_entities[group->member[i].number];
+		member = AI_LivingGroupMember( group->member[i].number );
 
-		if ( !group->commander || (member && member->NPC && group->commander->NPC && member->NPC->rank > group->commander->NPC->rank) )
+		if ( member && (!group->commander || member->NPC->rank > group->commander->NPC->rank) )
 		{//keep track of highest rank
 			group->commander = member;
 		}
@@ -557,14 +565,16 @@ void AI_SetNewGroupCommander( AIGroupInfo_t *group )
 void AI_DeleteGroupMember( AIGroupInfo_t *group, int memberNum )
 {
 	int i;
+	const int number = group->member[memberNum].number;
 
-	if ( group->commander && group->commander->s.number == group->member[memberNum].number )
+	if ( group->commander && group->commander->s.number == number )
 	{
 		group->commander = NULL;
 	}
-	if ( g_entities[group->member[memberNum].number].NPC )
+	if ( number >= MAX_CLIENTS && number < level.num_entities && g_entities[number].NPC &&
+		g_entities[number].NPC->group == group )
 	{
-		g_entities[group->member[memberNum].number].NPC->group = NULL;
+		g_entities[number].NPC->group = NULL;
 	}
 	for ( i = memberNum; i < (group->numGroup-1); i++ )
 	{
@@ -584,6 +594,30 @@ void AI_DeleteGroupMember( AIGroupInfo_t *group, int memberNum )
 		group->numGroup = 0;
 	}
 	AI_SetNewGroupCommander( group );
+}
+
+void AI_ForgetGroupEntity( gentity_t *entity )
+{
+	for ( int i = 0; i < MAX_FRAME_GROUPS; i++ )
+	{
+		AIGroupInfo_t *group = &level.groups[i];
+		if ( group->enemy == entity )
+			group->enemy = NULL;
+		if ( !entity->NPC )
+			continue;
+
+		// The roster may still have a member even if its NPC cleared its backlink.
+		for ( int j = group->numGroup - 1; j >= 0; j-- )
+		{
+			if ( group->member[j].number == entity->s.number )
+			{
+				const int state = entity->NPC->squadState;
+				if ( group->numState[state] > 0 )
+					group->numState[state]--;
+				AI_DeleteGroupMember( group, j );
+			}
+		}
+	}
 }
 
 void AI_DeleteSelfFromGroup( gentity_t *self )
@@ -955,6 +989,17 @@ void AI_UpdateGroups( void )
 	if ( d_noGroupAI.integer )
 	{
 		return;
+	}
+	// A merge can use both rosters before their normal membership validation.
+	// Discard invalid members in every group before any merge runs.
+	for ( i = 0; i < MAX_FRAME_GROUPS; i++ )
+	{
+		AIGroupInfo_t *group = &level.groups[i];
+		for ( int j = group->numGroup - 1; j >= 0; j-- )
+		{
+			if ( !AI_LivingGroupMember( group->member[j].number ) )
+				AI_DeleteGroupMember( group, j );
+		}
 	}
 	//Clear all Groups
 	for ( i = 0; i < MAX_FRAME_GROUPS; i++ )

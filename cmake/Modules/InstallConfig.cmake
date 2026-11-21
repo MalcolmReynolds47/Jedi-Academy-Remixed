@@ -18,6 +18,7 @@
 
 # Subdirectories to package JK2 and JKA into
 set(JKAInstallDir "JediAcademy")
+set(JARRuntimeInstallDir "${JKAInstallDir}/JediAcademyRemixed")
 set(JK2InstallDir "JediOutcast")
 
 # Install components
@@ -89,13 +90,9 @@ if(WIN32)
 			"${CPACK_NSIS_DELETE_ICONS_EXTRA}
 			Delete '$SMPROGRAMS\\\\$MUI_TEMP\\\\Jedi Academy MP.lnk'")
 
-		install(FILES ${MPDir}/OpenAL32.dll ${MPDir}/EaxMan.dll
-				DESTINATION ${JKAInstallDir}
-				COMPONENT ${JKAMPClientComponent})
-
 		install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}
-				DESTINATION ${JKAInstallDir}
-				COMPONENT ${JKAMPClientComponent})
+                DESTINATION "JediAcademy/JediAcademyRemixedMP"
+                COMPONENT ${JKAMPClientComponent})
 	endif()
 
 	if(BuildSPEngine)
@@ -111,12 +108,8 @@ if(WIN32)
 			"${CPACK_NSIS_DELETE_ICONS_EXTRA}
 			Delete '$SMPROGRAMS\\\\$MUI_TEMP\\\\Jedi Academy SP.lnk'")
 
-		install(FILES ${MPDir}/OpenAL32.dll ${MPDir}/EaxMan.dll
-			DESTINATION ${JKAInstallDir}
-			COMPONENT ${JKASPClientComponent})
-
 		install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}
-				DESTINATION ${JKAInstallDir}
+				DESTINATION ${JARRuntimeInstallDir}
 				COMPONENT ${JKASPClientComponent})
 	endif()
 

@@ -55,7 +55,7 @@ typedef struct dlight_s {
 
 // a trRefEntity_t has all the information passed in by
 // the client game, as well as some locally derived info
-typedef struct {
+typedef struct trRefEntity_s {
 	refEntity_t	e;
 
 	float		axisLength;		// compensate for non-normalized axis
@@ -67,6 +67,8 @@ typedef struct {
 	int			ambientLightInt;	// 32 bit rgba packed
 	vec3_t		directedLight;
 	int			dlightBits;
+	const trRefEntity_s *riftFogRoom;
+	int			riftFogIndex;
 } trRefEntity_t;
 
 
@@ -537,6 +539,7 @@ typedef struct {
 	vec3_t		pvsOrigin;			// may be different than or.origin for portals
 	qboolean	isPortal;			// true if this view is through a portal
 	qboolean	isMirror;			// the portal is a mirror, invert the face culling
+	int portalMonitor; // Zero for ordinary views, otherwise color target slot plus one.
 	int			frameSceneNum;		// copied from tr.frameSceneNum
 	int			frameCount;			// copied from tr.frameCount
 	cplane_t	portalPlane;		// clip anything behind this if mirroring
@@ -546,6 +549,7 @@ typedef struct {
 	cplane_t	frustum[5];
 	vec3_t		visBounds[2];
 	float		zFar;
+	const trRefEntity_t *riftFogRoom;
 } viewParms_t;
 
 
@@ -583,7 +587,7 @@ Ghoul2 Insert End
 } surfaceType_t;
 
 typedef struct drawSurf_s {
-	unsigned			sort;			// bit combination for fast compares
+	uint64_t			sort;			// bit combination for fast compares
 	surfaceType_t		*surface;		// any of surface*_t
 } drawSurf_t;
 
@@ -600,6 +604,9 @@ typedef struct srfPoly_s {
 	int				fogIndex;
 	int				numVerts;
 	polyVert_t		*verts;
+ const jar::portal::View*jarPortal;
+ qhandle_t jarFallback;bool jarSelected;
+	qhandle_t jarMonitorShader;
 } srfPoly_t;
 
 typedef struct srfDisplayList_s {
@@ -737,6 +744,7 @@ typedef struct {
 	vec3_t		bounds[2];		// for culling
 	msurface_t	*firstSurface;
 	int			numSurfaces;
+	int bspIndex;
 } bmodel_t;
 
 typedef struct {
@@ -771,8 +779,10 @@ typedef struct {
 	int			numfogs;
 	fog_t		*fogs;
 	int			globalFog;
+	int inheritedFog;
 
 	int			startLightMapIndex;
+	int			numLightmaps;
 
 	vec3_t		lightGridOrigin;
 	vec3_t		lightGridSize;
@@ -781,6 +791,7 @@ typedef struct {
 	mgrid_t			*lightGridData;
 	unsigned short	*lightGridArray;
 	int			numGridArrayElements;
+	int numGridDataElements;
 
 	int			numClusters;
 	int			clusterBytes;
@@ -832,7 +843,7 @@ Ghoul2 Insert End
 
 void		R_ModelInit (void);
 model_t		*R_GetModelByHandle( qhandle_t hModel );
-void		R_LerpTag( orientation_t *tag, qhandle_t handle, int startFrame, int endFrame,
+int			R_LerpTag( orientation_t *tag, qhandle_t handle, int startFrame, int endFrame,
 					 float frac, const char *tagName );
 void		R_ModelBounds( qhandle_t handle, vec3_t mins, vec3_t maxs );
 
@@ -844,29 +855,14 @@ void		R_Modellist_f (void);
 #define	MAX_SKINS				512	//1024
 
 
-#define	MAX_DRAWSURFS			0x10000
+#define	MAX_DRAWSURFS			(0x10000 * JAR_CAPACITY_MULTIPLIER)
 #define	DRAWSURF_MASK			(MAX_DRAWSURFS-1)
 
 /*
-
-the drawsurf sort data is packed into a single 32 bit value so it can be
-compared quickly during the qsorting process
-
-the bits are allocated as follows:
-
-22 - 31	: sorted shader index
-12 - 21	: entity index
-3 - 7	: fog index
-2		: used to be clipped flag
-0 - 1	: dlightmap index
-#define	QSORT_SHADERNUM_SHIFT	22
-#define	QSORT_ENTITYNUM_SHIFT	12
-#define	QSORT_FOGNUM_SHIFT		3
-
-	TTimo - 1.32
-31	:  used for alpha fading models (drawn last)
-18-30 : sorted shader index
-7-17  : entity index
+JA:R 64-bit surface sort key:
+63    : alpha fading models (drawn last)
+22-34 : sorted shader index
+7-21  : entity index
 2-6   : fog index
 0-1   : dlightmap index
 */
@@ -874,9 +870,9 @@ the bits are allocated as follows:
 #define	QSORT_FOGNUM_SHIFT		2
 #define	QSORT_REFENTITYNUM_SHIFT	7
 #define	QSORT_SHADERNUM_SHIFT	(QSORT_REFENTITYNUM_SHIFT+REFENTITYNUM_BITS)
-// Note: 32nd bit is reserved for RF_ALPHA_FADE voodoo magic
+// The top bit of the 64-bit key is reserved for RF_ALPHA_FADE
 // see R_AddEntitySurfaces tr.shiftedEntityNum
-#if (QSORT_SHADERNUM_SHIFT+SHADERNUM_BITS) > 31
+#if (QSORT_SHADERNUM_SHIFT+SHADERNUM_BITS) > 63
 	#error "Need to update sorting, too many bits."
 #endif
 
@@ -975,6 +971,7 @@ typedef struct {
 	image_t					*scratchImage[NUM_SCRATCH_IMAGES];
 	image_t					*fogImage;
 	image_t					*dlightImage;	// inverse-quare highlight for projective adding
+	image_t					*portalMonitorImages[JAR_PORTAL_CAMERA_FEEDS];
 	image_t					*whiteImage;			// full of 0xff
 	image_t					*identityLightImage;	// full of tr.identityLightByte
 
@@ -1008,7 +1005,7 @@ typedef struct {
 	trRefEntity_t			*currentEntity;
 	trRefEntity_t			worldEntity;		// point currentEntity at this when rendering world
 	int						currentEntityNum;
-	unsigned				shiftedEntityNum;	// currentEntityNum << QSORT_REFENTITYNUM_SHIFT (possible with high bit set for RF_ALPHA_FADE)
+	uint64_t				shiftedEntityNum;	// currentEntityNum << QSORT_REFENTITYNUM_SHIFT (possible with high bit set for RF_ALPHA_FADE)
 	model_t					*currentModel;
 
 	viewParms_t				viewParms;
@@ -1066,6 +1063,16 @@ typedef struct {
 	float					distanceCull;
 } trGlobals_t;
 
+struct glconfigExt_t
+{
+	glconfig_t *glConfig;
+
+	qboolean textureFilterAnisotropicAvailable;
+	qboolean doGammaCorrectionWithShaders;
+	qboolean doStencilShadowsInOneDrawcall;
+	const char *originalExtensionString;
+};
+
 int		 R_Images_StartIteration(void);
 image_t *R_Images_GetNextIteration(void);
 void	 R_Images_Clear(void);
@@ -1076,6 +1083,7 @@ void	 R_Images_DeleteImage(image_t *pImage);
 extern backEndState_t	backEnd;
 extern trGlobals_t	tr;
 extern glconfig_t	glConfig;		// outside of TR since it shouldn't be cleared during ref re-init
+extern glconfigExt_t glConfigExt;
 extern glstate_t	glState;		// outside of TR since it shouldn't be cleared during ref re-init
 extern window_t		window;
 
@@ -1236,7 +1244,8 @@ void R_AddLightningBoltSurfaces( trRefEntity_t *e );
 
 void R_AddPolygonSurfaces( void );
 
-void R_DecomposeSort( unsigned sort, int *entityNum, shader_t **shader,
+void R_RadixSort(drawSurf_t *source, int size);
+void R_DecomposeSort( uint64_t sort, int *entityNum, shader_t **shader,
 					 int *fogNum, int *dlightMap );
 
 void R_AddDrawSurf( const surfaceType_t *surface, const shader_t *shader, int fogIndex, int dlightMap );
@@ -1349,6 +1358,9 @@ void	R_ScreenShotTGA_f( void );
 void	R_InitFogTable( void );
 float	R_FogFactor( float s, float t );
 void	R_InitImages( void );
+void R_InitPortalMonitor();
+void R_ShutdownPortalMonitor();
+bool R_PortalMonitorReady(int slot);
 void	R_DeleteTextures( void );
 float	R_SumOfUsedImages( qboolean bUseFormat );
 void	R_InitSkins( void );
@@ -1484,6 +1496,8 @@ LIGHTS
 
 void R_DlightBmodel( bmodel_t *bmodel, qboolean NoLight );
 void R_SetupEntityLighting( const trRefdef_t *refdef, trRefEntity_t *ent );
+void R_ClearBSPGridInstances();
+void R_BuildBSPGridInstances(const trRefdef_t *scene);
 void R_TransformDlights( int count, dlight_t *dl, orientationr_t *ori );
 
 
@@ -1555,7 +1569,8 @@ void R_InitNextFrame( void );
 
 void RE_ClearScene( void );
 void RE_AddRefEntityToScene( const refEntity_t *ent );
-void RE_AddPolyToScene( qhandle_t hShader , int numVerts, const polyVert_t *verts );
+void RE_AddPortalToScene(const jar::portal::View*);
+void RE_AddPolyToScene( qhandle_t hShader , int numVerts, const polyVert_t *verts, int numPolys );
 void RE_AddLightToScene( const vec3_t org, float intensity, float r, float g, float b );
 void RE_RenderScene( const refdef_t *fd );
 
@@ -1634,6 +1649,8 @@ CRenderableSurface():
 };
 
 void R_AddGhoulSurfaces( trRefEntity_t *ent );
+CRenderableSurface *AllocRS();
+void R_ResetGhoul2Surfaces();
 void RB_SurfaceGhoul( CRenderableSurface *surface );
 /*
 Ghoul2 Insert End
@@ -1658,6 +1675,11 @@ void	RB_CalcTransformTexCoords( const texModInfo_t *tmi, float *dstTexCoords );
 void	RB_CalcRotateTexCoords( float rotSpeed, float *dstTexCoords );
 
 void	RB_CalcEnvironmentTexCoords( float *dstTexCoords );
+fog_t RB_BSPFog(int index);
+bool RB_BSPFogIsGlobal(int index, bool includeSpecial = false);
+void R_AssignRiftFog(trRefdef_t& scene, int firstEntity);
+const trRefEntity_t *R_RiftFogRoomAtPoint(const vec3_t point);
+const fog_t *R_RiftCameraFog(const trRefEntity_t *room);
 void	RB_CalcFogTexCoords( float *dstTexCoords );
 void	RB_CalcTurbulentTexCoords( const waveForm_t *wf, float *dstTexCoords );
 
@@ -1784,7 +1806,7 @@ typedef enum {
 // these are sort of arbitrary limits.
 // the limits apply to the sum of all scenes in a frame --
 // the main view, all the 3D icons, etc
-#define	MAX_POLYS		2048
+#define	MAX_POLYS		(2048 * JAR_CAPACITY_MULTIPLIER)
 #define	MAX_POLYVERTS	( MAX_POLYS * 4 )
 
 // all of the information needed by the back end must be
@@ -1796,6 +1818,7 @@ typedef struct {
 	srfPoly_t	polys[MAX_POLYS];
 	polyVert_t	polyVerts[MAX_POLYVERTS];
 	renderCommandList_t	commands;
+ jar::portal::View jarPortals[jar::portal::frameLimit];unsigned numJarPortals;
 } backEndData_t;
 
 extern	backEndData_t	*backEndData;

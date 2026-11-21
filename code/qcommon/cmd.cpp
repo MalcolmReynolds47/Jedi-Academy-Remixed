@@ -1,3 +1,4 @@
+#include "qcommon/jar_diagnostics.h"
 /*
 ===========================================================================
 Copyright (C) 1999 - 2005, Id Software, Inc.
@@ -704,6 +705,10 @@ void	Cmd_ExecuteString( const char *text ) {
 
 	// execute the command line
 	Cmd_TokenizeString( text );
+	if(!Q_stricmp(Cmd_Argv(0),"npc") || !Q_stricmp(Cmd_Argv(0),"map") ||
+	   !Q_stricmp(Cmd_Argv(0),"devmap") || !Q_stricmp(Cmd_Argv(0),"load") ||
+	   !Q_stricmp(Cmd_Argv(0),"save") || !Q_stricmp(Cmd_Argv(0),"vid_restart"))
+		JAR_Log(1,"command","execute","%s",text);
 	if ( !Cmd_Argc() ) {
 		return;		// no tokens
 	}

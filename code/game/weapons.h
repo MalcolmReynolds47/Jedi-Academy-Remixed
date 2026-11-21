@@ -79,9 +79,15 @@ typedef enum //# weapon_e
 	WP_SCEPTER,
 	WP_NOGHRI_STICK,
 
+    // Appended IDs preserve every native weapon and save index.
+    WP_PHYSGUN,
+    WP_TOOLGUN,
 	//# #eol
 	WP_NUM_WEAPONS
 } weapon_t;
+constexpr int WP_NATIVE_WEAPON_COUNT=29;
+static_assert(WP_PHYSGUN==29 && WP_TOOLGUN==30 && WP_NUM_WEAPONS<32,"Native weapon mask exhausted");
+inline bool JAR_ToolWeapon(int weapon){return weapon==WP_PHYSGUN || weapon==WP_TOOLGUN;}
 
 #define FIRST_WEAPON		WP_SABER		// this is the first weapon for next and prev weapon switching
 #define MAX_PLAYER_WEAPONS	WP_STUN_BATON	// this is the max you can switch to and get with the give all. - FIXME: it's actually this one *minus* one... why?
@@ -101,6 +107,12 @@ typedef enum //# ammo_e
 	AMMO_DETPACK,
 	AMMO_MAX
 } ammo_t;
+
+constexpr int AMMO_UNLIMITED = -1;
+inline bool BG_WeaponHasAmmo(int ammo, int cost)
+{
+	return ammo == AMMO_UNLIMITED || ammo >= cost;
+}
 
 
 typedef struct weaponData_s

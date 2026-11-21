@@ -91,9 +91,9 @@ const int lightmapsFullBright[MAXLIGHTMAPS] =
 const byte stylesDefault[MAXLIGHTMAPS] =
 {
 	LS_NORMAL,
-	LS_NONE,
-	LS_NONE,
-	LS_NONE
+	LS_LSNONE,
+	LS_LSNONE,
+	LS_LSNONE
 };
 
 static void ClearGlobalShader(void)
@@ -1236,7 +1236,12 @@ static qboolean ParseStage( shaderStage_t *stage, const char **text )
 				return qfalse;
 			}
 
-			if ( !Q_stricmp( token, "$whiteimage" ) )
+			const int slot = jar::portal::MonitorImageSlot(token);
+			if (slot >= 0)
+			{
+				stage->bundle[0].image = tr.portalMonitorImages[slot] ? tr.portalMonitorImages[slot] : tr.whiteImage;
+			}
+			else if ( !Q_stricmp( token, "$whiteimage" ) )
 			{
 				stage->bundle[0].image = tr.whiteImage;
 				continue;
@@ -3365,42 +3370,12 @@ given a (potentially erroneous) lightmap index, attempts to load
 an external lightmap image and/or sets the index to a valid number
 ===============
 */
-#define EXTERNAL_LIGHTMAP     "lm_%04d.tga"     // THIS MUST BE IN SYNC WITH Q3MAP2
-static inline const int *R_FindLightmap( const int *lightmapIndex )
-{
-	image_t          *image;
-	char          fileName[ MAX_QPATH ];
-
-	// don't bother with vertex lighting
-	if( *lightmapIndex < 0 )
-		return lightmapIndex;
-
-	// does this lightmap already exist?
-	if( *lightmapIndex < tr.numLightmaps && tr.lightmaps[ *lightmapIndex ] != NULL )
-		return lightmapIndex;
-
-	// bail if no world dir
-	if( tr.worldDir[0] == '\0' )
-	{
-		return lightmapsVertex;
-	}
-
-	// sync up render thread, because we're going to have to load an image
-	R_IssuePendingRenderCommands(); //
-
-	// attempt to load an external lightmap
-	Com_sprintf( fileName, sizeof(fileName), "%s/" EXTERNAL_LIGHTMAP, tr.worldDir, *lightmapIndex );
-	image = R_FindImageFile( fileName, qfalse, qfalse, (qboolean)(r_ext_compressed_lightmaps->integer != 0), GL_CLAMP );
-	if( image == NULL )
-	{
-		return lightmapsVertex;
-	}
-
-	// add it to the lightmap list
-	if( *lightmapIndex >= tr.numLightmaps )
-		tr.numLightmaps = *lightmapIndex + 1;
-	tr.lightmaps[ *lightmapIndex ] = image;
-	return lightmapIndex;
+// BSP loaders have already resolved internal and external lightmaps by owner.
+static inline const int *R_FindLightmap(const int *indices) {
+	if (indices[0] < 0) return indices;
+	for (int i=0; i<MAXLIGHTMAPS; ++i)
+		if (indices[i] >= 0 && (indices[i] >= tr.numLightmaps || !tr.lightmaps[indices[i]])) return lightmapsVertex;
+	return indices;
 }
 
 /*

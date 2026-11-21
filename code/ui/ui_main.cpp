@@ -35,6 +35,8 @@ USER INTERFACE MAIN
 #include "../server/exe_headers.h"
 
 #include "ui_local.h"
+#include "ui_jar.h"
+#include "qcommon/jar_ui_theme.h"
 
 #include "menudef.h"
 
@@ -481,6 +483,7 @@ int Key_GetCatcher( void );
 #define	UI_FPS_FRAMES	4
 void _UI_Refresh( int realtime )
 {
+	UI_JAR_Update(realtime);
 	static int index;
 	static int	previousTimes[UI_FPS_FRAMES];
 
@@ -541,7 +544,11 @@ void _UI_Refresh( int realtime )
 	{
 		if (uiInfo.uiDC.cursorShow == qtrue)
 		{
-			UI_DrawHandlePic( uiInfo.uiDC.cursorx, uiInfo.uiDC.cursory, 48, 48, uiInfo.uiDC.Assets.cursor);
+			const auto cursor=jar::ui::MenuCursor(uiInfo.uiDC.cursorx,uiInfo.uiDC.cursory,uiInfo.uiDC.xscale,uiInfo.uiDC.yscale);
+            // Register through the renderer cache each frame so vid_restart
+            // cannot leave a stale handle. This affects menus, not crosshairs.
+            const auto shader=ui.R_RegisterShaderNoMip("jar/icons/cursor");
+            UI_DrawHandlePic(cursor.x,cursor.y,cursor.w,cursor.h,shader?shader:uiInfo.uiDC.Assets.cursor);
 		}
 	}
 }
@@ -898,6 +905,7 @@ static qboolean UI_RunMenuScript ( const char **args )
 
 	if (String_Parse(args, &name))
 	{
+		if (UI_JAR_Script(name, args)) { return qtrue; }
 		if (Q_stricmp(name, "resetdefaults") == 0)
 		{
 			UI_ResetDefaults();
@@ -2992,6 +3000,7 @@ void UI_LoadMenus(const char *menuFile, qboolean reset)
 	Com_Printf("UI menu load time = %d milli seconds\n", Sys_Milliseconds() - start);
 
 	ui.FS_FreeFile( buffer );	//let go of the buffer
+	UI_JAR_LoadMenus();
 }
 
 /*
@@ -3809,6 +3818,16 @@ static void UI_DrawCrosshair(rectDef_t *rect, float scale, vec4_t color) {
 UI_OwnerDraw
 =================
 */
+static void UI_DrawNativeDataPadFrame(){
+ ui.Draw_DataPad(DP_HUD);
+ auto*menu=Menu_GetFocused();
+ if(!menu||!menu->window.name||Q_strncmp(menu->window.name,"datapad",7)||!Menu_FindItemByName(menu,"jarNativeTitle"))return;
+ const auto& background=jar::ui::background;const auto& panel=jar::ui::panel;const auto& edge=jar::ui::edge;
+ uiInfo.uiDC.fillRect(0,0,640,480,background);
+ uiInfo.uiDC.fillRect(32,52,576,266,panel);uiInfo.uiDC.drawRect(32,52,576,266,1,edge);
+ uiInfo.uiDC.fillRect(32,328,576,99,panel);uiInfo.uiDC.drawRect(32,328,576,99,1,edge);
+}
+
 static void UI_OwnerDraw(float x, float y, float w, float h, float text_x, float text_y, int ownerDraw, int ownerDrawFlags, int align, float special, float scale, vec4_t color, qhandle_t shader, int textStyle, int iFontIndex)
 {
 	rectDef_t rect;
@@ -3828,22 +3847,22 @@ static void UI_OwnerDraw(float x, float y, float w, float h, float text_x, float
 			break;
 
 		case UI_DATAPAD_MISSION:
-			ui.Draw_DataPad(DP_HUD);
+			UI_DrawNativeDataPadFrame();
 			ui.Draw_DataPad(DP_OBJECTIVES);
 			break;
 
 		case UI_DATAPAD_WEAPONS:
-			ui.Draw_DataPad(DP_HUD);
+			UI_DrawNativeDataPadFrame();
 			ui.Draw_DataPad(DP_WEAPONS);
 			break;
 
 		case UI_DATAPAD_INVENTORY:
-			ui.Draw_DataPad(DP_HUD);
+			UI_DrawNativeDataPadFrame();
 			ui.Draw_DataPad(DP_INVENTORY);
 			break;
 
 		case UI_DATAPAD_FORCEPOWERS:
-			ui.Draw_DataPad(DP_HUD);
+			UI_DrawNativeDataPadFrame();
 			ui.Draw_DataPad(DP_FORCEPOWERS);
 			break;
 
@@ -4042,8 +4061,17 @@ void _UI_MouseEvent( int dx, int dy )
 UI_KeyEvent
 =================
 */
+#include "qcommon/jar_ui_navigation.h"
+#include "ui_jar_pointer.inc"
 void _UI_KeyEvent( int key, qboolean down )
 {
+	key = jar::MenuNavigationKey(key, Display_KeyBindPending()!=qfalse);
+    if(UI_JAR_OverlayActive() && key==A_ESCAPE && down){UI_JAR_OverlayClose();return;}
+    if(UI_JAR_OverlayKey(key,down))return;
+    if(UI_JAR_MapPickerKey(key,down))return;
+    if(down && key==A_MOUSE1 && UI_JAR_MapPickerActive() && !UI_JAR_TextEntryActive())
+        Display_MouseMove(nullptr,uiInfo.uiDC.cursorx,uiInfo.uiDC.cursory);
+    UI_JAR_ClickFocus(key,down,uiInfo.uiDC.cursorx,uiInfo.uiDC.cursory);
 /*	extern qboolean SwallowBadNumLockedKPKey( int iKey );
 	if (SwallowBadNumLockedKPKey(key)){
 		return;

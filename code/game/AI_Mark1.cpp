@@ -73,7 +73,7 @@ void NPC_Mark1_Precache(void)
 {
 	G_SoundIndex( "sound/chars/mark1/misc/mark1_wakeup");
 	G_SoundIndex( "sound/chars/mark1/misc/shutdown");
-	G_SoundIndex( "sound/chars/mark1/misc/walk");
+	// Footsteps use animevents.cfg; the legacy walk sound never shipped.
 	G_SoundIndex( "sound/chars/mark1/misc/run");
 	G_SoundIndex( "sound/chars/mark1/misc/death1");
 	G_SoundIndex( "sound/chars/mark1/misc/death2");
@@ -159,6 +159,7 @@ void Mark1Dead_FireRocket (void)
 	G_Sound( NPC, G_SoundIndex("sound/chars/mark1/misc/mark1_fire"));
 
 	gentity_t *missile = CreateMissile( muzzle1, muzzle_dir, BOWCASTER_VELOCITY, 10000, NPC );
+	if (!missile) return;
 
 	missile->classname = "bowcaster_proj";
 	missile->s.weapon = WP_BOWCASTER;
@@ -204,6 +205,7 @@ void Mark1Dead_FireBlaster (void)
 	G_PlayEffect( "bryar/muzzle_flash", muzzle1, muzzle_dir );
 
 	missile = CreateMissile( muzzle1, muzzle_dir, 1600, 10000, NPC );
+	if (!missile) return;
 
 	G_Sound( NPC, G_SoundIndex("sound/chars/mark1/misc/mark1_fire"));
 
@@ -491,6 +493,7 @@ void Mark1_FireBlaster(void)
 	G_Sound( NPC, G_SoundIndex("sound/chars/mark1/misc/mark1_fire"));
 
 	missile = CreateMissile( muzzle1, forward, 1600, 10000, NPC );
+	if (!missile) return;
 
 	missile->classname = "bryar_proj";
 	missile->s.weapon = WP_BRYAR_PISTOL;
@@ -592,6 +595,7 @@ void Mark1_FireRocket(void)
 	G_Sound( NPC, G_SoundIndex("sound/chars/mark1/misc/mark1_fire" ));
 
 	gentity_t *missile = CreateMissile( muzzle1, forward, BOWCASTER_VELOCITY, 10000, NPC );
+	if (!missile) return;
 
 	missile->classname = "bowcaster_proj";
 	missile->s.weapon = WP_BOWCASTER;

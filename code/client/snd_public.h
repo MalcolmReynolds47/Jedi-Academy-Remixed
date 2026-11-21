@@ -29,6 +29,7 @@ void S_Shutdown( void );
 
 // if origin is NULL, the sound will be dynamically sourced from the entity
 void S_AddAmbientLoopingSound( const vec3_t origin, unsigned char volume, sfxHandle_t sfxHandle );
+void S_AddSoundscapeLoop(sfxHandle_t sound,unsigned char volume,int pan);
 void S_StartAmbientSound( const vec3_t origin, int entityNum, unsigned char volume, sfxHandle_t sfxHandle );
 void S_StartSound( const vec3_t origin, int entnum, soundChannel_t entchannel, sfxHandle_t sfx );
 void S_StartLocalSound( sfxHandle_t sfx, int channelNum );

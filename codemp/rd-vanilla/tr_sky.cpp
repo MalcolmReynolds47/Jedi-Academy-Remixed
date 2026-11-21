@@ -798,7 +798,7 @@ void RB_StageIteratorSky( void )
 		return;
 	}
 
-	if (skyboxportal && !(backEnd.refdef.rdflags & RDF_SKYBOXPORTAL))
+	if (skyboxportal && !(backEnd.refdef.rdflags & RDF_SKYBOXPORTAL) && !backEnd.viewParms.portalMonitor)
 	{
 		return;
 	}

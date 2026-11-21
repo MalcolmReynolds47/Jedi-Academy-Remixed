@@ -95,7 +95,7 @@ void G_WriteClientSessionData( gclient_t *client ) {
 
 
 	s2 = "";
-	for (i=0;i< WP_NUM_WEAPONS; i++)
+	for (i=0;i< WP_NATIVE_WEAPON_COUNT; i++)
 	{
 		s2 = va("%s %i",s2, client->sess.missionStats.weaponUsed[i]);
 	}
@@ -193,7 +193,7 @@ void G_ReadSessionData( gclient_t *client ) {
       /* Get next token: */
       var = strtok( NULL, " " );
 	}
-	assert (i==WP_NUM_WEAPONS);
+	assert (i==WP_NATIVE_WEAPON_COUNT);
 }
 
 

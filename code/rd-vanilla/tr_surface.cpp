@@ -366,6 +366,62 @@ static void DoLine2( const vec3_t start, const vec3_t end, const vec3_t up, floa
 	tess.indexes[tess.numIndexes++] = vbase + 3;
 }
 
+static void DoLine_Oriented(const vec3_t start, const vec3_t end, const vec3_t up, float spanWidth)
+{
+	float		spanWidth2;
+	int			vbase;
+
+	vbase = tess.numVertexes;
+
+	spanWidth2 = -spanWidth;
+
+	// FIXME: use quad stamp?
+	VectorMA(start, spanWidth, up, tess.xyz[tess.numVertexes]);
+	tess.texCoords[tess.numVertexes][0][0] = 0;
+	tess.texCoords[tess.numVertexes][0][1] = 0;
+	tess.vertexColors[tess.numVertexes][0] = backEnd.currentEntity->e.shaderRGBA[0];// * 0.25;
+	tess.vertexColors[tess.numVertexes][1] = backEnd.currentEntity->e.shaderRGBA[1];// * 0.25;
+	tess.vertexColors[tess.numVertexes][2] = backEnd.currentEntity->e.shaderRGBA[2];// * 0.25;
+	tess.vertexColors[tess.numVertexes][3] = backEnd.currentEntity->e.shaderRGBA[3];// * 0.25;
+	tess.numVertexes++;
+
+	VectorMA(start, spanWidth2, up, tess.xyz[tess.numVertexes]);
+	tess.texCoords[tess.numVertexes][0][0] = 1;
+	tess.texCoords[tess.numVertexes][0][1] = 0;
+	tess.vertexColors[tess.numVertexes][0] = backEnd.currentEntity->e.shaderRGBA[0];
+	tess.vertexColors[tess.numVertexes][1] = backEnd.currentEntity->e.shaderRGBA[1];
+	tess.vertexColors[tess.numVertexes][2] = backEnd.currentEntity->e.shaderRGBA[2];
+	tess.vertexColors[tess.numVertexes][3] = backEnd.currentEntity->e.shaderRGBA[3];// * 0.25;
+	tess.numVertexes++;
+
+	VectorMA(end, spanWidth, up, tess.xyz[tess.numVertexes]);
+
+	tess.texCoords[tess.numVertexes][0][0] = 0;
+	tess.texCoords[tess.numVertexes][0][1] = backEnd.currentEntity->e.data.line.stscale;
+	tess.vertexColors[tess.numVertexes][0] = backEnd.currentEntity->e.shaderRGBA[0];
+	tess.vertexColors[tess.numVertexes][1] = backEnd.currentEntity->e.shaderRGBA[1];
+	tess.vertexColors[tess.numVertexes][2] = backEnd.currentEntity->e.shaderRGBA[2];
+	tess.vertexColors[tess.numVertexes][3] = backEnd.currentEntity->e.shaderRGBA[3];// * 0.25;
+	tess.numVertexes++;
+
+	VectorMA(end, spanWidth2, up, tess.xyz[tess.numVertexes]);
+	tess.texCoords[tess.numVertexes][0][0] = 1;
+	tess.texCoords[tess.numVertexes][0][1] = backEnd.currentEntity->e.data.line.stscale;
+	tess.vertexColors[tess.numVertexes][0] = backEnd.currentEntity->e.shaderRGBA[0];
+	tess.vertexColors[tess.numVertexes][1] = backEnd.currentEntity->e.shaderRGBA[1];
+	tess.vertexColors[tess.numVertexes][2] = backEnd.currentEntity->e.shaderRGBA[2];
+	tess.vertexColors[tess.numVertexes][3] = backEnd.currentEntity->e.shaderRGBA[3];// * 0.25;
+	tess.numVertexes++;
+
+	tess.indexes[tess.numIndexes++] = vbase;
+	tess.indexes[tess.numIndexes++] = vbase + 1;
+	tess.indexes[tess.numIndexes++] = vbase + 2;
+
+	tess.indexes[tess.numIndexes++] = vbase + 2;
+	tess.indexes[tess.numIndexes++] = vbase + 1;
+	tess.indexes[tess.numIndexes++] = vbase + 3;
+}
+
 //-----------------
 // RB_SurfaceLine
 //-----------------
@@ -388,6 +444,23 @@ static void RB_SurfaceLine( void )
 	VectorNormalize( right );
 
 	DoLine( start, end, right, e->radius);
+}
+
+static void RB_SurfaceOrientedLine(void)
+{
+	refEntity_t *e;
+	vec3_t		right;
+	vec3_t		start, end;
+
+	e = &backEnd.currentEntity->e;
+
+	VectorCopy(e->oldorigin, end);
+	VectorCopy(e->origin, start);
+
+	// compute side vector
+	VectorNormalize(e->axis[1]);
+	VectorCopy(e->axis[1], right);
+	DoLine_Oriented(start, end, right, e->data.line.width*0.5);
 }
 
 /*
@@ -920,6 +993,8 @@ void RB_SurfacePolychain( srfPoly_t *p ) {
 		VectorCopy( p->verts[i].xyz, tess.xyz[numv] );
 		tess.texCoords[numv][0][0] = p->verts[i].st[0];
 		tess.texCoords[numv][0][1] = p->verts[i].st[1];
+		// Portable portal visibility uses the front normal even for unlit stock shaders.
+		if(p->jarPortal)VectorCopy(p->jarPortal->axis[0],tess.normal[numv]);
 		byteAlias_t *baDest = (byteAlias_t *)&tess.vertexColors[numv++],
 			*baSource = (byteAlias_t *)&p->verts[ i ].modulate;
 		baDest->i = baSource->i;
@@ -1734,170 +1809,18 @@ static void RB_SurfaceLathe()
 	}
 }
 
-#define DISK_DEF	4
-#define TUBE_DEF	6
-
-static void RB_SurfaceClouds()
-{
-	// Disk definition
-	float diskStripDef[DISK_DEF] = {
-				0.0f,
-				0.4f,
-				0.7f,
-				1.0f };
-
-	float diskAlphaDef[DISK_DEF] = {
-				1.0f,
-				1.0f,
-				0.4f,
-				0.0f };
-
-	float diskCurveDef[DISK_DEF] = {
-				0.0f,
-				0.0f,
-				0.008f,
-				0.02f };
-
-	// tube definition
-	float tubeStripDef[TUBE_DEF] = {
-				0.0f,
-				0.05f,
-				0.1f,
-				0.5f,
-				0.7f,
-				1.0f };
-
-	float tubeAlphaDef[TUBE_DEF] = {
-				0.0f,
-				0.45f,
-				1.0f,
-				1.0f,
-				0.45f,
-				0.0f };
-
-	float tubeCurveDef[TUBE_DEF] = {
-				0.0f,
-				0.004f,
-				0.006f,
-				0.01f,
-				0.006f,
-				0.0f };
-
-	refEntity_t *e;
-	vec3_t		pt, oldpt;
-	vec3_t		pt2, oldpt2;
-	float		latheStep = 30.0f;
-	float		s, c, temp;
-	float		*stripDef, *alphaDef, *curveDef, ct;
-	int			i, t, vbase;
-
-	e = &backEnd.currentEntity->e;
-
-	// select which type we shall be doing
-	if ( e->renderfx & RF_GROW ) // doing tube type
-	{
-		ct = TUBE_DEF;
-		stripDef = tubeStripDef;
-		alphaDef = tubeAlphaDef;
-		curveDef = tubeCurveDef;
-		e->backlerp *= -1; // needs to be reversed
-	}
-	else
-	{
-		ct = DISK_DEF;
-		stripDef = diskStripDef;
-		alphaDef = diskAlphaDef;
-		curveDef = diskCurveDef;
-	}
-
-	// do the strip def, then lathe this around to make a 3d model
-	for ( i = 0; i < ct - 1; i++ )
-	{
-		VectorSet( oldpt,	(stripDef[i]	* (e->radius - e->rotation)) + e->rotation,	0, curveDef[i] * e->radius * e->backlerp );
-		VectorSet( oldpt2,	(stripDef[i+1]	* (e->radius - e->rotation)) + e->rotation,	0, curveDef[i+1] * e->radius * e->backlerp );
-
-		// lathe section around in a complete circle
-		for ( t = latheStep; t <= 360; t += latheStep )
-		{
-			// rotate every time except last seg
-			if ( t < 360.0f )
-			{
-				VectorCopy( oldpt, pt );
-				VectorCopy( oldpt2, pt2 );
-
-				s = sin( DEG2RAD( latheStep ));
-				c = cos( DEG2RAD( latheStep ));
-
-				// rotate lathe points
-				temp = c * pt[0] - s * pt[1];	// c -s 0
-				pt[1] = s * pt[0] + c * pt[1];	// s  c 0
-				pt[0] = temp;					// 0  0 1
-
-				temp = c * pt2[0] - s * pt2[1];	 // c -s 0
-				pt2[1] = s * pt2[0] + c * pt2[1];// s  c 0
-				pt2[0] = temp;					 // 0  0 1
-			}
-			else
-			{
-				// just glue directly to the def points.
-				VectorSet( pt,	(stripDef[i]	* (e->radius - e->rotation)) + e->rotation,	0, curveDef[i] * e->radius * e->backlerp );
-				VectorSet( pt2,	(stripDef[i+1]	* (e->radius - e->rotation)) + e->rotation,	0, curveDef[i+1] * e->radius * e->backlerp );
-			}
-
-			RB_CHECKOVERFLOW( 4, 6 );
-
-			vbase = tess.numVertexes;
-
-			// Actually generate the necessary verts
-			VectorAdd( e->origin, oldpt, tess.xyz[tess.numVertexes] );
-			tess.texCoords[tess.numVertexes][0][0] = tess.xyz[tess.numVertexes][0] * 0.1f;
-			tess.texCoords[tess.numVertexes][0][1] = tess.xyz[tess.numVertexes][1] * 0.1f;
-			tess.vertexColors[tess.numVertexes][0] =
-			tess.vertexColors[tess.numVertexes][1] =
-			tess.vertexColors[tess.numVertexes][2] = e->shaderRGBA[0] * alphaDef[i];
-			tess.vertexColors[tess.numVertexes][3] = e->shaderRGBA[3];
-			tess.numVertexes++;
-
-			VectorAdd( e->origin, oldpt2, tess.xyz[tess.numVertexes] );
-			tess.texCoords[tess.numVertexes][0][0] = tess.xyz[tess.numVertexes][0] * 0.1f;
-			tess.texCoords[tess.numVertexes][0][1] = tess.xyz[tess.numVertexes][1] * 0.1f;
-			tess.vertexColors[tess.numVertexes][0] =
-			tess.vertexColors[tess.numVertexes][1] =
-			tess.vertexColors[tess.numVertexes][2] = e->shaderRGBA[0] * alphaDef[i+1];
-			tess.vertexColors[tess.numVertexes][3] = e->shaderRGBA[3];
-			tess.numVertexes++;
-
-			VectorAdd( e->origin, pt, tess.xyz[tess.numVertexes] );
-			tess.texCoords[tess.numVertexes][0][0] = tess.xyz[tess.numVertexes][0] * 0.1f;
-			tess.texCoords[tess.numVertexes][0][1] = tess.xyz[tess.numVertexes][1] * 0.1f;
-			tess.vertexColors[tess.numVertexes][0] =
-			tess.vertexColors[tess.numVertexes][1] =
-			tess.vertexColors[tess.numVertexes][2] = e->shaderRGBA[0] * alphaDef[i];
-			tess.vertexColors[tess.numVertexes][3] = e->shaderRGBA[3];
-			tess.numVertexes++;
-
-			VectorAdd( e->origin, pt2, tess.xyz[tess.numVertexes] );
-			tess.texCoords[tess.numVertexes][0][0] = tess.xyz[tess.numVertexes][0] * 0.1f;
-			tess.texCoords[tess.numVertexes][0][1] = tess.xyz[tess.numVertexes][1] * 0.1f;
-			tess.vertexColors[tess.numVertexes][0] =
-			tess.vertexColors[tess.numVertexes][1] =
-			tess.vertexColors[tess.numVertexes][2] = e->shaderRGBA[0] * alphaDef[i+1];
-			tess.vertexColors[tess.numVertexes][3] = e->shaderRGBA[3];
-			tess.numVertexes++;
-
-			tess.indexes[tess.numIndexes++] = vbase;
-			tess.indexes[tess.numIndexes++] = vbase + 1;
-			tess.indexes[tess.numIndexes++] = vbase + 3;
-
-			tess.indexes[tess.numIndexes++] = vbase + 3;
-			tess.indexes[tess.numIndexes++] = vbase + 2;
-			tess.indexes[tess.numIndexes++] = vbase;
-
-			// Shuffle new points to old
-			VectorCopy2( pt, oldpt );
-			VectorCopy2( pt2, oldpt2 );
-		}
-	}
+#include "rd-common/jar_cloud_geometry.h"
+static void RB_SurfaceClouds(){
+ const refEntity_t&e=backEnd.currentEntity->e;
+ jar::cloud::Geometry(e.radius,e.rotation,e.backlerp,(e.renderfx&RF_GROW)!=0,e.origin,e.axis,[&](const jar::cloud::Vertex*v){
+  RB_CHECKOVERFLOW(4,6);const int base=tess.numVertexes;
+  for(int i=0;i<4;++i){const int n=tess.numVertexes++;
+   VectorCopy(v[i].point,tess.xyz[n]);tess.texCoords[n][0][0]=v[i].uv[0];tess.texCoords[n][0][1]=v[i].uv[1];
+   for(int c=0;c<3;++c)tess.vertexColors[n][c]=e.shaderRGBA[c]*v[i].shade;
+   tess.vertexColors[n][3]=e.shaderRGBA[3];
+  }
+  for(int index:{0,1,3,3,2,0})tess.indexes[tess.numIndexes++]=base+index;
+ });
 }
 
 
@@ -1951,14 +1874,17 @@ void RB_SurfaceEntity( surfaceType_t *surfType ) {
 	case RT_ORIENTED_QUAD:
 		RB_SurfaceOrientedQuad();
 		break;
-	case RT_LINE:
-		RB_SurfaceLine();
+	case RT_BEAM:
+		RB_SurfaceBeam();
 		break;
 	case RT_ELECTRICITY:
 		RB_SurfaceElectricity();
 		break;
-	case RT_BEAM:
-		RB_SurfaceBeam();
+	case RT_LINE:
+		RB_SurfaceLine();
+		break;
+	case RT_ORIENTEDLINE:
+		RB_SurfaceOrientedLine();
 		break;
 	case RT_SABER_GLOW:
 		RB_SurfaceSaberGlow();
@@ -1966,6 +1892,30 @@ void RB_SurfaceEntity( surfaceType_t *surfType ) {
 	case RT_CYLINDER:
 		RB_SurfaceCylinder();
 		break;
+	case RT_ENT_CHAIN:
+	{
+		static trRefEntity_t tempEnt = *backEnd.currentEntity;
+
+		//rww - if not static then currentEntity is garbage because
+		//this is a local. This was not static in sof2.. but I guess
+		//they never check ce.renderfx so it didn't show up.
+
+		const int start = backEnd.currentEntity->e.uRefEnt.uMini.miniStart;
+		const int count = backEnd.currentEntity->e.uRefEnt.uMini.miniCount;
+		assert(count > 0);
+		backEnd.currentEntity = &tempEnt;
+
+		assert(backEnd.currentEntity->e.renderfx >= 0);
+
+		for (int i = 0, j = start; i < count; i++, j++)
+		{
+			backEnd.currentEntity->e = backEnd.refdef.entities[j].e;
+			assert(backEnd.currentEntity->e.renderfx >= 0);
+
+			RB_SurfaceEntity(surfType);
+		}
+	}
+	break;
 	case RT_LATHE:
 		RB_SurfaceLathe();
 		break;

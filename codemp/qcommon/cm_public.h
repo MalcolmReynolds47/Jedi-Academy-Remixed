@@ -33,6 +33,7 @@ clipHandle_t CM_InlineModel( int index );		// 0 = world, 1 + are bmodels
 clipHandle_t CM_TempBoxModel( const vec3_t mins, const vec3_t maxs, int capsule );
 
 void		CM_ModelBounds( clipHandle_t model, vec3_t mins, vec3_t maxs );
+void		CM_GetWorldBounds( vec3_t mins, vec3_t maxs );
 
 int			CM_NumInlineModels( void );
 char		*CM_EntityString (void);
@@ -80,3 +81,13 @@ void CM_DrawDebugSurface( void (*drawPoly)(int color, int numPoints, float *poin
 
 // cm_trace.cpp
 bool CM_CullWorldBox (const cplane_t *frustum, const vec3pair_t bounds);
+
+int CM_JARCollisionPolygons(int model,int mask,void*context,qboolean(*emit)(void*,int,const float*,const float*));
+
+qboolean CM_BSPModelInfo(const char*name,int*first,int*count);
+// -1 queries the main map. Returns 1 for a record, 0 at the end, -1 for invalid data.
+int CM_BSPModelAt(int index, char* name, int size, int* first, int* count, unsigned* checksum);
+qboolean CM_HothSectionSky(int modelIndex, const vec3_t localPoint);
+qboolean CM_YavinSectionSky(int modelIndex, const vec3_t localPoint);
+qboolean CM_RiftSectionAir(int modelIndex, const vec3_t localPoint);
+qboolean CM_KorribanSectionFog(int modelIndex);

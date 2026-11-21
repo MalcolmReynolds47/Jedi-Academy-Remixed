@@ -168,8 +168,8 @@ cvar_t	*r_aspectCorrectFonts;
 
 // the limits apply to the sum of all scenes in a frame --
 // the main view, all the 3D icons, etc
-#define	DEFAULT_MAX_POLYS		600
-#define	DEFAULT_MAX_POLYVERTS	3000
+#define	DEFAULT_MAX_POLYS		16384
+#define	DEFAULT_MAX_POLYVERTS	65536
 cvar_t	*r_maxpolys;
 cvar_t	*r_maxpolyverts;
 int		max_polys;
@@ -1786,6 +1786,7 @@ void R_Init( void ) {
 	InitOpenGL();
 
 	R_InitImages();
+	R_InitPortalMonitor();
 	R_InitShaders(qfalse);
 	R_InitSkins();
 
@@ -1873,6 +1874,7 @@ void RE_Shutdown( qboolean destroyWindow, qboolean restarting ) {
 		R_IssuePendingRenderCommands();
 		if (destroyWindow)
 		{
+			R_ShutdownPortalMonitor();
 			R_DeleteTextures();		// only do this for vid_restart now, not during things like map load
 
 			if ( restarting )
@@ -2007,6 +2009,7 @@ Q_EXPORT refexport_t* QDECL GetRefAPI( int apiVersion, refimport_t *rimp ) {
 	re.AddRefEntityToScene					= RE_AddRefEntityToScene;
 	re.AddMiniRefEntityToScene				= RE_AddMiniRefEntityToScene;
 	re.AddPolyToScene						= RE_AddPolyToScene;
+	re.AddPortalToScene						= RE_AddPortalToScene;
 	re.AddDecalToScene						= RE_AddDecalToScene;
 	re.LightForPoint						= R_LightForPoint;
 	re.AddLightToScene						= RE_AddLightToScene;
@@ -2093,6 +2096,10 @@ Q_EXPORT refexport_t* QDECL GetRefAPI( int apiVersion, refimport_t *rimp ) {
 	re.G2API_GetRagBonePos					= G2API_GetRagBonePos;
 	re.G2API_GetSurfaceIndex				= G2API_GetSurfaceIndex;
 	re.G2API_GetSurfaceName					= G2API_GetSurfaceName;
+	re.G2API_JAR_PoseBounds = G2API_JAR_PoseBounds;
+	re.G2API_JAR_PoseGeometry = G2API_JAR_PoseGeometry;
+	re.G2API_JAR_ApplyFace = G2API_JAR_ApplyFace;
+	re.SetReflectionProbes = [](const jarProbe_t*, int) { return int(JAR_PROBE_UNSUPPORTED); };
 	re.G2API_GetSurfaceOnOff				= G2API_GetSurfaceOnOff;
 	re.G2API_GetSurfaceRenderStatus			= G2API_GetSurfaceRenderStatus;
 	re.G2API_GetTime						= G2API_GetTime;

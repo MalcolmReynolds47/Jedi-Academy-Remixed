@@ -45,6 +45,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define NPCAI_FORM_TELE_NAV		0x00010000	//Tells formation people to use nav info to get to
 #define NPCAI_ENROUTE_TO_HOMEWP 0x00020000	//Lets us know to run our lostenemyscript when we get to homeWp
 #define NPCAI_MATCHPLAYERWEAPON 0x00040000	//Match the player's weapon except when it changes during cinematics
+#define NPCAI_MANUAL_AMMO       0x00080000	//Use the available ammo without native AI top-ups.
 #define NPCAI_DIE_ON_IMPACT		0x00100000	//Next time you crashland, die!
 #define NPCAI_WALKING			0x00200000
 #define NPCAI_STOP_AT_LOS		0x00400000	//Stop Running When We Hit LOS
@@ -381,6 +382,11 @@ public:
 	int			ffireCount;		//sigh... you'd think I'd be able to find a way to do this without having to use 3 int fields, but...
 	int			ffireDebounce;
 	int			ffireFadeDebounce;
+
+	// Saved in the GNAV chunk when present in this workshop save version.
+	uint32_t	workshopGoalOwner,workshopGoalSlot;
+	// Current waypoint, saved with NPC patrol orders separately from the start.
+	uint32_t	workshopPatrolOwner,workshopPatrolSlot;
 
 
 	void sg_export(

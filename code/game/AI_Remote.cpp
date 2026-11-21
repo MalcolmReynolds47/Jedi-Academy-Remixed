@@ -267,6 +267,7 @@ void Remote_Fire (void)
 	AngleVectors (angleToEnemy1, forward, vright, up);
 
 	missile = CreateMissile( NPC->currentOrigin, forward, 1000, 10000, NPC );
+	if (!missile) return;
 
 	G_PlayEffect( "bryar/muzzle_flash", NPC->currentOrigin, forward );
 

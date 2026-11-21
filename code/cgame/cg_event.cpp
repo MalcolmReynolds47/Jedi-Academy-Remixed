@@ -27,8 +27,12 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "cg_media.h"
 #include "FxScheduler.h"
+#include "qcommon/jar_force_boon.h"
 
 #include "../game/anims.h"
+#include "../game/g_items.h"
+#include "../game/g_siege_korriban.h"
+#include "qcommon/jar_force_enlightenment.h"
 
 extern qboolean CG_TryPlayCustomSound( vec3_t origin, int entityNum, soundChannel_t channel, const char *soundName, int customSoundSet );
 extern void FX_KothosBeam( vec3_t start, vec3_t end );
@@ -105,6 +109,15 @@ void CG_ItemPickup( int itemNum, qboolean bHadItem ) {
 //				Com_Printf("%s %s\n", text, data );
 				cgi_Cvar_Set( "cg_WeaponPickupText", va("%s %s\n", text, data));
 				cg.weaponPickupTextTime	= cg.time + 5000;
+			}
+			else
+			{
+				const auto* pickup=jar::enlightenment::Definition(bg_itemlist[itemNum].classname);
+				const auto* title=itemNum==ITM_JAR_FORCE_BOON?jar::forceBoon::title:pickup?pickup->title:nullptr;
+				if (title) {
+					cgi_Cvar_Set("cg_WeaponPickupText",va("%s %s\n",text,title));
+					cg.weaponPickupTextTime=cg.time+5000;
+				}
 			}
 		}
 	}
@@ -332,7 +345,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 			cgi_S_StartSound( NULL, es->number, CHAN_AUTO, cgs.media.landSound  );
 		}
 		else if ( g_entities[es->number].s.weapon == WP_SABER
-			|| (g_entities[es->number].client && (g_entities[es->number].client->ps.forcePowersKnown&(1<<FP_LEVITATION))) )
+			|| (g_entities[es->number].client && (jar::enlightenment::Known(g_entities[es->number].client->ps)&(1<<FP_LEVITATION))) )
 		{//jedi or someone who has force jump (so probably took no damage)
 			CG_TryPlayCustomSound( NULL, es->number, CHAN_BODY, "*land1.wav", CS_BASIC );
 		}
@@ -808,6 +821,8 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 	case EV_PLAY_EFFECT:
 		DEBUGNAME("EV_PLAY_EFFECT");
 		{
+			if(es->time2==jar::siegeKorriban::effectTag&&(cent->gent->spawnflags&4)&&
+			   !CG_SiegeKorribanMediaVisible(cent->gent,cent->lerpOrigin))break;
 			const bool portalEnt = !!es->isPortalEnt; //the fxrunner spawning this effect is within a skyportal, so only render this effect within that portal.
 
 			s = CG_ConfigString( CS_EFFECTS + es->eventParm );

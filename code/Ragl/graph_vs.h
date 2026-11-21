@@ -287,6 +287,7 @@ public:
 			TNODE&	node = mGraph.get_node(nodeHandle);
 			mCells.expand_bounds(node[0], node[1]);
 		}
+		void expand_bounds(float x, float y) { mCells.expand_bounds(x, y); }
 
 	    ////////////////////////////////////////////////////////////////////////////////
 		//

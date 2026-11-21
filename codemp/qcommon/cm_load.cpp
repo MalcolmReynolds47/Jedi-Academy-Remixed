@@ -139,12 +139,12 @@ static void CMod_LoadSubmodels( const lump_t *l, clipMap_t &cm ) {
 
 	if (count < 1)
 		Com_Error (ERR_DROP, "Map with no models");
+	// All loaded maps share this range; reserve the capsule and box handles.
+	if ( count > CAPSULE_MODEL_HANDLE - TotalSubModels ) {
+		Com_Error( ERR_DROP, "Inline models require %d slots; capacity is %d", TotalSubModels+count, CAPSULE_MODEL_HANDLE );
+	}
 	cm.cmodels = (struct cmodel_s *)Hunk_Alloc( count * sizeof( *cm.cmodels ), h_high );
 	cm.numSubModels = count;
-
-	if ( count > MAX_SUBMODELS ) {
-		Com_Error( ERR_DROP, "MAX_SUBMODELS exceeded" );
-	}
 
 	for ( i=0 ; i<count ; i++, in++, out++)
 	{
@@ -622,7 +622,6 @@ static void CM_LoadMap_Actual( const char *name, qboolean clientload, int *check
 { //rwwRMG - function needs heavy modification
 	int				*buf;
 	dheader_t		header;
-	static unsigned	last_checksum;
 	char			origName[MAX_OSPATH];
 	void			*newBuff = 0;
 
@@ -640,7 +639,7 @@ static void CM_LoadMap_Actual( const char *name, qboolean clientload, int *check
 
 	if ( !strcmp( cm.name, name ) && clientload ) {
 		if ( checksum )
-			*checksum = last_checksum;
+			*checksum = cm.checksum;
 		return;
 	}
 
@@ -710,9 +709,9 @@ static void CM_LoadMap_Actual( const char *name, qboolean clientload, int *check
 		Com_Error (ERR_DROP, "Couldn't load %s", name);
 	}
 
-	last_checksum = LittleLong (Com_BlockChecksum (buf, iBSPLen));
+	cm.checksum = LittleLong (Com_BlockChecksum (buf, iBSPLen));
 	if ( checksum )
-		*checksum = last_checksum;
+		*checksum = cm.checksum;
 
 	header = *(dheader_t *)buf;
 	for (size_t i=0 ; i<sizeof(dheader_t)/4 ; i++) {
@@ -1024,7 +1023,6 @@ void CM_ModelBounds( clipHandle_t model, vec3_t mins, vec3_t maxs ) {
 int CM_LoadSubBSP(const char *name, qboolean clientload)
 {
 	int		i;
-	int		checksum;
 	int		count;
 
 	count = cmg.numSubModels;
@@ -1042,7 +1040,8 @@ int CM_LoadSubBSP(const char *name, qboolean clientload)
 		Com_Error (ERR_DROP, "CM_LoadSubBSP: too many unique sub BSPs");
 	}
 
-	CM_LoadMap_Actual(name, clientload, &checksum, SubBSP[NumSubBSP] );
+	CM_LoadMap_Actual(name, clientload, nullptr, SubBSP[NumSubBSP] );
+	Q_strncpyz(SubBSP[NumSubBSP].name,name,sizeof(SubBSP[NumSubBSP].name));
 	NumSubBSP++;
 
 	return count;
@@ -1118,3 +1117,11 @@ int CM_ModelContents(  clipHandle_t model, int subBSPIndex )
 
 	return CM_ModelContents_Actual(model, &SubBSP[subBSPIndex]);
 }
+
+#include "cm_patch.h"
+#define JAR_CM_MP
+#include "../../code/qcommon/cm_jar_geometry.inc"
+#undef JAR_CM_MP
+
+#include "../../code/qcommon/cm_jar_bsp.inc"
+#include "cm_jar_bsp_registry.inc"

@@ -533,6 +533,8 @@ static void R_AddWorldSurface( msurface_t *surf, int dlightBits, qboolean noView
 R_AddBrushModelSurfaces
 =================
 */
+#include "../../shared/qcommon/jar_yavin_sky.h"
+
 void R_AddBrushModelSurfaces ( trRefEntity_t *ent ) {
 	bmodel_t	*bmodel;
 	int			clip;
@@ -563,7 +565,10 @@ void R_AddBrushModelSurfaces ( trRefEntity_t *ent ) {
 //		R_DlightBmodel( bmodel, true );
 //	}
 
+	const int sectionPass = ent->e.renderfx & (RF_JAR_SECTION_ARENA | RF_JAR_SECTION_BACKDROP);
 	for ( i = 0 ; i < bmodel->numSurfaces ; i++ ) {
+		if (sectionPass && !jar::sectionSky::SubmitSurface(bmodel->numSurfaces, i, sectionPass == RF_JAR_SECTION_BACKDROP))
+			continue;
 		R_AddWorldSurface( bmodel->firstSurface + i, tr.currentEntity->dlightBits, qtrue );
 	}
 }

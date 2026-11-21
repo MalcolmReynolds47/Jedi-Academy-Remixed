@@ -26,6 +26,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "snd_local.h"
 #include "snd_mp3.h"
 #include "snd_ambient.h"
+#include "snd_jar_overlay.inc"
 
 #include <string>
 
@@ -765,6 +766,7 @@ static qboolean S_LoadSound_Actual( sfx_t *sfx )
 		len = strlen(sLoadName);
 	}
 
+	S_JAR_SelectSound(sLoadName,sizeof(sLoadName),len,psExt);
 	if (!S_LoadSound_FileLoadAndNameAdjuster(sLoadName, &data, &size, len))
 	{
 		return qfalse;

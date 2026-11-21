@@ -22,10 +22,27 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "g_local.h"
+#include "jar_mp_emplaced.h"
+#include "jar_mp_crystal_crate.h"
 #include "w_saber.h"
 #include "qcommon/q_shared.h"
 
 #define	MISSILE_PRESTEP_TIME	50
+
+static gentity_t *ShooterMissileSource(const gentity_t *missile)
+{
+	const int slot = missile->jarShooterSource - 1;
+	unsigned epoch = 0;
+	if (slot < MAX_CLIENTS || slot >= ENTITYNUM_WORLD ||
+		!JAR_MP_ShooterSource(&g_entities[slot], &epoch) || epoch != missile->jarShooterEpoch)
+		return NULL;
+	return &g_entities[slot];
+}
+
+static qboolean ShooterMissileCurrent(const gentity_t *missile, int slot, unsigned epoch)
+{
+	return missile->inuse && JAR_MP_EntityEpoch(slot) == epoch;
+}
 
 extern void laserTrapStick( gentity_t *ent, vec3_t endpos, vec3_t normal );
 extern void Jedi_Decloak( gentity_t *self );
@@ -93,7 +110,7 @@ void G_ReflectMissile( gentity_t *ent, gentity_t *missile, vec3_t forward )
 	{//you are mine, now!
 		missile->r.ownerNum = ent->s.number;
 	}
-	if ( missile->s.weapon == WP_ROCKET_LAUNCHER )
+	if ( missile->s.weapon == WP_ROCKET_LAUNCHER && !missile->jarShooterSource )
 	{//stop homing
 		missile->think = 0;
 		missile->nextthink = 0;
@@ -138,7 +155,7 @@ void G_DeflectMissile( gentity_t *ent, gentity_t *missile, vec3_t forward )
 	{//you are mine, now!
 		missile->r.ownerNum = ent->s.number;
 	}
-	if ( missile->s.weapon == WP_ROCKET_LAUNCHER )
+	if ( missile->s.weapon == WP_ROCKET_LAUNCHER && !missile->jarShooterSource )
 	{//stop homing
 		missile->think = 0;
 		missile->nextthink = 0;
@@ -189,7 +206,10 @@ void G_BounceMissile( gentity_t *ent, trace_t *trace ) {
 
 	if (ent->s.weapon == WP_THERMAL)
 	{ //slight hack for hit sound
-		G_Sound(ent, CHAN_BODY, G_SoundIndex(va("sound/weapons/thermal/bounce%i.wav", Q_irand(1, 2))));
+		if (ent->jarShooterSource)
+			G_ShooterBounceSound(ent);
+		else
+			G_Sound(ent, CHAN_BODY, G_SoundIndex(va("sound/weapons/thermal/bounce%i.wav", Q_irand(1, 2))));
 	}
 	else if (ent->s.weapon == WP_SABER)
 	{
@@ -218,41 +238,41 @@ G_ExplodeMissile
 Explode a missile without an impact
 ================
 */
-void G_ExplodeMissile( gentity_t *ent ) {
-	vec3_t		dir;
-	vec3_t		origin;
+void G_ExplodeMissile(gentity_t *ent)
+{
+	vec3_t dir = {0, 0, 1}, origin;
+	const qboolean shooter = ent->jarShooterSource != 0;
+	const int slot = ent->s.number;
+	const unsigned epoch = shooter ? JAR_MP_EntityEpoch(slot) : 0;
+	gentity_t *attacker = shooter ? ShooterMissileSource(ent) : ent->parent;
 
-	BG_EvaluateTrajectory( &ent->s.pos, level.time, origin );
-	SnapVector( origin );
-	G_SetOrigin( ent, origin );
-
-	// we don't have a valid direction, so just point straight up
-	dir[0] = dir[1] = 0;
-	dir[2] = 1;
-
+	BG_EvaluateTrajectory(&ent->s.pos, level.time, origin);
+	SnapVector(origin);
+	G_SetOrigin(ent, origin);
 	ent->s.eType = ET_GENERAL;
-	G_AddEvent( ent, EV_MISSILE_MISS, DirToByte( dir ) );
-
+	G_AddEvent(ent, EV_MISSILE_MISS, DirToByte(dir));
 	ent->freeAfterEvent = qtrue;
-
 	ent->takedamage = qfalse;
-	// splash damage
-	if ( ent->splashDamage ) {
-		if( G_RadiusDamage( ent->r.currentOrigin, ent->parent, ent->splashDamage, ent->splashRadius, ent,
-				ent, ent->splashMethodOfDeath ) )
+	if (shooter)
+	{
+		ent->r.contents = 0;
+		ent->s.loopSound = 0;
+	}
+	if (ent->splashDamage && (!shooter || attacker))
+	{
+		const qboolean scored = G_RadiusDamage(ent->r.currentOrigin, attacker, ent->splashDamage,
+			ent->splashRadius, ent, ent, ent->splashMethodOfDeath);
+		if (shooter && !ShooterMissileCurrent(ent, slot, epoch))
+			return;
+		if (scored && !shooter)
 		{
-			if (ent->parent)
-			{
-				g_entities[ent->parent->s.number].client->accuracy_hits++;
-			}
-			else if (ent->activator)
-			{
-				g_entities[ent->activator->s.number].client->accuracy_hits++;
-			}
+			if (ent->parent && ent->parent->client)
+				ent->parent->client->accuracy_hits++;
+			else if (ent->activator && ent->activator->client)
+				ent->activator->client->accuracy_hits++;
 		}
 	}
-
-	trap->LinkEntity( (sharedEntity_t *)ent );
+	trap->LinkEntity((sharedEntity_t *)ent);
 }
 
 void G_RunStuckMissile( gentity_t *ent )
@@ -294,14 +314,10 @@ void G_BounceProjectile( vec3_t start, vec3_t impact, vec3_t dir, vec3_t endout 
 
 
 //-----------------------------------------------------------------------------
-gentity_t *CreateMissile( vec3_t org, vec3_t dir, float vel, int life,
-							gentity_t *owner, qboolean altFire)
+static gentity_t *InitMissile(gentity_t *missile, vec3_t org, const vec3_t dir,
+							float vel, int life, gentity_t *owner, qboolean altFire)
 //-----------------------------------------------------------------------------
 {
-	gentity_t	*missile;
-
-	missile = G_Spawn();
-
 	missile->nextthink = level.time + life;
 	missile->think = G_FreeEntity;
 	missile->s.eType = ET_MISSILE;
@@ -327,6 +343,35 @@ gentity_t *CreateMissile( vec3_t org, vec3_t dir, float vel, int life,
 	return missile;
 }
 
+gentity_t *CreateMissile(vec3_t org, vec3_t dir, float vel, int life, gentity_t *owner, qboolean altFire)
+{
+	return InitMissile(G_Spawn(), org, dir, vel, life, owner, altFire);
+}
+
+gentity_t *G_TryCreateMissile(vec3_t org, const vec3_t dir, float vel, int life, gentity_t *owner, qboolean altFire)
+{
+	gentity_t *missile = G_TrySpawn();
+	return missile ? InitMissile(missile, org, dir, vel, life, owner, altFire) : NULL;
+}
+
+gentity_t *G_TryMissileEvent(const vec3_t origin, int event)
+{
+	gentity_t *entity = G_TrySpawn();
+	if (!entity)
+		return NULL;
+	entity->classname = "jar_shooter_effect";
+	entity->s.eType = ET_EVENTS + event;
+	entity->eventTime = level.time;
+	entity->freeAfterEvent = qtrue;
+	vec3_t snapped;
+	VectorCopy(origin, snapped);
+	SnapVector(snapped);
+	G_SetOrigin(entity, snapped);
+	VectorCopy(origin, entity->s.origin);
+	trap->LinkEntity((sharedEntity_t *)entity);
+	return entity;
+}
+
 void G_MissileBounceEffect( gentity_t *ent, vec3_t org, vec3_t dir )
 {
 	//FIXME: have an EV_BOUNCE_MISSILE event that checks the s.weapon and does the appropriate effect
@@ -337,11 +382,23 @@ void G_MissileBounceEffect( gentity_t *ent, vec3_t org, vec3_t dir )
 		break;
 	case WP_BLASTER:
 	case WP_BRYAR_PISTOL:
-		G_PlayEffectID( G_EffectIndex("blaster/deflect"), ent->r.currentOrigin, dir );
+		if (ent->jarShooterSource)
+		{
+			gentity_t *event = G_TryMissileEvent(ent->r.currentOrigin, EV_PLAY_EFFECT_ID);
+			if (event)
+			{
+				event->s.eventParm = G_EffectIndex("blaster/deflect");
+				vectoangles(dir, event->s.angles);
+			}
+		}
+		else
+			G_PlayEffectID(G_EffectIndex("blaster/deflect"), ent->r.currentOrigin, dir);
 		break;
 	default:
 		{
-			gentity_t *te = G_TempEntity( org, EV_SABER_BLOCK );
+			gentity_t *te = ent->jarShooterSource ? G_TryMissileEvent(org, EV_SABER_BLOCK) : G_TempEntity(org, EV_SABER_BLOCK);
+			if (!te)
+				break;
 			VectorCopy(org, te->s.origin);
 			VectorCopy(dir, te->s.angles);
 			te->s.eventParm = 0;
@@ -350,6 +407,19 @@ void G_MissileBounceEffect( gentity_t *ent, vec3_t org, vec3_t dir )
 		}
 		break;
 	}
+}
+
+static void MissileSaberBlock(gentity_t *missile, const vec3_t normal)
+{
+	gentity_t *event = missile->jarShooterSource ? G_TryMissileEvent(missile->r.currentOrigin, EV_SABER_BLOCK) :
+		G_TempEntity(missile->r.currentOrigin, EV_SABER_BLOCK);
+	if (!event)
+		return;
+	VectorCopy(missile->r.currentOrigin, event->s.origin);
+	VectorCopy(normal, event->s.angles);
+	event->s.eventParm = 0;
+	event->s.weapon = 0;
+	event->s.legsAnim = 0;
 }
 
 /*
@@ -363,8 +433,19 @@ void G_MissileImpact( gentity_t *ent, trace_t *trace ) {
 	gentity_t		*other;
 	qboolean		hitClient = qfalse;
 	qboolean		isKnockedSaber = qfalse;
-
-	other = &g_entities[trace->entityNum];
+	const qboolean shooter = ent->jarShooterSource != 0;
+	const int targetSlot = trace->entityNum;
+	other = &g_entities[targetSlot];
+	const qboolean ownedTarget = shooter || JAR_MP_CrystalCrateRootState(&other->s);
+	const int shotSlot = ent->s.number;
+	const unsigned shotEpoch = ownedTarget ? JAR_MP_EntityEpoch(shotSlot) : 0;
+	const unsigned targetEpoch = ownedTarget ? JAR_MP_EntityEpoch(targetSlot) : 0;
+	gentity_t *shooterSource = shooter ? ShooterMissileSource(ent) : NULL;
+	if (shooter && !shooterSource)
+	{
+		G_FreeEntity(ent);
+		return;
+	}
 
 	// check for bounce
 	if ( !other->takedamage &&
@@ -410,6 +491,13 @@ void G_MissileImpact( gentity_t *ent, trace_t *trace ) {
 		return;
 	}
 	*/
+
+	if (shooter)
+	{
+		const gentity_t *target = (other->r.contents & CONTENTS_LIGHTSABER) ? &g_entities[other->r.ownerNum] : other;
+		if (target->takedamage && JAR_MP_ShooterDamageDenied(ent, target))
+			goto killProj;
+	}
 
 	if ((other->r.contents & CONTENTS_LIGHTSABER) && !isKnockedSaber)
 	{ //hit this person's saber, so..
@@ -510,15 +598,9 @@ void G_MissileImpact( gentity_t *ent, trace_t *trace ) {
 		WP_SaberCanBlock(other, ent->r.currentOrigin, 0, 0, qtrue, 0))
 	{ //only block one projectile per 200ms (to prevent giant swarms of projectiles being blocked)
 		vec3_t fwd;
-		gentity_t *te;
 		int otherDefLevel = other->client->ps.fd.forcePowerLevel[FP_SABER_DEFENSE];
 
-		te = G_TempEntity( ent->r.currentOrigin, EV_SABER_BLOCK );
-		VectorCopy(ent->r.currentOrigin, te->s.origin);
-		VectorCopy(trace->plane.normal, te->s.angles);
-		te->s.eventParm = 0;
-		te->s.weapon = 0;//saberNum
-		te->s.legsAnim = 0;//bladeNum
+		MissileSaberBlock(ent, trace->plane.normal);
 
 		/*if (other->client->ps.velocity[2] > 0 ||
 			other->client->pers.cmd.forwardmove ||
@@ -580,7 +662,6 @@ void G_MissileImpact( gentity_t *ent, trace_t *trace ) {
 			otherOwner->client->ps.saberBlockTime < level.time*/)
 		{ //for now still deflect even if saberBlockTime >= level.time because it hit the actual saber
 			vec3_t fwd;
-			gentity_t *te;
 			int otherDefLevel = otherOwner->client->ps.fd.forcePowerLevel[FP_SABER_DEFENSE];
 
 			//in this case, deflect it even if we can't actually block it because it hit our saber
@@ -590,12 +671,7 @@ void G_MissileImpact( gentity_t *ent, trace_t *trace ) {
 				WP_SaberBlockNonRandom(otherOwner, ent->r.currentOrigin, qtrue);
 			}
 
-			te = G_TempEntity( ent->r.currentOrigin, EV_SABER_BLOCK );
-			VectorCopy(ent->r.currentOrigin, te->s.origin);
-			VectorCopy(trace->plane.normal, te->s.angles);
-			te->s.eventParm = 0;
-			te->s.weapon = 0;//saberNum
-			te->s.legsAnim = 0;//bladeNum
+			MissileSaberBlock(ent, trace->plane.normal);
 
 			/*if (otherOwner->client->ps.velocity[2] > 0 ||
 				otherOwner->client->pers.cmd.forwardmove ||
@@ -657,7 +733,8 @@ void G_MissileImpact( gentity_t *ent, trace_t *trace ) {
 			vec3_t	velocity;
 			qboolean didDmg = qfalse;
 
-			if( LogAccuracyHit( other, &g_entities[ent->r.ownerNum] ) ) {
+			gentity_t *attacker = shooter ? shooterSource : &g_entities[ent->r.ownerNum];
+			if (LogAccuracyHit(other, attacker)) {
 				g_entities[ent->r.ownerNum].client->accuracy_hits++;
 				hitClient = qtrue;
 			}
@@ -685,7 +762,7 @@ void G_MissileImpact( gentity_t *ent, trace_t *trace ) {
 				}
 				else
 				{
-					G_Damage (other, ent, &g_entities[ent->r.ownerNum], velocity,
+					G_Damage (other, ent, attacker, velocity,
 						/*ent->s.origin*/ent->r.currentOrigin, ent->damage,
 						DAMAGE_HALF_ABSORB, ent->methodOfDeath);
 					didDmg = qtrue;
@@ -693,10 +770,18 @@ void G_MissileImpact( gentity_t *ent, trace_t *trace ) {
 			}
 			else
 			{
-				G_Damage (other, ent, &g_entities[ent->r.ownerNum], velocity,
+				G_Damage (other, ent, attacker, velocity,
 					/*ent->s.origin*/ent->r.currentOrigin, ent->damage,
 					0, ent->methodOfDeath);
 				didDmg = qtrue;
+			}
+
+			if (ownedTarget && (!ent->inuse || JAR_MP_EntityEpoch(shotSlot) != shotEpoch))
+				return;
+			if (ownedTarget && (!other->inuse || JAR_MP_EntityEpoch(targetSlot) != targetEpoch))
+			{
+				other = &g_entities[ENTITYNUM_WORLD];
+				goto killProj;
 			}
 
 			if (didDmg && other && other->client)
@@ -767,6 +852,8 @@ killProj:
 	// one, rather than changing the missile into the explosion?
 
 	if ( other->takedamage && other->client && !isKnockedSaber ) {
+		if (ent->genericValue10 && ent->classname && !strcmp(ent->classname, JAR_MP_EWEB_SHOT_CLASS))
+			ent->s.emplacedOwner = ent->genericValue10;
 		G_AddEvent( ent, EV_MISSILE_HIT, DirToByte( trace->plane.normal ) );
 		ent->s.otherEntityNum = other->s.number;
 	} else if( trace->surfaceFlags & SURF_METALSTEPS ) {
@@ -788,15 +875,20 @@ killProj:
 	G_SetOrigin( ent, trace->endpos );
 
 	ent->takedamage = qfalse;
-	// splash damage (doesn't apply to person directly hit)
-	if ( ent->splashDamage ) {
-		if( G_RadiusDamage( trace->endpos, ent->parent, ent->splashDamage, ent->splashRadius,
-			other, ent, ent->splashMethodOfDeath ) ) {
-			if( !hitClient
-				&& g_entities[ent->r.ownerNum].client ) {
-				g_entities[ent->r.ownerNum].client->accuracy_hits++;
-			}
-		}
+	if (shooter)
+	{
+		ent->r.contents = 0;
+		ent->s.loopSound = 0;
+	}
+	// Splash damage does not apply to the entity already hit directly.
+	if (ent->splashDamage && (!shooter || (shooterSource = ShooterMissileSource(ent))))
+	{
+		const qboolean scored = G_RadiusDamage(trace->endpos, shooter ? shooterSource : ent->parent,
+			ent->splashDamage, ent->splashRadius, other, ent, ent->splashMethodOfDeath);
+		if (shooter && !ShooterMissileCurrent(ent, shotSlot, shotEpoch))
+			return;
+		if (scored && !hitClient && !shooter && g_entities[ent->r.ownerNum].client)
+			g_entities[ent->r.ownerNum].client->accuracy_hits++;
 	}
 
 	if (ent->s.weapon == G2_MODEL_PART)
@@ -817,6 +909,22 @@ void G_RunMissile( gentity_t *ent ) {
 	trace_t		tr;
 	int			passent;
 	qboolean	isKnockedSaber = qfalse;
+	const qboolean shooter = ent->jarShooterSource != 0;
+	const int shotSlot = ent->s.number;
+	const unsigned shotEpoch = shooter ? JAR_MP_EntityEpoch(shotSlot) : 0;
+	if (shooter)
+	{
+		if (!ShooterMissileSource(ent))
+		{
+			G_FreeEntity(ent);
+			return;
+		}
+		if (ent->think == G_ExplodeMissile && ent->s.pos.trType == TR_STATIONARY)
+		{
+			G_RunThink(ent);
+			return;
+		}
+	}
 
 	if (ent->neverFree && ent->s.weapon == WP_SABER && (ent->flags & FL_BOUNCE_HALF))
 	{
@@ -980,6 +1088,8 @@ void G_RunMissile( gentity_t *ent ) {
 #endif
 
 		G_MissileImpact( ent, &tr );
+		if (shooter && !ShooterMissileCurrent(ent, shotSlot, shotEpoch))
+			return;
 
 		if (tr.entityNum == ent->s.otherEntityNum)
 		{ //if the impact event other and the trace ent match then it's ok to do the g2 mark

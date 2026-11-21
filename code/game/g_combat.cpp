@@ -24,6 +24,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // g_combat.c
 
 #include "g_local.h"
+#include "g_randomizer.h"
+#include "g_workshop.h"
 #include "b_local.h"
 #include "g_functions.h"
 #include "anims.h"
@@ -33,6 +35,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_vehicles.h"
 #include "Q3_Interface.h"
 #include "g_navigator.h"
+#include "g_siege_item.h"
+#include "g_subbsp_ownership.h"
+#include "qcommon/jar_force_enlightenment.h"
 
 #define TURN_OFF			0x00000100
 
@@ -203,6 +208,7 @@ gentity_t *TossClientItems( gentity_t *self )
 		{
 			// spawn the item
 			dropped = Drop_Item( self, item, 0, qtrue );
+			if (!dropped) return NULL;
 			//TEST: dropped items never go away
 			dropped->e_ThinkFunc = thinkF_NULL;
 			dropped->nextthink = -1;
@@ -325,81 +331,7 @@ void G_DropKey( gentity_t *self )
 	self->message = NULL;
 }
 
-void ObjectDie (gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int damage, int meansOfDeath )
-{
-	if(self->target)
-		G_UseTargets(self, attacker);
-
-	//remove my script_targetname
-	G_FreeEntity( self );
-}
-/*
-==================
-ExplodeDeath
-==================
-*/
-
-//FIXME: all hacked up...
-
-void ExplodeDeath( gentity_t *self )
-{
-//	gentity_t	*tent;
-	vec3_t		forward;
-
-	self->takedamage = qfalse;//stop chain reaction runaway loops
-
-	self->s.loopSound = 0;
-
-	VectorCopy( self->currentOrigin, self->s.pos.trBase );
-
-//	tent = G_TempEntity( self->s.origin, EV_FX_EXPLOSION );
-	AngleVectors(self->s.angles, forward, NULL, NULL);  // FIXME: letting effect always shoot up?  Might be ok.
-
-	if ( self->fxID > 0 )
-	{
-		G_PlayEffect( self->fxID, self->currentOrigin, forward );
-	}
-//	else
-//	{
-//		CG_SurfaceExplosion( self->currentOrigin, forward, 20.0f, 12.0f, ((self->spawnflags&4)==qfalse) );	//FIXME: This needs to be consistent to all exploders!
-//		G_Sound(self, self->sounds );
-//	}
-
-	if(self->splashDamage > 0 && self->splashRadius > 0)
-	{
-		gentity_t *attacker = self;
-		if ( self->owner )
-		{
-			attacker = self->owner;
-		}
-		G_RadiusDamage( self->currentOrigin, attacker, self->splashDamage, self->splashRadius,
-				attacker, MOD_UNKNOWN );
-	}
-
-	ObjectDie( self, self, self, 20, 0 );
-}
-
-void ExplodeDeath_Wait( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int damage, int meansOfDeath,int dFlags,int hitLoc )
-{
-	self->e_DieFunc = dieF_NULL;
-	self->nextthink = level.time + Q_irand(100, 500);
-	self->e_ThinkFunc = thinkF_ExplodeDeath;
-}
-
-void ExplodeDeath( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int damage, int meansOfDeath,int dFlags,int hitLoc )
-{
-	self->currentOrigin[2] += 16; // me bad for hacking this.  should either do it in the effect file or make a custom explode death??
-	ExplodeDeath( self );
-}
-
-void GoExplodeDeath( gentity_t *self, gentity_t *other, gentity_t *activator)
-{
-	G_ActivateBehavior(self,BSET_USE);
-
-	self->targetname = NULL;	//Make sure this entity cannot be told to explode again (recursive death fix)
-
-	ExplodeDeath( self );
-}
+#include "g_object_explosion.inc"
 
 qboolean G_ActivateBehavior (gentity_t *self, int bset );
 void G_CheckVictoryScript(gentity_t *self)
@@ -811,7 +743,7 @@ void G_StartMatrixEffect( gentity_t *ent, int meFlags = 0, int length = 1000, fl
 		return;
 	}
 
-	gentity_t	*matrix = G_Spawn();
+	gentity_t	*matrix = G_TrySpawn();
 	if ( matrix )
 	{
 		G_SetOrigin( matrix, ent->currentOrigin );
@@ -873,7 +805,6 @@ qboolean G_JediInRoom( vec3_t from )
 	}
 	return qfalse;
 }
-
 qboolean G_GetHitLocFromSurfName( gentity_t *ent, const char *surfName, int *hitLoc, vec3_t point, vec3_t dir, vec3_t bladeDir, int mod, saberType_t saberType )
 {
 	qboolean dismember = qfalse;
@@ -979,7 +910,7 @@ qboolean G_GetHitLocFromSurfName( gentity_t *ent, const char *surfName, int *hit
 		{
 			*hitLoc = HL_GENERIC1;
 		}
-		else if (!Q_stricmp("torso_shield",surfName))
+		else if ((!Q_stricmp("torso_shield",surfName)||!Q_stricmp("torso_shield_off",surfName)))
 		{
 			*hitLoc = HL_GENERIC2;
 		}
@@ -1994,7 +1925,8 @@ static qboolean G_Dismember( gentity_t *ent, vec3_t point,
 //0) create a limb ent
 	VectorCopy( point, newPoint );
 	newPoint[2] += 6;
-	limb = G_Spawn();
+	limb = G_TrySpawn();
+	if (!limb) return qfalse;
 	G_SetOrigin( limb, newPoint );
 	//VectorCopy(ent->currentAngles,limbAngles);
 	//G_SetAngles( limb, ent->currentAngles );
@@ -3609,6 +3541,10 @@ extern void Wampa_DropVictim( gentity_t *self );
 extern void WP_StopForceHealEffects( gentity_t *self );
 void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int damage, int meansOfDeath, int dflags, int hitLoc )
 {
+	if (G_JAR_PreserveActor(self)) return; // retain ICARUS/navigation before death mutates them
+	// v1 does not reconstruct disintegrated/dismembered model state.
+	JarActorRecoveryDeath jarRecovery((meansOfDeath==MOD_SNIPER || (dflags&DAMAGE_DISMEMBER)) ? nullptr : self);
+
 	int			anim;
 	int			contents;
 	qboolean	deathScript = qfalse;
@@ -3781,7 +3717,7 @@ void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 			AI_DeleteSelfFromGroup( self );
 		}
 
-		if ( self->NPC->tempGoal )
+		if ( self->NPC->tempGoal && !jarRecovery.Active() )
 		{
 			G_FreeEntity( self->NPC->tempGoal );
 			self->NPC->tempGoal = NULL;
@@ -3944,7 +3880,7 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 	{
 		if ( attacker->client && !attacker->s.number )
 		{
-			if ( self->client )
+			if ( self->client && G_JAR_CountCampaignActor(*self) )
 			{//killed a client
 				if ( self->client->playerTeam == TEAM_ENEMY
 					|| self->client->playerTeam == TEAM_FREE
@@ -4172,6 +4108,8 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 	self->s.loopSound = 0;
 
 	// remove powerups
+	if (self->client->ps.powerups[PW_FORCE_ENLIGHTENMENT])
+		WP_EndForceEnlightenment(self);
 	memset( self->client->ps.powerups, 0, sizeof(self->client->ps.powerups) );
 
 	if ( (self->client->ps.eFlags&EF_HELD_BY_RANCOR)
@@ -4190,7 +4128,7 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 	else if ( self->client->NPC_class == CLASS_GALAKMECH )
 	{//FIXME: need keyframed explosions?
 		NPC_SetAnim( self, SETANIM_BOTH, BOTH_DEATH1, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
-		G_AddEvent( self, Q_irand(EV_DEATH1, EV_DEATH3), self->health );
+		if (!jarRecovery.Active()) G_AddEvent( self, Q_irand(EV_DEATH1, EV_DEATH3), self->health );
 	}
 	else if ( self->client->NPC_class == CLASS_ATST )
 	{//FIXME: need keyframed explosions
@@ -4227,19 +4165,19 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 		NPC_SetAnim( self, SETANIM_BOTH, anim, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
 		if ( meansOfDeath == MOD_KNOCKOUT || meansOfDeath == MOD_MELEE )
 		{
-			G_AddEvent( self, EV_JUMP, 0 );
+			if (!jarRecovery.Active()) G_AddEvent( self, EV_JUMP, 0 );
 		}
 		else if ( meansOfDeath == MOD_FORCE_DRAIN )
 		{
-			G_AddEvent( self, EV_WATER_DROWN, 0 );
+			if (!jarRecovery.Active()) G_AddEvent( self, EV_WATER_DROWN, 0 );
 		}
 		else if ( meansOfDeath == MOD_GAS )
 		{
-			G_AddEvent( self, EV_WATER_DROWN, 0 );
+			if (!jarRecovery.Active()) G_AddEvent( self, EV_WATER_DROWN, 0 );
 		}
 		else
 		{
-			G_AddEvent( self, Q_irand(EV_DEATH1, EV_DEATH3), self->health );
+			if (!jarRecovery.Active()) G_AddEvent( self, Q_irand(EV_DEATH1, EV_DEATH3), self->health );
 		}
 	}
 	else if ( meansOfDeath == MOD_FALLING || (self->client->ps.legsAnim == BOTH_FALLDEATH1INAIR && self->client->ps.torsoAnim == BOTH_FALLDEATH1INAIR) || (self->client->ps.legsAnim == BOTH_FALLDEATH1 && self->client->ps.torsoAnim == BOTH_FALLDEATH1) )
@@ -4253,11 +4191,11 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 			NPC_SetAnim(self, SETANIM_BOTH, BOTH_FALLDEATH1INAIR, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD);
 			if ( !self->NPC )
 			{
-				G_SoundOnEnt( self, CHAN_VOICE, "*falling1.wav" );//CHAN_VOICE_ATTEN
+				if (!jarRecovery.Active()) G_SoundOnEnt( self, CHAN_VOICE, "*falling1.wav" );//CHAN_VOICE_ATTEN
 			}
 			else if (!(self->NPC->aiFlags&NPCAI_DIE_ON_IMPACT) )
 			{
-				G_SoundOnEnt( self, CHAN_VOICE, "*falling1.wav" );//CHAN_VOICE_ATTEN
+				if (!jarRecovery.Active()) G_SoundOnEnt( self, CHAN_VOICE, "*falling1.wav" );//CHAN_VOICE_ATTEN
 				//so we don't do this again
 				self->NPC->aiFlags |= NPCAI_DIE_ON_IMPACT;
 				//self->client->ps.gravity *= 0.5;//Fall a bit slower
@@ -4295,7 +4233,7 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 			if ( gi.VoiceVolume[self->s.number]
 				&& self->NPC && (self->NPC->aiFlags&NPCAI_DIE_ON_IMPACT) )
 			{//I was talking, so cut it off... with a jump sound?
-				G_SoundOnEnt( self, CHAN_VOICE_ATTEN, "*pain100.wav" );
+				if (!jarRecovery.Active()) G_SoundOnEnt( self, CHAN_VOICE_ATTEN, "*pain100.wav" );
 			}
 		}
 	}
@@ -4326,11 +4264,11 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 					{
 						if ( !self->NPC )
 						{
-							G_SoundOnEnt( self, CHAN_VOICE, "*falling1.wav" );//CHAN_VOICE_ATTEN
+							if (!jarRecovery.Active()) G_SoundOnEnt( self, CHAN_VOICE, "*falling1.wav" );//CHAN_VOICE_ATTEN
 						}
 						else if (!(self->NPC->aiFlags&NPCAI_DIE_ON_IMPACT) )
 						{
-							G_SoundOnEnt( self, CHAN_VOICE, "*falling1.wav" );//CHAN_VOICE_ATTEN
+							if (!jarRecovery.Active()) G_SoundOnEnt( self, CHAN_VOICE, "*falling1.wav" );//CHAN_VOICE_ATTEN
 							self->NPC->aiFlags |= NPCAI_DIE_ON_IMPACT;
 							self->client->ps.friction = 0;
 						}
@@ -4490,7 +4428,7 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 		if ( meansOfDeath == MOD_KNOCKOUT )
 		{
 			//FIXME: knock-out sound, and don't remove me
-			G_AddEvent( self, EV_JUMP, 0 );
+			if (!jarRecovery.Active()) G_AddEvent( self, EV_JUMP, 0 );
 			G_UseTargets2( self, self, self->target2 );
 			G_AlertTeam( self, attacker, 512, 32 );
 			if ( self->NPC )
@@ -4500,7 +4438,7 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 		}
 		else if ( meansOfDeath == MOD_GAS || meansOfDeath == MOD_FORCE_DRAIN )
 		{
-			G_AddEvent( self, EV_WATER_DROWN, 0 );
+			if (!jarRecovery.Active()) G_AddEvent( self, EV_WATER_DROWN, 0 );
 			G_AlertTeam( self, attacker, 512, 32 );
 			if ( self->NPC )
 			{//stick around for a while
@@ -4517,9 +4455,12 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 			self->flags |= FL_DISINTEGRATED;
 			self->svFlags |= SVF_BROADCAST;
 			tent = G_TempEntity( spot, EV_DISINTEGRATION );
-			tent->s.eventParm = PW_DISRUPTION;
-			tent->svFlags |= SVF_BROADCAST;
-			tent->owner = self;
+			if (tent)
+			{
+				tent->s.eventParm = PW_DISRUPTION;
+				tent->svFlags |= SVF_BROADCAST;
+				tent->owner = self;
+			}
 
 			G_AlertTeam( self, attacker, 512, 88 );
 
@@ -4562,7 +4503,7 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 				G_AlertTeam( self, attacker, 512, 0 );
 				if ( gi.VoiceVolume[self->s.number] )
 				{//I was talking, so cut it off... with a jump sound?
-					G_SoundOnEnt( self, CHAN_VOICE, "*jump1.wav" );
+					if (!jarRecovery.Active()) G_SoundOnEnt( self, CHAN_VOICE, "*jump1.wav" );
 				}
 			}
 			else
@@ -4575,15 +4516,15 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 				{
 					if ( meansOfDeath == MOD_KNOCKOUT || meansOfDeath == MOD_MELEE )
 					{
-						G_AddEvent( self, EV_JUMP, 0 );
+						if (!jarRecovery.Active()) G_AddEvent( self, EV_JUMP, 0 );
 					}
 					else if ( meansOfDeath == MOD_GAS || meansOfDeath == MOD_FORCE_DRAIN )
 					{
-						G_AddEvent( self, EV_WATER_DROWN, 0 );
+						if (!jarRecovery.Active()) G_AddEvent( self, EV_WATER_DROWN, 0 );
 					}
 					else
 					{
-						G_AddEvent( self, Q_irand(EV_DEATH1, EV_DEATH3), self->health );
+						if (!jarRecovery.Active()) G_AddEvent( self, Q_irand(EV_DEATH1, EV_DEATH3), self->health );
 					}
 					G_DeathAlert( self, attacker );
 				}
@@ -4668,7 +4609,7 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 		G_UseTargets2( self, self, self->target4 );
 	}
 
-	if ( !deathScript && !(self->svFlags&SVF_KILLED_SELF) )
+	if ( !deathScript && !(self->svFlags&SVF_KILLED_SELF) && !jarRecovery.Active() )
 	{
 		//Should no longer run scripts
 		//WARNING!!! DO NOT DO THIS WHILE RUNNING A SCRIPT, ICARUS WILL HANDLE IT, but it's bad
@@ -4676,10 +4617,10 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 	}
 
 	// Free up any timers we may have on us.
-	TIMER_Clear( self->s.number );
+	if (!jarRecovery.Active()) TIMER_Clear( self->s.number );
 
 	// Set pending objectives to failed
-	OBJ_SetPendingObjectives(self);
+	if (!jarRecovery.Active()) OBJ_SetPendingObjectives(self);
 
 	gi.linkentity (self);
 
@@ -5389,7 +5330,7 @@ void G_TrackWeaponUsage( gentity_t *self, gentity_t *inflictor, int add, int mod
 			break;
 		}
 	}
-	if ( weapon != WP_NONE )
+	if ( weapon > WP_NONE && weapon < WP_NATIVE_WEAPON_COUNT )
 	{
 		self->client->sess.missionStats.weaponUsed[weapon] += add;
 	}
@@ -5533,7 +5474,14 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 		return;
 	}
 
-	if (( targ->flags & FL_DMG_BY_HEAVY_WEAP_ONLY ) && !( dflags & DAMAGE_HEAVY_WEAP_CLASS ))
+	if ( (targ->svFlags & SVF_BBRUSH) && targ->noDamageTeam && attacker && attacker->client &&
+	     attacker->client->playerTeam == targ->noDamageTeam && G_SiegeKorribanRoom(G_SubBSPOwner(targ)) )
+	{
+		return;
+	}
+
+	if (( targ->flags & FL_DMG_BY_HEAVY_WEAP_ONLY ) && !( dflags & DAMAGE_HEAVY_WEAP_CLASS ) &&
+	    !G_SiegeKorribanHeavyHit(*targ,mod))
 	{
 		// can only be damaged by an heavy type weapon...but impacting missile was in the heavy weap class...so we just aren't taking damage from this missile
 		return;
@@ -5781,14 +5729,14 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 		//rage
 		if ( (targ->client->ps.forcePowersActive & (1 << FP_RAGE)))
 		{
-			damage = floor((float)damage/(float)(targ->client->ps.forcePowerLevel[FP_RAGE]*2));
+			damage = floor((float)damage/(float)(jar::enlightenment::Rank(targ->client->ps,FP_RAGE)*2));
 		}
 		//protect
 		if ( (targ->client->ps.forcePowersActive & (1 << FP_PROTECT)) )
 		{
 			/*
 			qboolean doSound = qfalse;
-			switch ( targ->client->ps.forcePowerLevel[FP_PROTECT] )
+			switch ( jar::enlightenment::Rank(targ->client->ps,FP_PROTECT) )
 			{
 			case FORCE_LEVEL_3:
 				//NOTE: purposely falls through
@@ -5809,7 +5757,7 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 				case MOD_EXPLOSIVE_SPLASH:
 				case MOD_CRUSH:
 					doSound = (Q_irand(0,4)==0);
-					damage = floor((float)damage/(float)(targ->client->ps.forcePowerLevel[FP_PROTECT]-1));
+					damage = floor((float)damage/(float)(jar::enlightenment::Rank(targ->client->ps,FP_PROTECT)-1));
 					break;
 				}
 			case FORCE_LEVEL_2:
@@ -5828,7 +5776,7 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 				case MOD_ENERGY_SPLASH:
 				case MOD_ELECTROCUTE:
 					doSound = (Q_irand(0,4)==0);
-					damage = floor((float)damage/(float)(targ->client->ps.forcePowerLevel[FP_PROTECT]));
+					damage = floor((float)damage/(float)(jar::enlightenment::Rank(targ->client->ps,FP_PROTECT)));
 					break;
 				}
 			case FORCE_LEVEL_1:
@@ -5845,7 +5793,7 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 				case MOD_LAVA:
 				case MOD_FALLING:
 					doSound = (Q_irand(0,4)==0);
-					damage = floor((float)damage/(float)(targ->client->ps.forcePowerLevel[FP_PROTECT]+1));
+					damage = floor((float)damage/(float)(jar::enlightenment::Rank(targ->client->ps,FP_PROTECT)+1));
 					break;
 				}
 				break;
@@ -5903,7 +5851,7 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 				case MOD_FALLING:
 				case MOD_MELEE:
 					doSound = (qboolean)(Q_irand(0,4)==0);
-					switch ( targ->client->ps.forcePowerLevel[FP_PROTECT] )
+					switch ( jar::enlightenment::Rank(targ->client->ps,FP_PROTECT) )
 					{
 					case FORCE_LEVEL_4:
 						//je suis invincible!!!
@@ -5967,7 +5915,7 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 				|| mod == MOD_FORCE_GRIP
 				|| mod == MOD_FORCE_DRAIN )
 			{
-				int absorbed = targ->client->ps.forcePowerLevel[FP_ABSORB]*5;
+				int absorbed = jar::enlightenment::Rank(targ->client->ps,FP_ABSORB)*5;
 				damage -= absorbed;
 				if ( damage < 0 )
 				{
@@ -5997,7 +5945,7 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 
 	if ( targ->client
 		&& (targ->client->ps.forcePowersActive&(1<<FP_PROTECT))
-		&& targ->client->ps.forcePowerLevel[FP_PROTECT] == FORCE_LEVEL_3 )
+		&& jar::enlightenment::Rank(targ->client->ps,FP_PROTECT) == FORCE_LEVEL_3 )
 	{//pretend there was no damage?
 		knockback = 0;
 	}
@@ -6283,99 +6231,101 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 				{
 					trace_t	trace;
 
-					gentity_t *limb = G_Spawn();
-
-
-					// Setup Basic Limb Entity Properties
-					//------------------------------------
-					limb->s.radius		= 60;
-					limb->s.eType		= ET_THINKER;
-					limb->s.eFlags	   |= EF_BOUNCE_HALF;
-					limb->classname		= "limb";
-					limb->owner			= targ;
-					limb->enemy			= targ->enemy;
-					limb->svFlags		= SVF_USE_CURRENT_ORIGIN;
-					limb->playerModel	= 0;
-					limb->clipmask		= MASK_SOLID;
-					limb->contents		= CONTENTS_CORPSE;
-					limb->e_clThinkFunc = clThinkF_CG_Limb;
-					limb->e_ThinkFunc	= thinkF_LimbThink;
-					limb->nextthink		= level.time + FRAMETIME;
-					limb->physicsBounce = 0.2f;
-					limb->craniumBone	= targ->craniumBone;
-					limb->cervicalBone	= targ->cervicalBone;
-					limb->thoracicBone	= targ->thoracicBone;
-					limb->upperLumbarBone = targ->upperLumbarBone;
-					limb->lowerLumbarBone = targ->lowerLumbarBone;
-					limb->hipsBone		= targ->hipsBone;
-					limb->rootBone		= targ->rootBone;
-
-
-					// Calculate The Location Of The New Limb
-					//----------------------------------------
-					G_SetOrigin( limb, targ->currentOrigin );
-
-					VectorCopy( targ->currentOrigin, limb->s.pos.trBase );
-					VectorSet( limb->mins, -3.0f, -3.0f, -6.0f );
-					VectorSet( limb->maxs, 3.0f, 3.0f, 6.0f );
-					VectorCopy( targ->s.modelScale, limb->s.modelScale );
-
-
-
-
-					//copy the g2 instance of the victim into the limb
-					//-------------------------------------------------
- 					gi.G2API_CopyGhoul2Instance(targ->ghoul2, limb->ghoul2, -1);
-					gi.G2API_SetRootSurface(limb->ghoul2, limb->playerModel, "lfront");
-					gi.G2API_SetSurfaceOnOff(&targ->ghoul2[targ->playerModel], "lfront", TURN_OFF);
-					animation_t *animations = level.knownAnimFileSets[targ->client->clientInfo.animFileIndex].animations;
-
-					//play the proper dismember anim on the limb
-					gi.G2API_SetBoneAnim(&limb->ghoul2[limb->playerModel], 0, animations[BOTH_A1_BL_TR].firstFrame,
-							animations[BOTH_A1_BL_TR].numFrames + animations[BOTH_A1_BL_TR].firstFrame,
-							BONE_ANIM_OVERRIDE_FREEZE, 1, level.time, -1, -1 );
-
-
-					// Check For Start In Solid
-					//--------------------------
-					gi.linkentity( limb );
-					gi.trace( &trace, limb->s.pos.trBase, limb->mins, limb->maxs, limb->s.pos.trBase, limb->s.number, limb->clipmask, (EG2_Collision)0, 0 );
-					if ( trace.startsolid )
+					gentity_t *limb = G_TrySpawn();
+					if (limb)
 					{
-						limb->s.pos.trBase[2] -= limb->mins[2];
+
+						// Setup Basic Limb Entity Properties
+						//------------------------------------
+						limb->s.radius		= 60;
+						limb->s.eType		= ET_THINKER;
+						limb->s.eFlags	   |= EF_BOUNCE_HALF;
+						limb->classname		= "limb";
+						limb->owner			= targ;
+						limb->enemy			= targ->enemy;
+						limb->svFlags		= SVF_USE_CURRENT_ORIGIN;
+						limb->playerModel	= 0;
+						limb->clipmask		= MASK_SOLID;
+						limb->contents		= CONTENTS_CORPSE;
+						limb->e_clThinkFunc = clThinkF_CG_Limb;
+						limb->e_ThinkFunc	= thinkF_LimbThink;
+						limb->nextthink		= level.time + FRAMETIME;
+						limb->physicsBounce = 0.2f;
+						limb->craniumBone	= targ->craniumBone;
+						limb->cervicalBone	= targ->cervicalBone;
+						limb->thoracicBone	= targ->thoracicBone;
+						limb->upperLumbarBone = targ->upperLumbarBone;
+						limb->lowerLumbarBone = targ->lowerLumbarBone;
+						limb->hipsBone		= targ->hipsBone;
+						limb->rootBone		= targ->rootBone;
+
+
+						// Calculate The Location Of The New Limb
+						//----------------------------------------
+						G_SetOrigin( limb, targ->currentOrigin );
+
+						VectorCopy( targ->currentOrigin, limb->s.pos.trBase );
+						VectorSet( limb->mins, -3.0f, -3.0f, -6.0f );
+						VectorSet( limb->maxs, 3.0f, 3.0f, 6.0f );
+						VectorCopy( targ->s.modelScale, limb->s.modelScale );
+
+
+
+
+						//copy the g2 instance of the victim into the limb
+						//-------------------------------------------------
+ 					gi.G2API_CopyGhoul2Instance(targ->ghoul2, limb->ghoul2, -1);
+						gi.G2API_SetRootSurface(limb->ghoul2, limb->playerModel, "lfront");
+						gi.G2API_SetSurfaceOnOff(&targ->ghoul2[targ->playerModel], "lfront", TURN_OFF);
+						animation_t *animations = level.knownAnimFileSets[targ->client->clientInfo.animFileIndex].animations;
+
+						//play the proper dismember anim on the limb
+						gi.G2API_SetBoneAnim(&limb->ghoul2[limb->playerModel], 0, animations[BOTH_A1_BL_TR].firstFrame,
+								animations[BOTH_A1_BL_TR].numFrames + animations[BOTH_A1_BL_TR].firstFrame,
+								BONE_ANIM_OVERRIDE_FREEZE, 1, level.time, -1, -1 );
+
+
+						// Check For Start In Solid
+						//--------------------------
+						gi.linkentity( limb );
 						gi.trace( &trace, limb->s.pos.trBase, limb->mins, limb->maxs, limb->s.pos.trBase, limb->s.number, limb->clipmask, (EG2_Collision)0, 0 );
 						if ( trace.startsolid )
 						{
-							limb->s.pos.trBase[2] += limb->mins[2];
+							limb->s.pos.trBase[2] -= limb->mins[2];
 							gi.trace( &trace, limb->s.pos.trBase, limb->mins, limb->maxs, limb->s.pos.trBase, limb->s.number, limb->clipmask, (EG2_Collision)0, 0 );
+							if ( trace.startsolid )
+							{
+								limb->s.pos.trBase[2] += limb->mins[2];
+								gi.trace( &trace, limb->s.pos.trBase, limb->mins, limb->maxs, limb->s.pos.trBase, limb->s.number, limb->clipmask, (EG2_Collision)0, 0 );
 
+							}
 						}
-					}
 
-					// If Started In Solid, Remove
-					//-----------------------------
-					if ( trace.startsolid )
-					{
-						G_FreeEntity( limb );
-					}
+						// If Started In Solid, Remove
+						//-----------------------------
+						if ( trace.startsolid )
+						{
+							G_FreeEntity( limb );
+						}
 
-					// Otherwise, Send It Flying
-					//---------------------------
-					else
-					{
-						VectorCopy( limb->s.pos.trBase, limb->currentOrigin );
-						VectorScale( targ->client->ps.velocity, 1.0f, limb->s.pos.trDelta );
-						limb->s.pos.trType		= TR_GRAVITY;
-						limb->s.pos.trTime		= level.time;
+						// Otherwise, Send It Flying
+						//---------------------------
+						else
+						{
+							VectorCopy( limb->s.pos.trBase, limb->currentOrigin );
+							VectorScale( targ->client->ps.velocity, 1.0f, limb->s.pos.trDelta );
+							limb->s.pos.trType		= TR_GRAVITY;
+							limb->s.pos.trTime		= level.time;
 
-						VectorCopy( targ->currentAngles, limb->s.apos.trBase );
-						VectorClear( limb->s.apos.trDelta );
-						limb->s.apos.trTime		= level.time;
-						limb->s.apos.trType		= TR_LINEAR;
-						limb->s.apos.trDelta[0] = Q_irand( -300, 300 );
-						limb->s.apos.trDelta[1] = Q_irand( -800, 800 );
+							VectorCopy( targ->currentAngles, limb->s.apos.trBase );
+							VectorClear( limb->s.apos.trDelta );
+							limb->s.apos.trTime		= level.time;
+							limb->s.apos.trType		= TR_LINEAR;
+							limb->s.apos.trDelta[0] = Q_irand( -300, 300 );
+							limb->s.apos.trDelta[1] = Q_irand( -800, 800 );
 
-						gi.linkentity( limb );
+							gi.linkentity( limb );
+						}
 					}
 				}
 			}
@@ -6838,144 +6788,4 @@ qboolean CanDamage (gentity_t *targ, const vec3_t origin) {
 
 
 	return qfalse;
-}
-
-extern	void	Boba_DustFallNear(const vec3_t origin, int dustcount);
-extern	void	G_GetMassAndVelocityForEnt( gentity_t *ent, float *mass, vec3_t velocity );
-/*
-============
-G_RadiusDamage
-============
-*/
-void G_RadiusDamage ( const vec3_t origin, gentity_t *attacker, float damage, float radius,
-					 gentity_t *ignore, int mod) {
-	float		points, dist;
-	gentity_t	*ent;
-	gentity_t	*entityList[MAX_GENTITIES];
-	int			numListedEntities;
-	vec3_t		mins, maxs;
-	vec3_t		v;
-	vec3_t		dir;
-	int			i, e;
-	int			dFlags = DAMAGE_RADIUS;
-
-	if ( radius < 1 ) {
-		radius = 1;
-	}
-
-	for ( i = 0 ; i < 3 ; i++ ) {
-		mins[i] = origin[i] - radius;
-		maxs[i] = origin[i] + radius;
-	}
-
-	if (mod==MOD_ROCKET)
-	{
-		Boba_DustFallNear(origin, 10);
-	}
-
-	if ( mod == MOD_GAS )
-	{
-		dFlags |= DAMAGE_NO_KNOCKBACK;
-	}
-
-	numListedEntities = gi.EntitiesInBox( mins, maxs, entityList, MAX_GENTITIES );
-
-	for ( e = 0 ; e < numListedEntities ; e++ ) {
-		ent = entityList[ e ];
-
-		if ( ent == ignore )
-			continue;
-		if ( !ent->takedamage )
-			continue;
-		if ( !ent->contents )
-			continue;
-
-		// find the distance from the edge of the bounding box
-		for ( i = 0 ; i < 3 ; i++ ) {
-			if ( origin[i] < ent->absmin[i] ) {
-				v[i] = ent->absmin[i] - origin[i];
-			} else if ( origin[i] > ent->absmax[i] ) {
-				v[i] = origin[i] - ent->absmax[i];
-			} else {
-				v[i] = 0;
-			}
-		}
-
-		dist = VectorLength( v );
-		if ( dist >= radius ) {
-			continue;
-		}
-
-		points = damage * ( 1.0 - dist / radius );
-
-		// Lessen damage to vehicles that are moving away from the explosion
-		if (ent->client && (ent->client->NPC_class==CLASS_VEHICLE || G_IsRidingVehicle(ent)))
-		{
-			gentity_t*	bike = ent;
-
-			if (G_IsRidingVehicle(ent) && ent->owner)
-			{
-				bike = ent->owner;
-			}
-
-			vec3_t	vehMoveDirection;
-			float	vehMoveSpeed;
-
-			vec3_t	explosionDirection;
-			float	explosionDirectionSimilarity;
-
-			float	mass;
-			G_GetMassAndVelocityForEnt( bike, &mass, vehMoveDirection );
-			vehMoveSpeed		= VectorNormalize(vehMoveDirection);
-			if (vehMoveSpeed>300.0f)
-			{
-				VectorSubtract(bike->currentOrigin, origin, explosionDirection);
-				VectorNormalize(explosionDirection);
-
-				explosionDirectionSimilarity = DotProduct(vehMoveDirection, explosionDirection);
-				if (explosionDirectionSimilarity>0.0f)
-				{
-					points *= (1.0f - explosionDirectionSimilarity);
-				}
-			}
-		}
-
-		if (CanDamage (ent, origin))
-		{//FIXME: still do a little damage in in PVS and close?
-			if ( ent->svFlags & (SVF_GLASS_BRUSH|SVF_BBRUSH) )
-			{
-				VectorAdd( ent->absmin, ent->absmax, v );
-				VectorScale( v, 0.5f, v );
-			}
-			else
-			{
-				VectorCopy( ent->currentOrigin, v );
-			}
-
-			VectorSubtract( v, origin, dir);
-			// push the center of mass higher than the origin so players
-			// get knocked into the air more
-			dir[2] += 24;
-
-			if ( ent->svFlags & SVF_GLASS_BRUSH )
-			{
-				if ( points > 1.0f )
-				{
-					// we want to cap this at some point, otherwise it just gets crazy
-					if ( points > 6.0f )
-					{
-						VectorScale( dir, 6.0f, dir );
-					}
-					else
-					{
-						VectorScale( dir, points, dir );
-					}
-				}
-
-				ent->splashRadius = radius;// * ( 1.0 - dist / radius );
-			}
-
-			G_Damage (ent, NULL, attacker, dir, origin, (int)points, dFlags, mod);
-		}
-	}
 }

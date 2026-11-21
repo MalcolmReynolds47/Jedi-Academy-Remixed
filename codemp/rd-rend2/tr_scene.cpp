@@ -42,6 +42,11 @@ R_InitNextFrame
 
 ====================
 */
+#include "../../shared/rd-rend2/tr_jar_probes.inc"
+#define JAR_REND2_MP
+#include "../../code/rd-common/tr_rift_fog.inc"
+#undef JAR_REND2_MP
+
 void R_InitNextFrame( void ) {
 	backEndData->commands.used = 0;
 
@@ -56,6 +61,7 @@ void R_InitNextFrame( void ) {
 	r_firstSceneEntity = 0;
 
 	r_numpolys = 0;
+	backEndData->numJarPortals = 0;
 	r_firstScenePoly = 0;
 
 	r_numpolyverts = 0;
@@ -69,6 +75,11 @@ RE_ClearScene
 ====================
 */
 void RE_ClearScene( void ) {
+	if (tr.world && (tr.skyPortalParms.flags & VPF_JAR_SECTION_SKY)) {
+		tr.world->skyboxportal = 0;
+		tr.skyPortalParms.flags = 0;
+		tr.skyPortalEntities = 0;
+	}
 	r_firstSceneDlight = r_numdlights;
 	r_firstSceneEntity = r_numentities;
 	r_firstScenePoly = r_numpolys;
@@ -95,7 +106,10 @@ void R_AddPolygonSurfaces( const trRefdef_t *refdef ) {
 
 	int i;
 	for ( i = 0, poly = refdef->polys; i < refdef->numPolys ; i++, poly++ ) {
-		shader_t *sh = R_GetShaderByHandle( poly->hShader );
+		if (tr.viewParms.portalMonitor && poly->jarPortal) continue;
+		shader_t *sh = R_GetShaderByHandle(
+			poly->jarPortal&&(!poly->jarSelected||tr.viewParms.isPortal)?poly->jarFallback:
+			(poly->jarMonitorShader ? poly->jarMonitorShader : poly->hShader));
 		R_AddDrawSurf(
 			(surfaceType_t *)poly,
 			REFENTITYNUM_WORLD,
@@ -133,6 +147,7 @@ void RE_AddPolyToScene( qhandle_t hShader, int numVerts, const polyVert_t *verts
 		}
 
 		poly = &backEndData->polys[r_numpolys];
+		poly->jarPortal=nullptr;poly->jarFallback=0;poly->jarSelected=false;poly->jarMonitorShader=0;
 		poly->surfaceType = SF_POLY;
 		poly->hShader = hShader;
 		poly->numVerts = numVerts;
@@ -187,6 +202,9 @@ RE_AddRefEntityToScene
 
 =====================
 */
+#include "../../code/qcommon/jar_portal.h"
+#include "../../code/rd-common/tr_portal_submit.inc"
+
 void RE_AddRefEntityToScene( const refEntity_t *ent ) {
 	vec3_t cross;
 
@@ -493,6 +511,7 @@ void RE_BeginScene(const refdef_t *fd)
 
 	//ri.Printf(PRINT_ALL, "RE_BeginScene Frame: %i, skyportal: %i, entities: %i\n", backEndData->realFrameNumber, int(tr.world->skyboxportal && (tr.refdef.rdflags & RDF_SKYBOXPORTAL)), tr.refdef.num_entities);
 	R_GatherFrameViews(&tr.refdef);
+	R_AssignRiftFog(tr.refdef, tr.world && tr.world->skyboxportal ? tr.skyPortalEntities : 0);
 	RB_UpdateConstants(&tr.refdef);
 }
 
@@ -565,6 +584,8 @@ void RE_RenderScene( const refdef_t *fd )
 		VectorCopy(fd->vieworg, parms.pvsOrigin);
 
 		parms.isSkyPortal = qtrue;
+		if (fd->rdflags & RDF_JAR_SECTION_SKY)
+			parms.flags = VPF_JAR_SECTION_SKY;
 		Com_Memcpy(&tr.skyPortalParms, &parms, sizeof(viewParms_t));
 		Com_Memcpy(tr.skyPortalAreaMask, tr.refdef.areamask, sizeof(tr.refdef.areamask));
 		tr.skyPortalEntities = tr.refdef.num_entities;

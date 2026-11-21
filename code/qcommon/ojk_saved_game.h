@@ -34,7 +34,8 @@ public:
 
 	// Creates a new saved game file for writing.
 	bool create(
-		const std::string& base_file_name);
+		const std::string& base_file_name, bool workshopState=false);
+	int version() const { return version_; }
 
 	// Opens an existing saved game file for reading.
 	bool open(
@@ -128,6 +129,7 @@ public:
 
 
 private:
+	int version_=0;
 	using Buffer = std::vector<uint8_t>;
 	using BufferOffset = Buffer::size_type;
 	using Paths = std::vector<std::string>;

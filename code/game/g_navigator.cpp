@@ -33,6 +33,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../cgame/cg_local.h"
 #include "g_shared.h"
 #include "g_nav.h"
+#include "g_siege_korriban_actor.h"
 
 ////////////////////////////////////////////////////////////////////////////////////////
 // HFile Bindings
@@ -64,6 +65,7 @@ extern vec3_t		playerMaxs;
 ////////////////////////////////////////////////////////////////////////////////////////
 #include "b_local.h"
 #include "g_navigator.h"
+#include "g_waypoints.h"
 #if !defined(RAGL_GRAPH_VS_INC)
 	#include "../Ragl/graph_vs.h"
 #endif
@@ -247,6 +249,7 @@ public:
 		WE_JUMPING,
 		WE_CANBEINVAL,
 		WE_DESIGNERPLACED,
+		WE_PORTABLE,
 
 		WE_MAX
 	};
@@ -323,6 +326,7 @@ public:
 
 };
 const CWayEdge&	GetEdge(int Handle);
+static bool portableNavEdgeClear(const CWayEdge&,int,const gentity_t* actor=nullptr);
 
 
 struct	SNodeSort
@@ -568,6 +572,8 @@ public:
 			return false;
 		}
 
+		if (Edge.mFlags.get_bit(CWayEdge::WE_PORTABLE) && !portableNavEdgeClear(Edge,mActorSize,mActor)) return false;
+
 		if (Edge.mEntityNum!=ENTITYNUM_NONE)
 		{
 			gentity_t*	ent		= &g_entities[Edge.mEntityNum];
@@ -741,6 +747,13 @@ public:
 TGraph				mGraph;
 TGraphRegion		mRegion(mGraph);
 TGraphCells			mCells(mGraph);
+
+static uint64_t waypointRoomNode(int handle);
+static NAV::TNodeHandle waypointRoomNearest(uint64_t room,const vec3_t& position);
+static bool waypointHasWorldNodes();
+static uint64_t waypointActorRoom(const gentity_t* actor){
+	return actor&&G_SiegeKorribanRancor(*actor)?G_SubBSPNamespace(actor):0;
+}
 
 TGraph::search		mSearch;
 CGraphUser			mUser;
@@ -939,6 +952,7 @@ bool		MoveTrace(gentity_t* actor, const CVec3& goalPosition, bool IgnoreAllEnts=
 bool			NAV::GoTo(gentity_t* actor, TNodeHandle target, float MaxDangerLevel)
 {
 	assert(actor!=0 && actor->client!=0);
+	if(waypointActorRoom(actor)!=waypointRoomNode(target))return false;
 
 	// Check If We Already Have A Path
 	//---------------------------------
@@ -994,11 +1008,12 @@ bool			NAV::GoTo(gentity_t* actor, gentity_t* target, float MaxDangerLevel)
 	assert(actor!=0 && actor->client!=0);
 
 	bool		HasPath		= false;
-	TNodeHandle	targetNode	= GetNearestNode(target, true);
+	const auto room=waypointActorRoom(actor);
+	TNodeHandle	targetNode	= room?waypointRoomNearest(room,target->currentOrigin):GetNearestNode(target, true);
 
 	// If The Target Has No Nearest Nav Point, Go To His Last Valid Waypoint Instead
 	//-------------------------------------------------------------------------------
-	if (targetNode==0)
+	if (!targetNode&&!room)
 	{
 		targetNode = target->lastWaypoint;
 	}
@@ -1080,7 +1095,8 @@ bool			NAV::GoTo(gentity_t* actor, const vec3_t& position, float MaxDangerLevel)
 	assert(actor!=0 && actor->client!=0);
 
 	bool		HasPath		= false;
-	TNodeHandle	targetNode	= GetNearestNode(position);
+	const auto room=waypointActorRoom(actor);
+	TNodeHandle	targetNode	= room?waypointRoomNearest(room,position):GetNearestNode(position);
 	if (targetNode!=0)
 	{
 		// If On An Edge, Pick The Safest Of The Two Points
@@ -1184,6 +1200,7 @@ bool			NAV::LoadFromFile(const char *filename, int checksum)
 #endif
 
 	mGraph.clear();
+	G_WaypointReset();
 	mRegion.clear();
 	mCells.clear();
 	mNodeNames.clear();
@@ -2414,6 +2431,12 @@ NAV::TNodeHandle		NAV::GetNearestNode(gentity_t* ent, bool forceRecalcNow, NAV::
 	{
 		return 0;
 	}
+	const auto room=waypointActorRoom(ent);
+	if(room){
+		ent->waypoint=waypointRoomNearest(room,ent->currentOrigin);
+		if(ent->waypoint)ent->lastWaypoint=ent->waypoint;
+		return ent->waypoint;
+	}
 
 	if (ent->waypoint==WAYPOINT_NONE || forceRecalcNow || (level.time>ent->noWaypointTime))
 	{
@@ -2439,7 +2462,7 @@ NAV::TNodeHandle		NAV::GetNearestNode(gentity_t* ent, bool forceRecalcNow, NAV::
 ////////////////////////////////////////////////////////////////////////////////////////
 NAV::TNodeHandle		NAV::GetNearestNode(const vec3_t& position, NAV::TNodeHandle previous, NAV::TNodeHandle goal, int ignoreEnt, bool allowZOffset)
 {
-	if (mGraph.size_edges()>0)
+	if (mGraph.size_edges()>0&&waypointHasWorldNodes())
 	{
 		// Get The List Of Nodes For This Cell Of The Map
 		//------------------------------------------------
@@ -2804,7 +2827,7 @@ bool	NAV::FindPath(gentity_t* actor, NAV::TNodeHandle target, float MaxDangerLev
 
 	// If Either Start Or End Is Invalid, We Can't Do Any Pathing
 	//------------------------------------------------------------
-	if (target==WAYPOINT_NONE)
+	if (target==WAYPOINT_NONE||waypointActorRoom(actor)!=waypointRoomNode(target))
 	{
 		return false;
 	}
@@ -3447,6 +3470,7 @@ bool			NAV::FindPath(gentity_t* actor, gentity_t* target, float MaxDangerLevel)
 	assert(target!=0 && actor!=0);
 	if (target!=0 && actor!=0)
 	{
+		if(waypointActorRoom(actor))return FindPath(actor,target->currentOrigin,MaxDangerLevel);
 		if (target->waypoint==WAYPOINT_NONE)
 		{
 			GetNearestNode(target);
@@ -3468,7 +3492,8 @@ bool			NAV::FindPath(gentity_t* actor, gentity_t* target, float MaxDangerLevel)
 ////////////////////////////////////////////////////////////////////////////////////////
 bool			NAV::FindPath(gentity_t* actor, const vec3_t& position, float MaxDangerLevel)
 {
-	return FindPath(actor, GetNearestNode(position), MaxDangerLevel);
+	const auto room=waypointActorRoom(actor);
+	return FindPath(actor,room?waypointRoomNearest(room,position):GetNearestNode(position),MaxDangerLevel);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -4458,6 +4483,8 @@ bool			STEER::Active(gentity_t* actor)
 ////////////////////////////////////////////////////////////////////////////////////
 bool			STEER::SafeToGoTo(gentity_t* actor, const vec3_t& targetPosition, int targetNode)
 {
+	const auto room=waypointActorRoom(actor);
+	if(room&&waypointRoomNode(targetNode)!=room)targetNode=waypointRoomNearest(room,targetPosition);
 	int		actorNode				= NAV::GetNearestNode(actor, true, targetNode);
 	float	actorToTargetDistance	= Distance(actor->currentOrigin,  targetPosition);
 
@@ -5542,3 +5569,6 @@ void	ClearAllNavStructures(void)
 
 
 
+
+// Live Sandbox nodes share the native graph and A* implementation.
+#include "g_waypoints.inc"

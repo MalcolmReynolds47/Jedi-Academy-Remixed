@@ -25,6 +25,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "../server/exe_headers.h"
 #include "../qcommon/cm_local.h"
+#include "../../shared/qcommon/jar_sweep_hull.h"
+#include "../qcommon/qfiles.h"
+#include "../../shared/qcommon/jar_md3_surface.h"
 
  /*
 Ghoul2 Insert Start
@@ -575,11 +578,13 @@ Ghoul2 Insert End
 	vec3_t		end;
 	int			passEntityNum;
 	int			contentmask;
+	const JarSweepHull* workshopHull;
 /*
 Ghoul2 Insert Start
 */
 	EG2_Collision	eG2TraceType;
 	int			useLod;
+	bool brushOnly;
 	trace_t		trace;			// make sure nothing goes under here for Ghoul2 collision purposes
 /*
 Ghoul2 Insert End
@@ -613,6 +618,7 @@ void SV_ClipMoveToEntities( moveclip_t *clip ) {
 			return;
 		}
 		touch = touchlist[i];
+		if (clip->brushOnly&&!touch->bmodel) continue;
 
 		// see if we should ignore this entity
 		if ( clip->passEntityNum != ENTITYNUM_NONE ) {
@@ -635,9 +641,6 @@ void SV_ClipMoveToEntities( moveclip_t *clip ) {
 		if ( ! ( clip->contentmask & touch->contents ) ) {
 			continue;
 		}
-
-		// might intersect, so do an exact clip
-		clipHandle = SV_ClipHandleForEntity (touch);
 
 		origin = touch->currentOrigin;
 		angles = touch->currentAngles;
@@ -674,7 +677,45 @@ void SV_ClipMoveToEntities( moveclip_t *clip ) {
 		}
 		else
 #endif
+		const bool physgun=clip->eG2TraceType==G2_PHYSGUN;
+		char model[MAX_QPATH]{};
+		if(physgun&&!touch->bmodel&&!touch->client&&touch->s.eType==ET_GENERAL&&
+		   touch->s.modelindex>0&&touch->s.modelindex<MAX_MODELS)
+			SV_GetConfigstring(CS_MODELS+touch->s.modelindex,model,sizeof(model));
+		if(*model&&!Q_stricmp(COM_GetExtension(model),"md3")){
+			float fraction=clip->trace.fraction;
+			vec3_t normal;
+			const bool available=jar::md3::PickFile(model,touch->s.frame,touch->currentOrigin,
+				touch->currentAngles,clip->start,clip->end,fraction,normal,FS_FOpenFileRead,FS_Read,FS_FCloseFile);
+			if(available){
+				if(fraction<clip->trace.fraction){
+					clip->trace.fraction=fraction;
+					clip->trace.entityNum=touch->s.number;
+					clip->trace.contents=touch->contents;
+					vec3_t delta;
+					VectorSubtract(clip->end,clip->start,delta);
+					VectorMA(clip->start,fraction,delta,clip->trace.endpos);
+					VectorCopy(normal,clip->trace.plane.normal);
+				}
+				continue;
+			}
+		}
+		// Explicit Ghoul2 mesh queries retain their polygon path.
+		if (clip->workshopHull && touch->bmodel)
 		{
+			CM_HullTrace(&trace,clip->start,clip->end,SV_ClipHandleForEntity(touch),
+				clip->contentmask,origin,angles,*clip->workshopHull);
+		}
+		else if ((!physgun&&clip->eG2TraceType != G2_NOCOLLIDE) ||
+			!ge->TraceWorkshopProp(touch, origin, touch->currentAngles, clip->start, clip->end,
+				clip->mins, clip->maxs, clip->contentmask, &trace, clip->workshopHull))
+		{
+			clipHandle = SV_ClipHandleForEntity(touch);
+			if (clip->workshopHull)
+				CM_HullTrace(&trace,clip->start,clip->end,clipHandle,
+					clip->contentmask,origin,angles,*clip->workshopHull);
+			else
+			{
 #ifdef __MACOS__
 			// compiler bug with const
 			CM_TransformedBoxTrace ( &trace, (float *)clip->start, (float *)clip->end,
@@ -685,6 +726,7 @@ void SV_ClipMoveToEntities( moveclip_t *clip ) {
 				clip->mins, clip->maxs, clipHandle,  clip->contentmask,
 				origin, angles);
 #endif
+			}
 		//FIXME: when startsolid in another ent, doesn't return correct entityNum
 		//ALSO: 2 players can be standing next to each other and this function will
 		//think they're in each other!!!
@@ -729,7 +771,33 @@ Ghoul2 Insert Start
 */
 
 		// decide if we should do the ghoul2 collision detection right here
-		if ((trace.entityNum == touch->s.number) && (clip->eG2TraceType != G2_NOCOLLIDE))
+		if (physgun&&trace.entityNum==touch->s.number&&touch->ghoul2.size()&&!(touch->contents&CONTENTS_LIGHTSABER))
+		{
+			CCollisionRecord hits[MAX_G2_COLLISIONS];
+			vec3_t modelAngles;
+			VectorCopy(touch->currentAngles,modelAngles);
+			if(touch->client)VectorSet(modelAngles,0,touch->client->legsYaw,0);
+			re.G2API_CollisionDetect(hits,touch->ghoul2,modelAngles,touch->currentOrigin,sv.time,
+				touch->s.number,clip->start,clip->end,touch->s.modelScale,G2VertSpaceServer,G2_COLLIDE,0,0);
+			clip->trace=oldTrace;
+			vec3_t direction;
+			VectorSubtract(clip->end,clip->start,direction);
+			const float length=VectorNormalize(direction);
+			for(const auto& hit:hits){
+				if(hit.mEntityNum!=touch->s.number||!length)continue;
+				vec3_t offset;
+				VectorSubtract(hit.mCollisionPosition,clip->start,offset);
+				const float fraction=DotProduct(offset,direction)/length;
+				if(fraction<0||fraction>=clip->trace.fraction)continue;
+				clip->trace=trace;
+				clip->trace.fraction=fraction;
+				clip->trace.startsolid=oldTrace.startsolid;
+				clip->trace.allsolid=oldTrace.allsolid;
+				VectorCopy(hit.mCollisionPosition,clip->trace.endpos);
+				VectorCopy(hit.mCollisionNormal,clip->trace.plane.normal);
+			}
+		}
+		else if ((trace.entityNum == touch->s.number) && !physgun && (clip->eG2TraceType != G2_NOCOLLIDE))
 		{
 			// do we actually have a ghoul2 model here?
 			if (touch->ghoul2.size() && !(touch->contents & CONTENTS_LIGHTSABER))
@@ -835,7 +903,7 @@ passEntityNum and entities owned by passEntityNum are explicitly not checked.
 /*
 Ghoul2 Insert Start
 */
-void SV_Trace( trace_t *results, const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, const int passEntityNum, const int contentmask, const EG2_Collision eG2TraceType, const int useLod ) {
+static void SV_TraceImpl( trace_t *results, const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, const int passEntityNum, const int contentmask, const EG2_Collision eG2TraceType, const int useLod, const JarSweepHull* hull, bool brushOnly=false ) {
 /*
 Ghoul2 Insert End
 */
@@ -866,7 +934,8 @@ Ghoul2 Insert End
 	//doors, etc.  This prevents us from being able to shorten the trace so that we can
 	//ignore all ents past this endpoint... perhaps need to check the entityNum in this
 	//BoxTrace or have it not clip against entity brushes here.
-	CM_BoxTrace( &clip.trace, start, end, mins, maxs, 0, contentmask );
+	if (hull) CM_HullTrace(&clip.trace,start,end,0,contentmask,vec3_origin,vec3_origin,*hull);
+	else CM_BoxTrace(&clip.trace,start,end,mins,maxs,0,contentmask);
 	clip.trace.entityNum = clip.trace.fraction != 1.0 ? ENTITYNUM_WORLD : ENTITYNUM_NONE;
 	if ( clip.trace.fraction == 0 )
 	{// blocked immediately by the world
@@ -876,6 +945,7 @@ Ghoul2 Insert End
 	}
 
 	clip.contentmask = contentmask;
+	clip.workshopHull = hull;
 /*
 Ghoul2 Insert Start
 */
@@ -931,6 +1001,7 @@ Ghoul2 Insert End
 	}
 
 	// clip to other solid entities
+	clip.brushOnly=brushOnly;
 	SV_ClipMoveToEntities ( &clip );
 
 	//scale the trace back down by the previous fraction
@@ -945,7 +1016,45 @@ addtime:
 */
 }
 
+void SV_Trace(trace_t* results,const vec3_t start,const vec3_t mins,const vec3_t maxs,const vec3_t end,
+ int passEntityNum,int contentmask,EG2_Collision type,int lod){
+ if(type==G2_SINGLE_BRUSH){
+  *results={};
+  results->fraction=1;
+  results->entityNum=ENTITYNUM_NONE;
+  VectorCopy(end,results->endpos);
+  if(passEntityNum<0||passEntityNum>=ge->num_entities)return;
+  const auto* brush=SV_GentityNum(passEntityNum);
+  if(!brush->inuse||!brush->bmodel)return;
+  CM_TransformedBoxTrace(results,start,end,mins?mins:vec3_origin,maxs?maxs:vec3_origin,
+      SV_ClipHandleForEntity(brush),contentmask,brush->currentOrigin,brush->currentAngles);
+  results->entityNum=results->fraction<1||results->startsolid?passEntityNum:ENTITYNUM_NONE;
+  return;
+ }
+ const bool brushOnly=type==G2_BRUSH_ONLY;
+ SV_TraceImpl(results,start,mins,maxs,end,passEntityNum,contentmask,brushOnly?G2_NOCOLLIDE:type,lod,nullptr,brushOnly);
+}
 
+static void SV_TraceQualifiedHull(trace_t* results,const vec3_t start,const vec3_t end,const vec3_t mins,const vec3_t maxs,
+ int passEntityNum,int contentmask,const JarSweepHull& hull,bool brushOnly){
+ const bool valid=hull.pointCount>=4&&hull.pointCount<=JarSweepHull::pointLimit&&
+  hull.faceCount>=4&&hull.faceCount<=JarSweepHull::faceLimit&&hull.edgeCount>=6&&hull.edgeCount<=JarSweepHull::edgeLimit;
+ SV_TraceImpl(results,start,mins,maxs,end,passEntityNum,contentmask,G2_NOCOLLIDE,0,valid?&hull:nullptr,brushOnly);
+}
+
+void SV_TraceMovingHull(trace_t* results,const vec3_t start,const vec3_t end,const vec3_t mins,const vec3_t maxs,
+ int passEntityNum,int contentmask,const JarSweepHull& hull){
+ SV_TraceQualifiedHull(results,start,end,mins,maxs,passEntityNum,contentmask,hull,false);
+}
+
+void SV_TraceSceneryHull(trace_t* results,const vec3_t start,const vec3_t end,const vec3_t mins,const vec3_t maxs,
+ int passEntityNum,int contentmask,const JarSweepHull& hull){
+ SV_TraceQualifiedHull(results,start,end,mins,maxs,passEntityNum,contentmask,hull,true);
+}
+
+void SV_TraceBrushLine(trace_t* results,const vec3_t start,const vec3_t end,int passEntityNum,int contentmask){
+ SV_TraceImpl(results,start,vec3_origin,vec3_origin,end,passEntityNum,contentmask,G2_NOCOLLIDE,0,nullptr,true);
+}
 
 /*
 =============
@@ -969,7 +1078,13 @@ int SV_PointContents( const vec3_t p, int passEntityNum ) {
 		if ( hit->s.number == passEntityNum ) {
 			continue;
 		}
-		// might intersect, so do an exact clip
+		trace_t trace;
+		if (ge->TraceWorkshopProp(hit, hit->currentOrigin, hit->currentAngles,
+			p, p, nullptr, nullptr, ~0, &trace, nullptr))
+		{
+			if (trace.startsolid) contents |= trace.contents;
+			continue;
+		}
 		clipHandle = SV_ClipHandleForEntity( hit );
 
 		c2 = CM_TransformedPointContents (p, clipHandle, hit->s.origin, hit->s.angles);

@@ -208,8 +208,11 @@ static void WP_FireConcussionAlt( gentity_t *ent )
 				{
 					 // we only make this mark on things that can't break or move
 					tent = G_TempEntity( tr.endpos, EV_CONC_ALT_MISS );
-					tent->svFlags |= SVF_BROADCAST;
-					VectorCopy( tr.plane.normal, tent->pos1 );
+					if (tent)
+					{
+						tent->svFlags |= SVF_BROADCAST;
+						VectorCopy( tr.plane.normal, tent->pos1 );
+					}
 					break; // hit solid, but doesn't take damage, so stop the shot...we _could_ allow it to shoot through walls, might be cool?
 				}
 			}
@@ -226,8 +229,11 @@ static void WP_FireConcussionAlt( gentity_t *ent )
 	}
 	//just draw one beam all the way to the end
 	tent = G_TempEntity( tr.endpos, EV_CONC_ALT_SHOT );
-	tent->svFlags |= SVF_BROADCAST;
-	VectorCopy( muzzle, tent->s.origin2 );
+	if (tent)
+	{
+		tent->svFlags |= SVF_BROADCAST;
+		VectorCopy( muzzle, tent->s.origin2 );
+	}
 
 	// now go along the trail and make sight events
 	VectorSubtract( tr.endpos, muzzle, dir );
@@ -280,6 +286,7 @@ static void WP_FireConcussion( gentity_t *ent )
 	WP_TraceSetStart( ent, start, vec3_origin, vec3_origin );//make sure our start point isn't on the other side of a wall
 
 	gentity_t *missile = CreateMissile( start, forwardVec, vel, 10000, ent, qfalse );
+	if (!missile) return;
 
 	missile->classname = "conc_proj";
 	missile->s.weapon = WP_CONCUSSION;

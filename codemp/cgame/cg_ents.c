@@ -25,6 +25,10 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // cg_ents.c -- present snapshot entities, happens every single frame
 
 #include "cg_local.h"
+#include "game/jar_mp_controller.h"
+#include "game/jar_mp_emplaced.h"
+#include "../game/jar_mp_prop.h"
+#include "../game/jar_mp_section_scenery.h"
 /*
 Ghoul2 Insert Start
 */
@@ -855,9 +859,10 @@ void CG_AddBracketedEnt(centity_t *cent)
 CG_General
 ==================
 */
-void CG_G2ServerBoneAngles(centity_t *cent);
-
 extern qboolean BG_GetRootSurfNameWithVariant( void *ghoul2, const char *rootSurfName, char *returnSurfName, int returnSize );
+#include "cg_jar_emplaced.inc"
+#include "cg_jar_animated.inc"
+#include "cg_jar_door_camera.inc"
 
 static void CG_General( centity_t *cent ) {
 	refEntity_t			ent;
@@ -867,6 +872,25 @@ static void CG_General( centity_t *cent ) {
 	vec3_t				beamOrg;
 	mdxaBone_t			matrix;
 	qboolean			doNotSetModel = qfalse;
+	const qboolean portableEmplaced = JAR_MP_EmplacedState(&cent->currentState);
+	const qboolean portableChair = JAR_MP_ChairState(&cent->currentState);
+	if (JAR_MP_SectionScenery(&cent->currentState)) {
+		s1 = &cent->currentState;
+		if ((s1->eFlags & EF_NODRAW) || s1->modelindex <= 0 || s1->modelindex >= MAX_MODELS ||
+			!cgs.gameModels[s1->modelindex]) return;
+		memset(&ent, 0, sizeof(ent));
+		ent.hModel = cgs.gameModels[s1->modelindex];
+		VectorCopy(cent->lerpOrigin, ent.origin);
+		VectorCopy(ent.origin, ent.oldorigin);
+		VectorCopy(ent.origin, ent.lightingOrigin);
+		ent.lightingOrigin[2] += s1->angles2[2] + 1.0f;
+		AnglesToAxis(cent->lerpAngles, ent.axis);
+		VectorCopy(s1->origin2, ent.modelScale);
+		ScaleModelAxis(&ent);
+		ent.renderfx = RF_NOSHADOW | RF_LIGHTING_ORIGIN;
+		trap->R_AddRefEntityToScene(&ent);
+		return;
+	}
 
 	if (cent->currentState.modelGhoul2 == 127)
 	{ //not ready to be drawn or initialized..
@@ -986,28 +1010,7 @@ static void CG_General( centity_t *cent ) {
 		}
 	}
 
-	if (cent->currentState.boneOrient && cent->ghoul2)
-	{ //server sent us some bone angles to use
-		CG_G2ServerBoneAngles(cent);
-	}
-
-	if ((cent->currentState.eFlags & EF_G2ANIMATING) && cent->ghoul2)
-	{ //mini-animation routine for general objects that want to play quick ghoul2 anims
-		//obviously lacks much of the functionality contained in player/npc animation.
-		//we actually use torsoAnim as the start frame and legsAnim as the end frame and
-		//always play the anim on the root bone.
-		if (cent->currentState.torsoAnim != cent->pe.torso.animationNumber ||
-			cent->currentState.legsAnim != cent->pe.legs.animationNumber ||
-			cent->currentState.torsoFlip != cent->pe.torso.lastFlip)
-		{
-			trap->G2API_SetBoneAnim(cent->ghoul2, 0, "model_root", cent->currentState.torsoAnim,
-				cent->currentState.legsAnim, (BONE_ANIM_OVERRIDE_FREEZE|BONE_ANIM_BLEND), 1.0f, cg.time, -1, 100);
-
-			cent->pe.torso.animationNumber = cent->currentState.torsoAnim;
-			cent->pe.legs.animationNumber = cent->currentState.legsAnim;
-			cent->pe.torso.lastFlip = cent->currentState.torsoFlip;
-		}
-	}
+	CG_GeneralGhoul2Pose(cent);
 
 	memset (&ent, 0, sizeof(ent));
 
@@ -1313,7 +1316,7 @@ static void CG_General( centity_t *cent ) {
 
 	if (cent->currentState.number >= MAX_CLIENTS &&
 		cent->currentState.activeForcePass == NUM_FORCE_POWERS+1&&
-		cent->currentState.NPC_class != CLASS_VEHICLE )
+		cent->currentState.NPC_class != CLASS_VEHICLE && !portableEmplaced )
 	{
 		vec3_t				empAngles;
 		centity_t			*empOwn;
@@ -1365,6 +1368,7 @@ static void CG_General( centity_t *cent ) {
 	}
 	ent.oldframe = ent.frame;
 	ent.backlerp = 0;
+	CG_JAR_AnimatedProp(cent, &ent);
 
 /*
 Ghoul2 Insert Start
@@ -1379,7 +1383,11 @@ Ghoul2 Insert End
 
 	if (cent->currentState.modelGhoul2)
 	{ //If the game says this guy uses a ghoul2 model and the g2 instance handle is null, then initialize it
-		if (!cent->ghoul2 && !cent->currentState.bolt1)
+		if (portableEmplaced) {
+			if (portableChair && CG_JAR_EmplacedModel(cent))
+				CG_JAR_EmplacedAim(cent, cent->lerpAngles, qfalse);
+			ent.ghoul2 = cent->ghoul2;
+		} else if (!cent->ghoul2 && !cent->currentState.bolt1)
 		{
 			char skinName[MAX_QPATH];
 			const char *modelName = CG_ConfigString( CS_MODELS+cent->currentState.modelindex );
@@ -1454,8 +1462,19 @@ Ghoul2 Insert End
 
 	// convert angles to axis
 	AnglesToAxis( cent->lerpAngles, ent.axis );
+	if (JAR_MP_Searchlight(&cent->currentState) && cent->currentState.time) {
+		vec3_t angles;
+		vectoangles(cent->currentState.angles, angles);
+		angles[ROLL] = cent->lerpAngles[ROLL];
+		AnglesToAxis(angles, ent.axis);
+	}
 
-	if (cent->currentState.iModelScale)
+	if (CG_JAR_DoorCameraScale(cent, &ent))
+	{
+		VectorClear(cent->modelScale);
+		ScaleModelAxis(&ent);
+	}
+	else if (cent->currentState.iModelScale)
 	{ //if the server says we have a custom scale then set it now.
 		cent->modelScale[0] = cent->modelScale[1] = cent->modelScale[2] = cent->currentState.iModelScale/100.0f;
 		VectorCopy(cent->modelScale, ent.modelScale);
@@ -1466,7 +1485,7 @@ Ghoul2 Insert End
 		VectorClear(cent->modelScale);
 	}
 
-	if ( cent->currentState.time > cg.time && cent->currentState.weapon == WP_EMPLACED_GUN )
+	if (cent->currentState.time > cg.time && (portableEmplaced || cent->currentState.weapon == WP_EMPLACED_GUN))
 	{
 		// make the gun pulse red to warn about it exploding
 		val = (1.0f - (float)(cent->currentState.time - cg.time) / 3200.0f ) * 0.3f;
@@ -1479,7 +1498,7 @@ Ghoul2 Insert End
 		trap->R_AddRefEntityToScene( &ent );
 		ent.customShader = 0;
 	}
-	else if ( cent->currentState.time == -1 && cent->currentState.weapon == WP_EMPLACED_GUN)
+	else if (cent->currentState.time == -1 && (portableChair || cent->currentState.weapon == WP_EMPLACED_GUN))
 	{
 		ent.customShader = trap->R_RegisterShader( "models/map_objects/imp_mine/turret_chair_dmg.tga" );
 		//trap->R_AddRefEntityToScene( &ent );
@@ -1886,6 +1905,8 @@ qboolean CG_GreyItem(int type, int tag, int plSide)
 CG_Item
 ==================
 */
+#include "cg_jar_rack_item.inc"
+
 static void CG_Item( centity_t *cent ) {
 	refEntity_t		ent;
 	entityState_t	*es;
@@ -1895,8 +1916,9 @@ static void CG_Item( centity_t *cent ) {
 	weaponInfo_t	*wi;
 
 	es = &cent->currentState;
-	if ( es->modelindex >= bg_numItems ) {
+	if ( es->modelindex < 0 || es->modelindex >= bg_numItems || es->modelindex >= MAX_ITEMS ) {
 		trap->Error( ERR_DROP, "Bad item index %i on entity", es->modelindex );
+		return;
 	}
 
 /*
@@ -1914,8 +1936,9 @@ Ghoul2 Insert Start
 	}
 
 	item = &bg_itemlist[ es->modelindex ];
+	const qboolean rackItem = CG_JAR_IsRackItem(es, item);
 
-	if ((item->giType == IT_WEAPON || item->giType == IT_POWERUP) &&
+	if (!rackItem && (item->giType == IT_WEAPON || item->giType == IT_POWERUP) &&
 		!(cent->currentState.eFlags & EF_DROPPEDWEAPON) &&
 		!cg_simpleItems.integer)
 	{
@@ -1957,6 +1980,10 @@ Ghoul2 Insert Start
 	if ( ( es->eFlags & EF_NODRAW ) )
 	{
 		return;
+	}
+	// Sandbox pickups can first appear after the level's item precache.
+	if ( !cg_items[es->modelindex].registered ) {
+		CG_RegisterItemVisuals( es->modelindex );
 	}
 /*
 Ghoul2 Insert End
@@ -2013,6 +2040,10 @@ Ghoul2 Insert End
 			}
 		}
 		trap->R_AddRefEntityToScene(&ent);
+		return;
+	}
+	if ( rackItem ) {
+		CG_JAR_DrawRackItem(cent, item, &cg_items[es->modelindex]);
 		return;
 	}
 
@@ -2141,6 +2172,10 @@ Ghoul2 Insert End
 	}
 
 	ent.hModel = cg_items[es->modelindex].models[0];
+	if ( es->generic1 == JAR_MP_CARGO_DROP_TAG && !strcmp( item->classname, "item_medpak_instant" ) &&
+		es->modelindex2 > 0 && es->modelindex2 < MAX_MODELS && cgs.gameModels[es->modelindex2] > 0 ) {
+		ent.hModel = cgs.gameModels[es->modelindex2];
+	}
 /*
 Ghoul2 Insert Start
 */
@@ -2446,7 +2481,6 @@ static void CG_Missile( centity_t *cent ) {
 	{
 		weapon = &cg_weapons[s1->weapon];
 	}
-
 	if (cent->currentState.eFlags & EF_RADAROBJECT)
 	{
 		CG_AddRadarEnt(cent);
@@ -2825,6 +2859,21 @@ void CG_PlayDoorSound( centity_t *cent, int type )
 CG_Mover
 ===============
 */
+#include "../../shared/qcommon/jar_hoth_sky_camera.h"
+#include "../../shared/qcommon/jar_yavin_sky_camera.h"
+qboolean CG_SectionSky(const entityState_t *state, const vec3_t localPoint, vec3_t camera) {
+	if (state->eType != ET_MOVER || state->generic1 != 255 || state->solid != SOLID_BMODEL) return qfalse;
+	if (trap->CM_HothSectionSky && trap->CM_HothSectionSky(state->modelindex, localPoint)) {
+		if (camera) VectorSet(camera, JAR_HOTH_SKY_CAMERA_X, JAR_HOTH_SKY_CAMERA_Y, JAR_HOTH_SKY_CAMERA_Z);
+		return qtrue;
+	}
+	if (trap->CM_YavinSectionSky && trap->CM_YavinSectionSky(state->modelindex, localPoint)) {
+		if (camera) VectorSet(camera, JAR_YAVIN_SKY_CAMERA_X, JAR_YAVIN_SKY_CAMERA_Y, JAR_YAVIN_SKY_CAMERA_Z);
+		return qtrue;
+	}
+	return qfalse;
+}
+
 static void CG_Mover( centity_t *cent ) {
 	refEntity_t			ent;
 	entityState_t		*s1;
@@ -2890,12 +2939,19 @@ Ghoul2 Insert End
 	// get the model, either as a bmodel or a modelindex
 	if ( s1->solid == SOLID_BMODEL )
 	{
-		ent.hModel = cgs.inlineDrawModel[s1->modelindex];
+		ent.hModel = s1->modelindex>0 && s1->modelindex<(int)ARRAY_LEN(cgs.inlineDrawModel) ? cgs.inlineDrawModel[s1->modelindex] : 0;
 	}
 	else
 	{
 		ent.hModel = cgs.gameModels[s1->modelindex];
 	}
+
+	if (CG_SectionSky(s1, NULL, NULL))
+		ent.renderfx |= RF_JAR_SECTION_ARENA;
+	if (s1->solid == SOLID_BMODEL && s1->generic1 == 255 &&
+		((trap->CM_RiftSectionAir && trap->CM_RiftSectionAir(s1->modelindex, NULL)) ||
+		 (trap->CM_KorribanSectionFog && trap->CM_KorribanSectionFog(s1->modelindex))))
+		ent.renderfx |= RF_JAR_SECTION_FOG;
 
 	if ( s1->eFlags & EF_SHADER_ANIM )
 	{
@@ -2929,31 +2985,7 @@ CG_Beam
 Also called as an event
 ===============
 */
-void CG_Beam( centity_t *cent ) {
-	refEntity_t			ent;
-	entityState_t		*s1;
-
-	s1 = &cent->currentState;
-
-	// create the render entity
-	memset (&ent, 0, sizeof(ent));
-	VectorCopy( s1->pos.trBase, ent.origin );
-	VectorCopy( s1->origin2, ent.oldorigin );
-	AxisClear( ent.axis );
-	ent.reType = RT_BEAM;
-
-	ent.renderfx = RF_NOSHADOW;
-/*
-Ghoul2 Insert Start
-*/
-	CG_SetGhoul2Info(&ent, cent);
-
-/*
-Ghoul2 Insert End
-*/
-	// add to refresh list
-	trap->R_AddRefEntityToScene(&ent);
-}
+#include "cg_jar_native_beam.inc"
 
 
 /*
@@ -3019,6 +3051,7 @@ void CG_AdjustPositionForMover( const vec3_t in, int moverNum, int fromTime, int
 	}
 
 	cent = &cg_entities[ moverNum ];
+	if (JAR_MP_PropRider(&cent->currentState,in,fromTime,toTime,out)) return;
 	if ( cent->currentState.eType != ET_MOVER ) {
 		VectorCopy( in, out );
 		return;
@@ -3349,6 +3382,7 @@ Ghoul2 Insert End
 	case ET_TERRAIN:
 		break;
 	case ET_GENERAL:
+		if(!JAR_MP_EmplacedState(&cent->currentState)&&CG_JAR_Entity(cent))break;
 		CG_General( cent );
 		break;
 	case ET_PLAYER:
@@ -3400,7 +3434,38 @@ CG_AddPacketEntities
 
 ===============
 */
+static centity_t *riftAirRooms[MAX_ENTITIES_IN_SNAPSHOT];
+static int riftAirCount;
+
+static void CG_CollectRiftAir(void) {
+	riftAirCount = 0;
+	if (!trap->CM_RiftSectionAir) return;
+	for (int i = 0; i < cg.snap->numEntities; ++i) {
+		centity_t *room = &cg_entities[cg.snap->entities[i].number];
+		const entityState_t *state = &room->currentState;
+		if (state->eType != ET_MOVER || state->solid != SOLID_BMODEL || state->generic1 != 255 ||
+			(state->eFlags & EF_NODRAW) || !trap->CM_RiftSectionAir(state->modelindex, NULL)) continue;
+		CG_CalcEntityLerpPositions(room);
+		if (riftAirCount == ARRAY_LEN(riftAirRooms)) break;
+		riftAirRooms[riftAirCount++] = room;
+	}
+}
+
+qboolean CG_RiftSectionAir(const vec3_t point) {
+	if (cg.refdef.rdflags & RDF_SKYBOXPORTAL) return qfalse;
+	for (int i = 0; i < riftAirCount; ++i) {
+		const centity_t *room = riftAirRooms[i];
+		vec3_t axes[3], offset, local;
+		AnglesToAxis(room->lerpAngles, axes);
+		VectorSubtract(point, room->lerpOrigin, offset);
+		for (int a = 0; a < 3; ++a) local[a] = DotProduct(offset, axes[a]);
+		if (trap->CM_RiftSectionAir(room->currentState.modelindex, local)) return qtrue;
+	}
+	return qfalse;
+}
+
 void CG_AddPacketEntities( qboolean isPortal ) {
+	CG_JAR_PropFrame();
 	int					num;
 	centity_t			*cent;
 	playerState_t		*ps;
@@ -3433,6 +3498,7 @@ void CG_AddPacketEntities( qboolean isPortal ) {
 		cg.frameInterpolation = 0;	// actually, it should never be used, because
 									// no entities should be marked as interpolating
 	}
+	CG_CollectRiftAir();
 
 	// the auto-rotating items will all have the same axis
 	cg.autoAngles[0] = 0;

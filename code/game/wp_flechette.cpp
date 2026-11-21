@@ -73,6 +73,7 @@ static void WP_FlechetteMainFire( gentity_t *ent )
 		WP_MissileTargetHint(ent, start, fwd);
 
 		missile = CreateMissile( start, fwd, vel, 10000, ent );
+		if (!missile) return;
 
 		missile->classname = "flech_proj";
 		missile->s.weapon = WP_FLECHETTE;
@@ -177,6 +178,7 @@ static void WP_FlechetteProxMine( gentity_t *ent )
 //---------------------------------------------------------
 {
 	gentity_t	*missile = CreateMissile( muzzle, forwardVec, FLECHETTE_MINE_VEL, 10000, ent, qtrue );
+	if (!missile) return;
 
 	missile->fxID = G_EffectIndex( "flechette/explosion" );
 
@@ -218,6 +220,7 @@ static void WP_CreateFlechetteBouncyThing( vec3_t start, vec3_t fwd, gentity_t *
 //------------------------------------------------------------------------------
 {
 	gentity_t	*missile = CreateMissile( start, fwd, 950 + Q_flrand(0.0f, 1.0f) * 700, 1500 + Q_flrand(0.0f, 1.0f) * 2000, self, qtrue );
+	if (!missile) return;
 
 	missile->e_ThinkFunc = thinkF_WP_flechette_alt_blow;
 

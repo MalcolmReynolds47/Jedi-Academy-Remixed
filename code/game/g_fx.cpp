@@ -23,6 +23,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_local.h"
 #include "g_functions.h"
 #include "b_local.h"
+#include "g_weather.h"
+#include "g_workshop.h"
+#include "g_workshop_fx_aim.h"
 
 extern int	G_FindConfigstringIndex( const char *name, int start, int max, qboolean create );
 
@@ -32,251 +35,14 @@ extern int	BMS_START;
 extern int	BMS_MID;
 extern int	BMS_END;
 
-//----------------------------------------------------------
-
-/*QUAKED fx_runner (0 0 1) (-8 -8 -8) (8 8 8) STARTOFF ONESHOT DAMAGE
-Runs the specified effect, can also be targeted at an info_notnull to orient the effect
-
-	STARTOFF - effect starts off, toggles on/off when used
-	ONESHOT - effect fires only when used
-	DAMAGE - does radius damage around effect every "delay" milliseonds
-
-	"fxFile" - name of the effect file to play
-	"target" - direction to aim the effect in, otherwise defaults to up
-	"target2" - uses its target2 when the fx gets triggered
-	"delay"  - how often to call the effect, don't over-do this ( default 200 )
-	"random" - random amount of time to add to delay, ( default 0, 200 = 0ms to 200ms )
-	"splashRadius" - only works when damage is checked ( default 16 )
-	"splashDamage" - only works when damage is checked ( default 5 )
-	"soundset"	- bmodel set to use, plays start sound when toggled on, loop sound while on ( doesn't play on a oneshot), and a stop sound when turned off
-*/
-#define FX_RUNNER_RESERVED 0x800000
-
-//----------------------------------------------------------
-void fx_runner_think( gentity_t *ent )
-{
-	vec3_t temp;
-
-	EvaluateTrajectory( &ent->s.pos, level.time, ent->currentOrigin );
-	EvaluateTrajectory( &ent->s.apos, level.time, ent->currentAngles );
-
-	// call the effect with the desired position and orientation
-	G_AddEvent( ent, EV_PLAY_EFFECT, ent->fxID );
-
-	// Assume angles, we'll do a cross product on the other end to finish up
-	AngleVectors( ent->currentAngles, ent->pos3, NULL, NULL );
-	MakeNormalVectors( ent->pos3, ent->pos4, temp ); // there IS a reason this is done...it's so that it doesn't break every effect in the game...
-
-	ent->nextthink = level.time + ent->delay + Q_flrand(0.0f, 1.0f) * ent->random;
-
-	if ( ent->spawnflags & 4 ) // damage
-	{
-		G_RadiusDamage( ent->currentOrigin, ent, ent->splashDamage, ent->splashRadius, ent, MOD_UNKNOWN );
-	}
-
-	if ( ent->target2 )
-	{
-		// let our target know that we have spawned an effect
-		G_UseTargets2( ent, ent, ent->target2 );
-	}
-
-	if ( !(ent->spawnflags & 2 ) && !ent->s.loopSound ) // NOT ONESHOT...this is an assy thing to do
-	{
-		if ( VALIDSTRING( ent->soundSet ) == true )
-		{
-			ent->s.loopSound = CAS_GetBModelSound( ent->soundSet, BMS_MID );
-
-			if ( ent->s.loopSound < 0 )
-			{
-				ent->s.loopSound = 0;
-			}
-		}
-	}
-
-}
-
-//----------------------------------------------------------
-void fx_runner_use( gentity_t *self, gentity_t *other, gentity_t *activator )
-{
-	if (self->s.isPortalEnt)
-	{ //rww - mark it as broadcast upon first use if it's within the area of a skyportal
-		self->svFlags |= SVF_BROADCAST;
-	}
-
-	if ( self->spawnflags & 2 ) // ONESHOT
-	{
-		// call the effect with the desired position and orientation, as a safety thing,
-		//	make sure we aren't thinking at all.
-		fx_runner_think( self );
-		self->nextthink = -1;
-
-		if ( self->target2 )
-		{
-			// let our target know that we have spawned an effect
-			G_UseTargets2( self, self, self->target2 );
-		}
-
-		if ( VALIDSTRING( self->soundSet ) == true )
-		{
-			G_AddEvent( self, EV_BMODEL_SOUND, CAS_GetBModelSound( self->soundSet, BMS_START ));
-		}
-	}
-	else
-	{
-		// ensure we are working with the right think function
-		self->e_ThinkFunc = thinkF_fx_runner_think;
-
-		// toggle our state
-		if ( self->nextthink == -1 )
-		{
-			// NOTE: we fire the effect immediately on use, the fx_runner_think func will set
-			//	up the nextthink time.
-			fx_runner_think( self );
-
-			if ( VALIDSTRING( self->soundSet ) == true )
-			{
-				G_AddEvent( self, EV_BMODEL_SOUND, CAS_GetBModelSound( self->soundSet, BMS_START ));
-				self->s.loopSound = CAS_GetBModelSound( self->soundSet, BMS_MID );
-
-				if ( self->s.loopSound < 0 )
-				{
-					self->s.loopSound = 0;
-				}
-			}
-		}
-		else
-		{
-			// turn off for now
-			self->nextthink = -1;
-
-			if ( VALIDSTRING( self->soundSet ) == true )
-			{
-				G_AddEvent( self, EV_BMODEL_SOUND, CAS_GetBModelSound( self->soundSet, BMS_END ));
-				self->s.loopSound = 0;
-			}
-		}
-	}
-}
-
-//----------------------------------------------------------
-void fx_runner_link( gentity_t *ent )
-{
-	vec3_t	dir;
-
-	if ( ent->target )
-	{
-		// try to use the target to override the orientation
-		gentity_t	*target = NULL;
-
-		target = G_Find( target, FOFS(targetname), ent->target );
-
-		if ( !target )
-		{
-			// Bah, no good, dump a warning, but continue on and use the UP vector
-			Com_Printf( "fx_runner_link: target specified but not found: %s\n", ent->target );
-			Com_Printf( "  -assuming UP orientation.\n" );
-		}
-		else
-		{
-			// Our target is valid so let's override the default UP vector
-			VectorSubtract( target->s.origin, ent->s.origin, dir );
-			VectorNormalize( dir );
-			vectoangles( dir, ent->s.angles );
-		}
-	}
-
-	// don't really do anything with this right now other than do a check to warn the designers if the target2 is bogus
-	if ( ent->target2 )
-	{
-		gentity_t	*target = NULL;
-
-		target = G_Find( target, FOFS(targetname), ent->target2 );
-
-		if ( !target )
-		{
-			// Target2 is bogus, but we can still continue
-			Com_Printf( "fx_runner_link: target2 was specified but is not valid: %s\n", ent->target2 );
-		}
-	}
-
-	G_SetAngles( ent, ent->s.angles );
-
-	if ( ent->spawnflags & 1 || ent->spawnflags & 2 ) // STARTOFF || ONESHOT
-	{
-		// We won't even consider thinking until we are used
-		ent->nextthink = -1;
-	}
-	else
-	{
-		if ( VALIDSTRING( ent->soundSet ) == true )
-		{
-			ent->s.loopSound = CAS_GetBModelSound( ent->soundSet, BMS_MID );
-
-			if ( ent->s.loopSound < 0 )
-			{
-				ent->s.loopSound = 0;
-			}
-		}
-
-		// Let's get to work right now!
-		ent->e_ThinkFunc = thinkF_fx_runner_think;
-		ent->nextthink = level.time + 200; // wait a small bit, then start working
-	}
-
-	// make us useable if we can be targeted
-	if ( ent->targetname )
-	{
-		ent->e_UseFunc = useF_fx_runner_use;
-	}
-}
-
-//----------------------------------------------------------
-void SP_fx_runner( gentity_t *ent )
-{
-	// Get our defaults
-	G_SpawnInt( "delay", "200", &ent->delay );
-	G_SpawnFloat( "random", "0", &ent->random );
-	G_SpawnInt( "splashRadius", "16", &ent->splashRadius );
-	G_SpawnInt( "splashDamage", "5", &ent->splashDamage );
-
-	if ( !G_SpawnAngleHack( "angle", "0", ent->s.angles ))
-	{
-		// didn't have angles, so give us the default of up
-		VectorSet( ent->s.angles, -90, 0, 0 );
-	}
-
-	if ( !ent->fxFile )
-	{
-		gi.Printf( S_COLOR_RED"ERROR: fx_runner %s at %s has no fxFile specified\n", ent->targetname, vtos(ent->s.origin) );
-		G_FreeEntity( ent );
-		return;
-	}
-
-	// Try and associate an effect file, unfortunately we won't know if this worked or not
-	//	until the CGAME trys to register it...
-	ent->fxID = G_EffectIndex( ent->fxFile );
-
-	ent->s.eType = ET_MOVER;
-
-	// Give us a bit of time to spawn in the other entities, since we may have to target one of 'em
-	ent->e_ThinkFunc = thinkF_fx_runner_link;
-	ent->nextthink = level.time + 400;
-
-	// Save our position and link us up!
-	G_SetOrigin( ent, ent->s.origin );
-
-	VectorSet( ent->maxs, FX_ENT_RADIUS, FX_ENT_RADIUS, FX_ENT_RADIUS );
-	VectorScale( ent->maxs, -1, ent->mins );
-
-	gi.linkentity( ent );
-}
-
+#include "g_fx_runner.inc"
 
 /*QUAKED fx_snow (1 0 0) (-16 -16 -16) (16 16 16) LIGHT MEDIUM HEAVY MISTY_FOG
 This world effect will spawn snow globally into the level.
 */
 void SP_CreateSnow( gentity_t *ent )
 {
+ if(G_WeatherSpawnPortable(ent))return;
 	cvar_t *r_weatherScale = gi.cvar( "r_weatherScale", "1", CVAR_ARCHIVE );
 	if ( r_weatherScale->value == 0.0f )
 	{
@@ -326,6 +92,7 @@ SWIRLING  causes random swirls of wind
 */
 void SP_CreateWind( gentity_t *ent )
 {
+ if(G_WeatherSpawnPortable(ent))return;
 	cvar_t *r_weatherScale = gi.cvar( "r_weatherScale", "1", CVAR_ARCHIVE );
 	if ( r_weatherScale->value <= 0.0f )
 	{
@@ -392,6 +159,7 @@ Generates local wind forces
 */
 void SP_CreateWindZone( gentity_t *ent )
 {
+ if(G_WeatherSpawnPortable(ent))return;
 	cvar_t *r_weatherScale = gi.cvar( "r_weatherScale", "1", CVAR_ARCHIVE );
 	if ( r_weatherScale->value <= 0.0f )
 	{
@@ -536,6 +304,7 @@ void fx_rain_think( gentity_t *ent )
 
 void SP_CreateRain( gentity_t *ent )
 {
+ if(G_WeatherSpawnPortable(ent))return;
 	// Different Types Of Rain
 	//-------------------------
 	if (ent->spawnflags & 1)
@@ -680,6 +449,7 @@ blowing size ( minX minY minZ )
 //----------------------------------------------------------
 void SP_CreatePuffSystem( gentity_t *ent )
 {
+ if(G_WeatherSpawnPortable(ent))return;
 	char	temp[128];
 
 	// Initialize the puff system to either 1000 particles or whatever they choose.
@@ -770,10 +540,12 @@ void SP_CreatePuffSystem( gentity_t *ent )
 //-----------------
 // Explosion Trail
 //-----------------
+#include "g_fx_trail_motion.inc"
 
 //----------------------------------------------------------
 void fx_explosion_trail_think( gentity_t *ent )
 {
+	if ( G_WorkshopTrailFrame(*ent) ) return;
 	vec3_t	origin;
 	trace_t	tr;
 
@@ -820,7 +592,7 @@ void fx_explosion_trail_think( gentity_t *ent )
 	G_RadiusDamage( origin, ent, ent->damage, ent->radius, ent, MOD_EXPLOSIVE_SPLASH );
 
 	// call the effect with the desired position and orientation
-	G_PlayEffect( ent->fxID, origin, ent->currentAngles );
+	G_PlayEffect( ent->fxID, origin, VectorLengthSquared(ent->movedir)>0 ? ent->movedir : ent->currentAngles );
 
 	ent->nextthink = level.time + 50;
 	gi.linkentity( ent );
@@ -829,7 +601,11 @@ void fx_explosion_trail_think( gentity_t *ent )
 //----------------------------------------------------------
 void fx_explosion_trail_use( gentity_t *self, gentity_t *other, gentity_t *activator )
 {
-	gentity_t *missile = G_Spawn();
+	const bool workshop = G_JAR_WorkshopOwns(self);
+	vec3_t direction;
+	if ( workshop ) G_WorkshopTrailDirection(*self,direction);
+	else VectorCopy(self->currentAngles,direction);
+	gentity_t *missile = G_TrySpawn();
 
 	// We aren't a missile in the truest sense, rather we just move through the world and spawn effects
 	if ( missile )
@@ -858,15 +634,16 @@ void fx_explosion_trail_use( gentity_t *self, gentity_t *other, gentity_t *activ
 
 		missile->spawnflags = self->spawnflags;
 
-		G_SetAngles( missile, self->currentAngles );
-		VectorScale( self->currentAngles, self->speed, missile->s.pos.trDelta );
+		if ( workshop ) G_WorkshopTrailOrientFlight(*missile,direction);
+		else G_SetAngles( missile, self->currentAngles );
+		VectorScale( direction, self->speed, missile->s.pos.trDelta );
 		missile->s.pos.trTime = level.time;
 		missile->radius = self->radius;
 		missile->damage = self->damage;
 		missile->splashDamage = self->splashDamage;
 		missile->splashRadius = self->splashRadius;
 		missile->fxID = self->fxID;
-		missile->cameraGroup = self->cameraGroup;	//fxfile2
+		if ( self->cameraGroup ) missile->cameraGroup = G_NewString(self->cameraGroup);
 
 		missile->clipmask = MASK_SHOT;
 
@@ -889,6 +666,11 @@ void fx_explosion_trail_use( gentity_t *self, gentity_t *other, gentity_t *activ
 //----------------------------------------------------------
 void fx_explosion_trail_link( gentity_t *ent )
 {
+	if ( G_JAR_WorkshopOwns(ent) )
+	{
+		G_WorkshopTrailEnableUse(*ent);
+		return;
+	}
 	vec3_t		dir;
 	gentity_t	*target = NULL;
 
@@ -1014,7 +796,14 @@ void fx_target_beam_fire( gentity_t *ent )
 	vec3_t		dir, org, end;
 	qboolean	open;
 
-	if ( !ent->enemy || !ent->enemy->inuse )
+	if ( G_JAR_WorkshopOwns( ent ) )
+	{
+		if ( !G_WorkshopBeamAim( *ent, org ) )
+		{
+			return;
+		}
+	}
+	else if ( !ent->enemy || !ent->enemy->inuse )
 	{//info_null most likely
 		//ignore = ent->s.number;
 		ent->enemy = NULL;
@@ -1090,6 +879,15 @@ void fx_target_beam_fire_start( gentity_t *self )
 //------------------------------------------
 void fx_target_beam_use( gentity_t *self, gentity_t *other, gentity_t *activator )
 {
+	if ( G_JAR_WorkshopOwns( self ) )
+	{
+		if ( !G_WorkshopFxEndpoint( *self ) )
+		{
+			G_WorkshopBeamIdle( *self );
+			return;
+		}
+		self->activator = activator;
+	}
 	if ( self->spawnflags & 8 ) // one shot
 	{
 		fx_target_beam_fire( self );
@@ -1123,29 +921,37 @@ void fx_target_beam_think( gentity_t *ent )
 //------------------------------------------
 void fx_target_beam_link( gentity_t *ent )
 {
-	gentity_t	*target = NULL;
-	vec3_t		dir;
-
-	target = G_Find( target, FOFS(targetname), ent->target );
-
-	if ( !target )
+	vec3_t dir, endpoint;
+	if ( G_JAR_WorkshopOwns( ent ) )
 	{
-		Com_Printf( "bolt_link: unable to find target %s\n", ent->target );
-		G_FreeEntity( ent );
-		return;
+		if ( !G_WorkshopBeamAim( *ent, endpoint ) )
+		{
+			return;
+		}
+		G_WorkshopBeamEnableUse( *ent );
+		ent->attackDebounceTime = level.time;
+	}
+	else
+	{
+		auto* target = G_Find( nullptr, FOFS(targetname), ent->target );
+		if ( !target )
+		{
+			Com_Printf( "bolt_link: unable to find target %s\n", ent->target );
+			G_FreeEntity( ent );
+			return;
+		}
+		ent->attackDebounceTime = level.time;
+		if ( !target->classname || Q_stricmp( "info_null", target->classname ) )
+		{
+			G_SetEnemy( ent, target );
+		}
+		VectorCopy( target->s.origin, endpoint );
 	}
 
-	ent->attackDebounceTime = level.time;
-
-	if ( !target->classname || Q_stricmp( "info_null", target->classname ) )
-	{//don't want to set enemy to something that's going to free itself... actually, this could be bad in other ways, too... ent pointer could be freed up and re-used by the time we check it next
-		G_SetEnemy( ent, target );
-	}
-	VectorSubtract( target->s.origin, ent->s.origin, dir );//er, does it ever use dir?
-	/*len = */VectorNormalize( dir );//er, does it use len or dir?
-	vectoangles( dir, ent->s.angles );//er, does it use s.angles?
-
-	VectorCopy( target->s.origin, ent->s.origin2 );
+	VectorSubtract( endpoint, ent->s.origin, dir );
+	VectorNormalize( dir );
+	vectoangles( dir, ent->s.angles );
+	VectorCopy( endpoint, ent->s.origin2 );
 
 	if ( ent->spawnflags & 1 )
 	{
@@ -1224,35 +1030,5 @@ void SP_fx_target_beam( gentity_t *ent )
 }
 
 
-/*QUAKED fx_cloudlayer (1 0.3 0.5) (-8 -8 -8) (8 8 8) TUBE ALT
-
-  Creates a scalable scrolling cloud layer, mostly for bespin undercity but could be used other places
-
-  TUBE - creates cloud layer with tube opening in the middle, must an INNER radius also
-  ALT - uses slightly different shader, good if using two layers sort of close together
-
-"radius" - outer radius of cloud layer, (default 2048)
-"random" - inner radius of cloud layer, (default 128) only works for TUBE type
-"wait" - adds curvature as it moves out to the edge of the layer.  ( default 0 ), 1 = small up, 3 = up more, -1 = small down, -3 = down more, etc.
-
-*/
-
-void SP_fx_cloudlayer( gentity_t *ent )
-{
-	// HACK: this effect is never played, rather it just caches the shaders I need cgame side
-	G_EffectIndex( "world/haze_cache" );
-
-	G_SpawnFloat( "radius", "2048", &ent->radius );
-	G_SpawnFloat( "random", "128", &ent->random );
-	G_SpawnFloat( "wait", "0", &ent->wait );
-
-	ent->s.eType = ET_CLOUD; // dumb
-
-	G_SetOrigin( ent, ent->s.origin );
-
-	ent->contents = 0;
-	VectorSet( ent->maxs, 200, 200, 200 );
-	VectorScale( ent->maxs, -1, ent->mins );
-
-	gi.linkentity( ent );
-}
+#include "g_cloud.inc"
+#include "g_weather.inc"

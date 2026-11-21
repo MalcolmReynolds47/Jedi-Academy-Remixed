@@ -1775,6 +1775,7 @@ void CTaskManager::Save()
 			//Write out the state of completion
 			completed = (*tci).second;
 			pIcarus->BufferWrite( &completed, sizeof( completed ) );
+			pIcarus->GetGame()->DebugPrint(IGameInterface::WL_DEBUG,"%4d save_group(%d) member=%d complete=%d;",m_ownerID,(*tgi)->GetGUID(),id,completed);
 		}
 
 		//Save out the number of completed commands
@@ -2019,10 +2020,12 @@ void CTaskManager::Load( CIcarus* icarus )
 
 			//Save it out
 			taskGroup->m_completedTasks[ id ] = completed;
+			pIcarus->GetGame()->DebugPrint(IGameInterface::WL_DEBUG,"%4d load_group(%d) member=%d complete=%d;",m_ownerID,taskGroup->GetGUID(),id,completed);
 		}
 
 		//Get the number of completed tasks
 		pIcarus->BufferRead( &taskGroup->m_numCompleted, sizeof( taskGroup->m_numCompleted ) );
+		pIcarus->GetGame()->DebugPrint(IGameInterface::WL_DEBUG,"%4d load_group(%d) count=%d size=%d;",m_ownerID,taskGroup->GetGUID(),taskGroup->m_numCompleted,int(taskGroup->m_completedTasks.size()));
 	}
 
 	//Reload the currently active group

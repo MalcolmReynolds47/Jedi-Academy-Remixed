@@ -24,7 +24,10 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // cg_view.c -- setup all the parameters (position, angle, etc)
 // for a 3D rendering
 #include "cg_local.h"
+#include "cg_jar_sandbox.h"
+#include "cg_jar_camera.inc"
 #include "game/bg_saga.h"
+#include "game/jar_mp_emplaced.h"
 
 #define MASK_CAMERACLIP (MASK_SOLID|CONTENTS_PLAYERCLIP)
 #define CAMERA_SIZE	4
@@ -223,16 +226,7 @@ static void CG_CalcVrect (void) {
 //==============================================================================
 //==============================================================================
 // this causes a compiler bug on mac MrC compiler
-static void CG_StepOffset( void ) {
-	int		timeDelta;
-
-	// smooth out stair climbing
-	timeDelta = cg.time - cg.stepTime;
-	if ( timeDelta < STEP_TIME ) {
-		cg.refdef.vieworg[2] -= cg.stepChange
-			* (STEP_TIME - timeDelta) / STEP_TIME;
-	}
-}
+#include "cg_jar_native_camera_step.inc"
 
 #define CAMERA_DAMP_INTERVAL	50
 
@@ -428,190 +422,11 @@ static void CG_ResetThirdPersonViewDamp(void)
 }
 
 // This is called every frame.
-static void CG_UpdateThirdPersonTargetDamp(void)
-{
-	trace_t trace;
-	vec3_t	targetdiff;
-	float	dampfactor, dtime, ratio;
-
-	// Set the cameraIdealTarget
-	// Automatically get the ideal target, to avoid jittering.
-	CG_CalcIdealThirdPersonViewTarget();
-
-	if ( cg.predictedVehicleState.hyperSpaceTime
-		&& (cg.time-cg.predictedVehicleState.hyperSpaceTime) < HYPERSPACE_TIME )
-	{//hyperspacing, no damp
-		VectorCopy(cameraIdealTarget, cameraCurTarget);
-	}
-	else if (cg_thirdPersonTargetDamp.value>=1.0||cg.thisFrameTeleport||cg.predictedPlayerState.m_iVehicleNum)
-	{	// No damping.
-		VectorCopy(cameraIdealTarget, cameraCurTarget);
-	}
-	else if (cg_thirdPersonTargetDamp.value>=0.0)
-	{
-		// Calculate the difference from the current position to the new one.
-		VectorSubtract(cameraIdealTarget, cameraCurTarget, targetdiff);
-
-		// Now we calculate how much of the difference we cover in the time allotted.
-		// The equation is (Damp)^(time)
-		dampfactor = 1.0-cg_thirdPersonTargetDamp.value;	// We must exponent the amount LEFT rather than the amount bled off
-		dtime = (float)(cg.time-cameraLastFrame) * (1.0/(float)CAMERA_DAMP_INTERVAL);	// Our dampfactor is geared towards a time interval equal to "1".
-
-		// Note that since there are a finite number of "practical" delta millisecond values possible,
-		// the ratio should be initialized into a chart ultimately.
-		if ( cg_smoothCamera.integer )
-			ratio = powf(dampfactor, dtime);
-		else
-			ratio = Q_powf( dampfactor, dtime );
-
-		// This value is how much distance is "left" from the ideal.
-		VectorMA(cameraIdealTarget, -ratio, targetdiff, cameraCurTarget);
-		/////////////////////////////////////////////////////////////////////////////////////////////////////////
-	}
-
-	// Now we trace to see if the new location is cool or not.
-
-	// First thing we do is trace from the first person viewpoint out to the new target location.
-	CG_Trace(&trace, cameraFocusLoc, cameramins, cameramaxs, cameraCurTarget, cg.snap->ps.clientNum, MASK_CAMERACLIP);
-	if (trace.fraction < 1.0)
-	{
-		VectorCopy(trace.endpos, cameraCurTarget);
-	}
-
-	// Note that previously there was an upper limit to the number of physics traces that are done through the world
-	// for the sake of camera collision, since it wasn't calced per frame.  Now it is calculated every frame.
-	// This has the benefit that the camera is a lot smoother now (before it lerped between tested points),
-	// however two full volume traces each frame is a bit scary to think about.
-}
+#include "cg_jar_native_camera_target.inc"
 
 // This can be called every interval, at the user's discretion.
 extern void CG_CalcEntityLerpPositions( centity_t *cent ); //cg_ents.c
-static void CG_UpdateThirdPersonCameraDamp(void)
-{
-	trace_t trace;
-	vec3_t	locdiff;
-	float dampfactor, dtime, ratio;
-
-	// Set the cameraIdealLoc
-	CG_CalcIdealThirdPersonViewLocation();
-
-
-	// First thing we do is calculate the appropriate damping factor for the camera.
-	dampfactor=0.0;
-	if ( cg.predictedVehicleState.hyperSpaceTime
-		&& (cg.time-cg.predictedVehicleState.hyperSpaceTime) < HYPERSPACE_TIME )
-	{//hyperspacing - don't damp camera
-		dampfactor = 1.0f;
-	}
-	else if (cg_thirdPersonCameraDamp.value != 0.0)
-	{
-		float pitch;
-		float dFactor;
-
-		if (!cg.predictedPlayerState.m_iVehicleNum)
-		{
-			dFactor = cg_thirdPersonCameraDamp.value;
-		}
-		else
-		{
-			dFactor = 1.0f;
-		}
-
-		// Note that the camera pitch has already been capped off to 89.
-		pitch = Q_fabs(cameraFocusAngles[PITCH]);
-
-		// The higher the pitch, the larger the factor, so as you look up, it damps a lot less.
-		pitch /= 115.0;
-		dampfactor = (1.0-dFactor)*(pitch*pitch);
-
-		dampfactor += dFactor;
-
-		// Now we also multiply in the stiff factor, so that faster yaw changes are stiffer.
-		if (cameraStiffFactor > 0.0f)
-		{	// The cameraStiffFactor is how much of the remaining damp below 1 should be shaved off, i.e. approach 1 as stiffening increases.
-			dampfactor += (1.0-dampfactor)*cameraStiffFactor;
-		}
-	}
-
-	if (dampfactor>=1.0||cg.thisFrameTeleport)
-	{	// No damping.
-		VectorCopy(cameraIdealLoc, cameraCurLoc);
-	}
-	else if (dampfactor>=0.0)
-	{
-		// Calculate the difference from the current position to the new one.
-		VectorSubtract(cameraIdealLoc, cameraCurLoc, locdiff);
-
-		// Now we calculate how much of the difference we cover in the time allotted.
-		// The equation is (Damp)^(time)
-		dampfactor = 1.0-dampfactor;	// We must exponent the amount LEFT rather than the amount bled off
-		dtime = (float)(cg.time-cameraLastFrame) * (1.0/(float)CAMERA_DAMP_INTERVAL);	// Our dampfactor is geared towards a time interval equal to "1".
-
-		// Note that since there are a finite number of "practical" delta millisecond values possible,
-		// the ratio should be initialized into a chart ultimately.
-		if ( cg_smoothCamera.integer )
-			ratio = powf(dampfactor, dtime);
-		else
-			ratio = Q_powf( dampfactor, dtime );
-
-		// This value is how much distance is "left" from the ideal.
-		VectorMA(cameraIdealLoc, -ratio, locdiff, cameraCurLoc);
-		/////////////////////////////////////////////////////////////////////////////////////////////////////////
-	}
-
-	// Now we trace from the new target location to the new view location, to make sure there is nothing in the way.
-	CG_Trace(&trace, cameraCurTarget, cameramins, cameramaxs, cameraCurLoc, cg.snap->ps.clientNum, MASK_CAMERACLIP);
-
-	if (trace.fraction < 1.0)
-	{
-		if (trace.entityNum < ENTITYNUM_WORLD &&
-			cg_entities[trace.entityNum].currentState.solid == SOLID_BMODEL &&
-			cg_entities[trace.entityNum].currentState.eType == ET_MOVER)
-		{ //get a different position for movers -rww
-			centity_t *mover = &cg_entities[trace.entityNum];
-
-			//this is absolutely hackiful, since we calc view values before we add packet ents and lerp,
-			//if we hit a mover we want to update its lerp pos and force it when we do the trace against
-			//it.
-			if (mover->currentState.pos.trType != TR_STATIONARY &&
-				mover->currentState.pos.trType != TR_LINEAR)
-			{
-				int curTr = mover->currentState.pos.trType;
-				vec3_t curTrB;
-
-				VectorCopy(mover->currentState.pos.trBase, curTrB);
-
-				//calc lerporigin for this client frame
-				CG_CalcEntityLerpPositions(mover);
-
-				//force the calc'd lerp to be the base and say we are stationary so we don't try to extrapolate
-				//out further.
-				mover->currentState.pos.trType = TR_STATIONARY;
-				VectorCopy(mover->lerpOrigin, mover->currentState.pos.trBase);
-
-				//retrace
-				CG_Trace(&trace, cameraCurTarget, cameramins, cameramaxs, cameraCurLoc, cg.snap->ps.clientNum, MASK_CAMERACLIP);
-
-				//copy old data back in
-				mover->currentState.pos.trType = (trType_t) curTr;
-				VectorCopy(curTrB, mover->currentState.pos.trBase);
-			}
-			if (trace.fraction < 1.0f)
-			{ //still hit it, so take the proper trace endpos and use that.
-				VectorCopy(trace.endpos, cameraCurLoc);
-			}
-		}
-		else
-		{
-			VectorCopy( trace.endpos, cameraCurLoc );
-		}
-	}
-
-	// Note that previously there was an upper limit to the number of physics traces that are done through the world
-	// for the sake of camera collision, since it wasn't calced per frame.  Now it is calculated every frame.
-	// This has the benefit that the camera is a lot smoother now (before it lerped between tested points),
-	// however two full volume traces each frame is a bit scary to think about.
-}
+#include "cg_jar_native_camera_damp.inc"
 
 
 
@@ -920,151 +735,7 @@ CG_OffsetFirstPersonView
 
 ===============
 */
-static void CG_OffsetFirstPersonView( void ) {
-	float			*origin;
-	float			*angles;
-	float			bob;
-	float			ratio;
-	float			delta;
-	float			speed;
-	float			f;
-	vec3_t			predictedVelocity;
-	int				timeDelta;
-	int				kickTime;
-
-	if ( cg.snap->ps.pm_type == PM_INTERMISSION ) {
-		return;
-	}
-
-	origin = cg.refdef.vieworg;
-	angles = cg.refdef.viewangles;
-
-	// if dead, fix the angle and don't add any kick
-	if ( cg.snap->ps.stats[STAT_HEALTH] <= 0 ) {
-		angles[ROLL] = 40;
-		angles[PITCH] = -15;
-		angles[YAW] = cg.snap->ps.stats[STAT_DEAD_YAW];
-		origin[2] += cg.predictedPlayerState.viewheight;
-		return;
-	}
-
-	// add angles based on weapon kick
-	kickTime = (cg.time - cg.kick_time);
-	if ( kickTime < 800 )
-	{//kicks are always 1 second long.  Deal with it.
-		float kickPerc = 0.0f;
-		if ( kickTime <= 200 )
-		{//winding up
-			kickPerc = kickTime/200.0f;
-		}
-		else
-		{//returning to normal
-			kickTime = 800 - kickTime;
-			kickPerc = kickTime/600.0f;
-		}
-		VectorMA( angles, kickPerc, cg.kick_angles, angles );
-	}
-	// add angles based on damage kick
-	if ( cg.damageTime ) {
-		ratio = cg.time - cg.damageTime;
-		if ( ratio < DAMAGE_DEFLECT_TIME ) {
-			ratio /= DAMAGE_DEFLECT_TIME;
-			angles[PITCH] += ratio * cg.v_dmg_pitch;
-			angles[ROLL] += ratio * cg.v_dmg_roll;
-		} else {
-			ratio = 1.0 - ( ratio - DAMAGE_DEFLECT_TIME ) / DAMAGE_RETURN_TIME;
-			if ( ratio > 0 ) {
-				angles[PITCH] += ratio * cg.v_dmg_pitch;
-				angles[ROLL] += ratio * cg.v_dmg_roll;
-			}
-		}
-	}
-
-	// add pitch based on fall kick
-#if 0
-	ratio = ( cg.time - cg.landTime) / FALL_TIME;
-	if (ratio < 0)
-		ratio = 0;
-	angles[PITCH] += ratio * cg.fall_value;
-#endif
-
-	// add angles based on velocity
-	VectorCopy( cg.predictedPlayerState.velocity, predictedVelocity );
-
-	delta = DotProduct ( predictedVelocity, cg.refdef.viewaxis[0]);
-	angles[PITCH] += delta * cg_runPitch.value;
-
-	delta = DotProduct ( predictedVelocity, cg.refdef.viewaxis[1]);
-	angles[ROLL] -= delta * cg_runRoll.value;
-
-	// add angles based on bob
-
-	// make sure the bob is visible even at low speeds
-	speed = cg.xyspeed > 200 ? cg.xyspeed : 200;
-
-	delta = cg.bobfracsin * cg_bobPitch.value * speed;
-	if (cg.predictedPlayerState.pm_flags & PMF_DUCKED)
-		delta *= 3;		// crouching
-	angles[PITCH] += delta;
-	delta = cg.bobfracsin * cg_bobRoll.value * speed;
-	if (cg.predictedPlayerState.pm_flags & PMF_DUCKED)
-		delta *= 3;		// crouching accentuates roll
-	if (cg.bobcycle & 1)
-		delta = -delta;
-	angles[ROLL] += delta;
-
-//===================================
-
-	// add view height
-	origin[2] += cg.predictedPlayerState.viewheight;
-
-	// smooth out duck height changes
-	timeDelta = cg.time - cg.duckTime;
-	if ( timeDelta < DUCK_TIME) {
-		cg.refdef.vieworg[2] -= cg.duckChange
-			* (DUCK_TIME - timeDelta) / DUCK_TIME;
-	}
-
-	// add bob height
-	bob = cg.bobfracsin * cg.xyspeed * cg_bobUp.value;
-	if (bob > 6) {
-		bob = 6;
-	}
-
-	origin[2] += bob;
-
-
-	// add fall height
-	delta = cg.time - cg.landTime;
-	if ( delta < LAND_DEFLECT_TIME ) {
-		f = delta / LAND_DEFLECT_TIME;
-		cg.refdef.vieworg[2] += cg.landChange * f;
-	} else if ( delta < LAND_DEFLECT_TIME + LAND_RETURN_TIME ) {
-		delta -= LAND_DEFLECT_TIME;
-		f = 1.0 - ( delta / LAND_RETURN_TIME );
-		cg.refdef.vieworg[2] += cg.landChange * f;
-	}
-
-	// add step offset
-	CG_StepOffset();
-
-	// add kick offset
-
-	VectorAdd (origin, cg.kick_origin, origin);
-
-	// pivot the eye based on a neck length
-#if 0
-	{
-#define	NECK_LENGTH		8
-	vec3_t			forward, up;
-
-	cg.refdef.vieworg[2] -= NECK_LENGTH;
-	AngleVectors( cg.refdef.viewangles, forward, NULL, up );
-	VectorMA( cg.refdef.vieworg, 3, forward, cg.refdef.vieworg );
-	VectorMA( cg.refdef.vieworg, NECK_LENGTH, up, cg.refdef.vieworg );
-	}
-#endif
-}
+#include "cg_jar_native_camera_first.inc"
 
 static void CG_OffsetFighterView( void )
 {
@@ -1686,6 +1357,47 @@ extern qboolean cg_skyOri;
 extern vec3_t cg_skyOriPos;
 extern float cg_skyOriScale;
 extern qboolean cg_noFogOutsidePortal;
+static qboolean CG_DrawSectionSky(void) {
+	if (cg.hyperspace || !cg.snap)
+		return qfalse;
+	const int delta = cg.nextSnap ? cg.nextSnap->serverTime - cg.snap->serverTime : 0;
+	cg.frameInterpolation = delta ? (float)(cg.time - cg.snap->serverTime) / delta : 0;
+	for (int i = 0; i < cg.snap->numEntities; ++i) {
+		centity_t *cent = &cg_entities[cg.snap->entities[i].number];
+		const entityState_t *state = &cent->currentState;
+		const int model = state->modelindex;
+		if (model <= 0 || model >= ARRAY_LEN(cgs.inlineDrawModel) || !cgs.inlineDrawModel[model] ||
+			(state->eFlags & EF_NODRAW) || state->eType != ET_MOVER || state->generic1 != 255)
+			continue;
+
+		CG_CalcEntityLerpPositions(cent);
+		vec3_t axes[3], offset, localEye;
+		AnglesToAxis(cent->lerpAngles, axes);
+		VectorSubtract(cg.refdef.vieworg, cent->lerpOrigin, offset);
+		for (int a = 0; a < 3; ++a)
+			localEye[a] = DotProduct(offset, axes[a]);
+		vec3_t camera;
+		if (!CG_SectionSky(state, localEye, camera))
+			continue;
+
+		refEntity_t backdrop = {0};
+		backdrop.hModel = cgs.inlineDrawModel[model];
+		backdrop.renderfx = RF_NOSHADOW | RF_JAR_SECTION_BACKDROP;
+		AxisClear(backdrop.axis);
+		refdef_t view = cg.refdef;
+		VectorCopy(camera, view.vieworg);
+		for (int row = 0; row < 3; ++row)
+			for (int a = 0; a < 3; ++a)
+				view.viewaxis[row][a] = DotProduct(cg.refdef.viewaxis[row], axes[a]);
+		view.rdflags = RDF_NOWORLDMODEL | RDF_SKYBOXPORTAL | RDF_DRAWSKYBOX | RDF_JAR_SECTION_SKY;
+		trap->R_AddRefEntityToScene(&backdrop);
+		trap->R_RenderScene(&view);
+		cg.refdef.rdflags |= RDF_JAR_SECTION_SKY;
+		return qtrue;
+	}
+	return qfalse;
+}
+
 void CG_DrawSkyBoxPortal(const char *cstr)
 {
 	refdef_t backuprefdef;
@@ -2074,9 +1786,9 @@ void CG_EmplacedView(vec3_t angles)
 {
 	float yaw;
 	int override;
+	const float constraint = JAR_MP_EmplacedConstraint(&cg_entities[cg.snap->ps.emplacedIndex].currentState);
 
-	override = BG_EmplacedView(cg.refdef.viewangles, angles, &yaw,
-		cg_entities[cg.snap->ps.emplacedIndex].currentState.origin2[0]);
+	override = BG_EmplacedView(cg.refdef.viewangles, angles, &yaw, constraint);
 
 	if (override)
 	{
@@ -2090,8 +1802,7 @@ void CG_EmplacedView(vec3_t angles)
 	}
 
 	//we want to constrain the predicted player state viewangles as well
-	override = BG_EmplacedView(cg.predictedPlayerState.viewangles, angles, &yaw,
-		cg_entities[cg.snap->ps.emplacedIndex].currentState.origin2[0]);
+	override = BG_EmplacedView(cg.predictedPlayerState.viewangles, angles, &yaw, constraint);
 	if (override)
 	{
         cg.predictedPlayerState.viewangles[YAW] = yaw;
@@ -2478,6 +2189,7 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
 
 	// set up cg.snap and possibly cg.nextSnap
 	CG_ProcessSnapshots();
+	CG_JAR_ReflectionProbes();
 
 	trap->ROFF_UpdateEntities();
 
@@ -2632,7 +2344,8 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
 
 	cstr = CG_ConfigString(CS_SKYBOXORG);
 
-	if (cstr && cstr[0])
+	cg.refdef.rdflags &= ~RDF_JAR_SECTION_SKY;
+	if (!CG_DrawSectionSky() && cstr && cstr[0])
 	{ //we have a skyportal
 		CG_DrawSkyBoxPortal(cstr);
 	}

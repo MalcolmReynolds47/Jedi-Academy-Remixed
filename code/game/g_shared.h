@@ -524,7 +524,7 @@ public:
 	int				torsoAttacksCnt;				// # of times torso was hit with saber
 	int				otherAttacksCnt;				// # of times anything else on a monster was hit with saber
 	int				forceUsed[NUM_FORCE_POWERS];	// # of times each force power was used
-	int				weaponUsed[WP_NUM_WEAPONS];		// # of times each weapon was used
+	int				weaponUsed[WP_NATIVE_WEAPON_COUNT];		// # of times each weapon was used
 
 
 	void sg_export(
@@ -1675,6 +1675,9 @@ typedef struct weaponInfo_s {
 	qhandle_t		weaponModel;		//for in view
 	qhandle_t		weaponWorldModel;	//for in their hands
 	qhandle_t		barrelModel[4];
+	qhandle_t		carriedViewModel;
+	qhandle_t		carriedHandsModel;
+	qhandle_t		carriedBarrelModel;
 
 	vec3_t			weaponMidpoint;		// so it will rotate centered instead of by tag
 

@@ -196,7 +196,7 @@ static void SV_Map_f( void ) {
 		cheat = qtrue;
 		killBots = qtrue;
 	} else {
-		cheat = qfalse;
+		cheat = Cvar_VariableIntegerValue("jar_hostCheats") == 1 ? qtrue : qfalse;
 		killBots = qfalse;
 	}
 
@@ -218,14 +218,9 @@ static void SV_Map_f( void ) {
 		eForceReload = eForceReload_ALL;
 	}
 
-	// start up the map
-	SV_SpawnServer( mapname, killBots, eForceReload );
-
-	// set the cheat value
-	// if the level was started with "map <levelname>", then
-	// cheats will not be allowed.  If started with "devmap <levelname>"
-	// then cheats will be allowed
+	// Publish the selected policy in the initial game state.
 	Cvar_Set( "sv_cheats", cheat ? "1" : "0" );
+	SV_SpawnServer( mapname, killBots, eForceReload );
 }
 
 
@@ -1621,7 +1616,7 @@ extern void SV_CreateClientGameStateMessage( client_t *client, msg_t* msg );
 
 void SV_RecordDemo( client_t *cl, char *demoName ) {
 	char		name[MAX_OSPATH];
-	byte		bufData[MAX_MSGLEN];
+	static byte		bufData[MAX_MSGLEN];
 	msg_t		msg;
 	int			len;
 
@@ -1966,7 +1961,7 @@ void SV_AddOperatorCommands( void ) {
 	Cmd_AddCommand ("dumpuser", SV_DumpUser_f, "Prints the userinfo for a given userid" );
 	Cmd_AddCommand ("map_restart", SV_MapRestart_f, "Restart the current map" );
 	Cmd_AddCommand ("sectorlist", SV_SectorList_f);
-	Cmd_AddCommand ("map", SV_Map_f, "Load a new map with cheats disabled" );
+	Cmd_AddCommand ("map", SV_Map_f, "Load a new map using the server's cheats setting" );
 	Cmd_SetCommandCompletionFunc( "map", SV_CompleteMapName );
 	Cmd_AddCommand ("devmap", SV_Map_f, "Load a new map with cheats enabled" );
 	Cmd_SetCommandCompletionFunc( "devmap", SV_CompleteMapName );

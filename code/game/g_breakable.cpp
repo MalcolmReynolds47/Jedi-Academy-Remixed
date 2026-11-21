@@ -22,13 +22,12 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "g_local.h"
 #include "g_functions.h"
+#include "g_crystal_crate.h"
+#include "g_bsp_section.h"
+#include "../cgame/cg_breakable_effects.h"
 #include "../cgame/cg_media.h"
 #include "g_navigator.h"
 
-//client side shortcut hacks from cg_local.h
-extern void CG_MiscModelExplosion( vec3_t mins, vec3_t maxs, int size, material_t chunkType );
-extern void CG_Chunks( int owner, vec3_t origin, const vec3_t normal, const vec3_t mins, const vec3_t maxs,
-							float speed, int numChunks, material_t chunkType, int customChunk, float baseScale, int customSound = 0 );
 extern void G_SetEnemy( gentity_t *self, gentity_t *enemy );
 
 extern gentity_t *G_CreateObject ( gentity_t *owner, vec3_t origin, vec3_t angles, int modelIndex, int frame, trType_t trType, int effectID );
@@ -77,392 +76,9 @@ static void CacheChunkEffects( material_t material )
 	}
 }
 
-//--------------------------------------
-void funcBBrushDieGo (gentity_t *self)
-{
-	vec3_t		org, dir, up;
-	gentity_t	*attacker = self->enemy;
-	float		scale;
-	int			numChunks, size = 0;
-	material_t	chunkType = self->material;
+#include "g_breakable_brush.inc"
 
-	// if a missile is stuck to us, blow it up so we don't look dumb
-	// FIXME: flag me so I should know to do this check!
-	for ( int i = 0; i < MAX_GENTITIES; i++ )
-	{
-		if ( g_entities[i].s.groundEntityNum == self->s.number && ( g_entities[i].s.eFlags & EF_MISSILE_STICK ))
-		{
-			G_Damage( &g_entities[i], self, self, NULL, NULL, 99999, 0, MOD_CRUSH ); //?? MOD?
-		}
-	}
-
-	//NOTE: MUST do this BEFORE clearing contents, or you may not open the area portal!!!
-	gi.AdjustAreaPortalState( self, qtrue );
-
-	//So chunks don't get stuck inside me
-	self->s.solid = 0;
-	self->contents = 0;
-	self->clipmask = 0;
-	gi.linkentity(self);
-
-	VectorSet(up, 0, 0, 1);
-
-	if ( self->target && attacker != NULL )
-	{
-		G_UseTargets(self, attacker);
-	}
-
-	VectorSubtract( self->absmax, self->absmin, org );// size
-
-	numChunks = Q_flrand(0.0f, 1.0f) * 6 + 18;
-
-	// This formula really has no logical basis other than the fact that it seemed to be the closest to yielding the results that I wanted.
-	// Volume is length * width * height...then break that volume down based on how many chunks we have
-	scale = sqrt( sqrt( org[0] * org[1] * org[2] )) * 1.75f;
-
-	if ( scale > 48 )
-	{
-		size = 2;
-	}
-	else if ( scale > 24 )
-	{
-		size = 1;
-	}
-
-	scale = scale / numChunks;
-
-	if ( self->radius > 0.0f )
-	{
-		// designer wants to scale number of chunks, helpful because the above scale code is far from perfect
-		//	I do this after the scale calculation because it seems that the chunk size generally seems to be very close, it's just the number of chunks is a bit weak
-		numChunks *= self->radius;
-	}
-
-	VectorMA( self->absmin, 0.5, org, org );
-	VectorAdd( self->absmin,self->absmax, org );
-	VectorScale( org, 0.5f, org );
-
-	if ( attacker != NULL && attacker->client )
-	{
-		VectorSubtract( org, attacker->currentOrigin, dir );
-		VectorNormalize( dir );
-	}
-	else
-	{
-		VectorCopy(up, dir);
-	}
-
-	if ( !(self->spawnflags & 2048) ) // NO_EXPLOSION
-	{
-		// we are allowed to explode
-		CG_MiscModelExplosion( self->absmin, self->absmax, size, chunkType );
-	}
-
-	if ( self->splashDamage > 0 && self->splashRadius > 0 )
-	{
-		//explode
-		AddSightEvent( attacker, org, 256, AEL_DISCOVERED, 100 );
-		AddSoundEvent( attacker, org, 128, AEL_DISCOVERED, qfalse, qtrue );//FIXME: am I on ground or not?
-		G_RadiusDamage( org, self, self->splashDamage, self->splashRadius, self, MOD_UNKNOWN );
-
-		gentity_t *te = G_TempEntity( org, EV_GENERAL_SOUND );
-		te->s.eventParm = G_SoundIndex("sound/weapons/explosions/cargoexplode.wav");
-	}
-	else
-	{//just break
-		AddSightEvent( attacker, org, 128, AEL_DISCOVERED );
-		AddSoundEvent( attacker, org, 64, AEL_SUSPICIOUS, qfalse, qtrue );//FIXME: am I on ground or not?
-	}
-
-	//FIXME: base numChunks off size?
-	CG_Chunks( self->s.number, org, dir, self->absmin, self->absmax, 300, numChunks, chunkType, 0, scale, self->noise_index );
-
-	self->e_ThinkFunc = thinkF_G_FreeEntity;
-	self->nextthink = level.time + 50;
-	//G_FreeEntity( self );
-}
-
-void funcBBrushDie (gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int damage, int mod,int dFlags,int hitLoc)
-{
-	self->takedamage = qfalse;//stop chain reaction runaway loops
-
-	G_SetEnemy(self, attacker);
-
-	if(self->delay)
-	{
-		self->e_ThinkFunc = thinkF_funcBBrushDieGo;
-		self->nextthink = level.time + floor(self->delay * 1000.0f);
-		return;
-	}
-
-	funcBBrushDieGo(self);
-}
-
-void funcBBrushUse (gentity_t *self, gentity_t *other, gentity_t *activator)
-{
-	G_ActivateBehavior( self, BSET_USE );
-	if(self->spawnflags & 64)
-	{//Using it doesn't break it, makes it use it's targets
-		if(self->target && self->target[0])
-		{
-			G_UseTargets(self, activator);
-		}
-	}
-	else
-	{
-		funcBBrushDie(self, other, activator, self->health, MOD_UNKNOWN);
-	}
-}
-
-void funcBBrushPain(gentity_t *self, gentity_t *inflictor, gentity_t *attacker, const vec3_t point, int damage, int mod,int hitLoc)
-{
-	if ( self->painDebounceTime > level.time )
-	{
-		return;
-	}
-
-	if ( self->paintarget )
-	{
-		G_UseTargets2 (self, self->activator, self->paintarget);
-	}
-
-	G_ActivateBehavior( self, BSET_PAIN );
-
-	if ( self->material == MAT_DRK_STONE
-		|| self->material == MAT_LT_STONE
-		|| self->material == MAT_GREY_STONE )
-	{
-		vec3_t	org, dir;
-		float	scale;
-		VectorSubtract( self->absmax, self->absmin, org );// size
-		// This formula really has no logical basis other than the fact that it seemed to be the closest to yielding the results that I wanted.
-		// Volume is length * width * height...then break that volume down based on how many chunks we have
-		scale = VectorLength( org ) / 100.0f;
-		VectorMA( self->absmin, 0.5, org, org );
-		VectorAdd( self->absmin,self->absmax, org );
-		VectorScale( org, 0.5f, org );
-		if ( attacker != NULL && attacker->client )
-		{
-			VectorSubtract( attacker->currentOrigin, org, dir );
-			VectorNormalize( dir );
-		}
-		else
-		{
-			VectorSet( dir, 0, 0, 1 );
-		}
-		CG_Chunks( self->s.number, org, dir, self->absmin, self->absmax, 300, Q_irand( 1, 3 ), self->material, 0, scale );
-	}
-
-	if ( self->wait == -1 )
-	{
-		self->e_PainFunc = painF_NULL;
-		return;
-	}
-
-	self->painDebounceTime = level.time + self->wait;
-}
-
-static void InitBBrush ( gentity_t *ent )
-{
-	float		light;
-	vec3_t		color;
-	qboolean	lightSet, colorSet;
-
-	VectorCopy( ent->s.origin, ent->pos1 );
-
-	gi.SetBrushModel( ent, ent->model );
-
-	ent->e_DieFunc = dieF_funcBBrushDie;
-
-	ent->svFlags |= SVF_BBRUSH;
-
-	// if the "model2" key is set, use a seperate model
-	// for drawing, but clip against the brushes
-	if ( ent->model2 )
-	{
-		ent->s.modelindex2 = G_ModelIndex( ent->model2 );
-	}
-
-	// if the "color" or "light" keys are set, setup constantLight
-	lightSet = G_SpawnFloat( "light", "100", &light );
-	colorSet = G_SpawnVector( "color", "1 1 1", color );
-	if ( lightSet || colorSet )
-	{
-		int		r, g, b, i;
-
-		r = color[0] * 255;
-		if ( r > 255 ) {
-			r = 255;
-		}
-		g = color[1] * 255;
-		if ( g > 255 ) {
-			g = 255;
-		}
-		b = color[2] * 255;
-		if ( b > 255 ) {
-			b = 255;
-		}
-		i = light / 4;
-		if ( i > 255 ) {
-			i = 255;
-		}
-		ent->s.constantLight = r | ( g << 8 ) | ( b << 16 ) | ( i << 24 );
-	}
-
-	if(ent->spawnflags & 128)
-	{//Can be used by the player's BUTTON_USE
-		ent->svFlags |= SVF_PLAYER_USABLE;
-	}
-
-	ent->s.eType = ET_MOVER;
-	gi.linkentity (ent);
-
-	ent->s.pos.trType = TR_STATIONARY;
-	VectorCopy( ent->pos1, ent->s.pos.trBase );
-}
-
-void funcBBrushTouch( gentity_t *ent, gentity_t *other, trace_t *trace )
-{
-}
-
-/*QUAKED func_breakable (0 .8 .5) ? INVINCIBLE IMPACT CRUSHER THIN SABERONLY HEAVY_WEAP USE_NOT_BREAK PLAYER_USE NO_EXPLOSION
-INVINCIBLE - can only be broken by being used
-IMPACT - does damage on impact
-CRUSHER - won't reverse movement when hit an obstacle
-THIN - can be broken by impact damage, like glass
-SABERONLY - only takes damage from sabers
-HEAVY_WEAP - only takes damage by a heavy weapon, like an emplaced gun or AT-ST gun.
-USE_NOT_BREAK - Using it doesn't make it break, still can be destroyed by damage
-PLAYER_USE - Player can use it with the use button
-NO_EXPLOSION - Does not play an explosion effect, though will still create chunks if specified
-
-When destroyed, fires it's trigger and chunks and plays sound "noise" or sound for type if no noise specified
-
-"targetname" entities with matching target will fire it
-"paintarget" target to fire when hit (but not destroyed)
-"wait"		how long minimum to wait between firing paintarget each time hit
-"delay"		When killed or used, how long (in seconds) to wait before blowing up (none by default)
-"model2"	.md3 model to also draw
-"modelAngles" md3 model's angles <pitch yaw roll> (in addition to any rotation on the part of the brush entity itself)
-"target"	all entities with a matching targetname will be used when this is destoryed
-"health"	default is 10
-"radius"  Chunk code tries to pick a good volume of chunks, but you can alter this to scale the number of spawned chunks. (default 1)  (.5) is half as many chunks, (2) is twice as many chunks
-"NPC_targetname" - Only the NPC with this name can damage this
-"forcevisible" - When you turn on force sight (any level), you can see these draw through the entire level...
-"redCrosshair" - crosshair turns red when you look at this
-
-Damage: default is none
-"splashDamage" - damage to do
-"splashRadius" - radius for above damage
-
-"team" - This cannot take damage from members of this team:
-	"player"
-	"neutral"
-	"enemy"
-
-Don't know if these work:
-"color"		constantLight color
-"light"		constantLight radius
-
-"material" - default is "0 - MAT_METAL" - choose from this list:
-0 = MAT_METAL		(basic blue-grey scorched-DEFAULT)
-1 = MAT_GLASS
-2 = MAT_ELECTRICAL	(sparks only)
-3 = MAT_ELEC_METAL	(METAL2 chunks and sparks)
-4 =	MAT_DRK_STONE	(brown stone chunks)
-5 =	MAT_LT_STONE	(tan stone chunks)
-6 =	MAT_GLASS_METAL (glass and METAL2 chunks)
-7 = MAT_METAL2		(electronic type of metal)
-8 = MAT_NONE		(no chunks)
-9 = MAT_GREY_STONE	(grey colored stone)
-10 = MAT_METAL3		(METAL and METAL2 chunk combo)
-11 = MAT_CRATE1		(yellow multi-colored crate chunks)
-12 = MAT_GRATE1		(grate chunks--looks horrible right now)
-13 = MAT_ROPE		(for yavin_trial, no chunks, just wispy bits )
-14 = MAT_CRATE2		(red multi-colored crate chunks)
-15 = MAT_WHITE_METAL (white angular chunks for Stu, NS_hideout )
-
-*/
-void SP_func_breakable( gentity_t *self )
-{
-	if(!(self->spawnflags & 1))
-	{
-		if(!self->health)
-		{
-			self->health = 10;
-		}
-	}
-
-	if ( self->spawnflags & 16 ) // saber only
-	{
-		self->flags |= FL_DMG_BY_SABER_ONLY;
-	}
-	else if ( self->spawnflags & 32 ) // heavy weap
-	{
-		self->flags |= FL_DMG_BY_HEAVY_WEAP_ONLY;
-	}
-
-	if (self->health)
-	{
-		self->takedamage = qtrue;
-	}
-
-	G_SoundIndex("sound/weapons/explosions/cargoexplode.wav");//precaching
-	G_SpawnFloat( "radius", "1", &self->radius ); // used to scale chunk code if desired by a designer
-	G_SpawnInt( "material", "0", (int*)&self->material );
-	CacheChunkEffects( self->material );
-
-	self->e_UseFunc = useF_funcBBrushUse;
-
-	//if ( self->paintarget )
-	{
-		self->e_PainFunc = painF_funcBBrushPain;
-	}
-
-	self->e_TouchFunc = touchF_funcBBrushTouch;
-
-	if ( self->team && self->team[0] )
-	{
-		self->noDamageTeam = (team_t)GetIDForString( TeamTable, self->team );
-		if(self->noDamageTeam == TEAM_FREE)
-		{
-			G_Error("team name %s not recognized\n", self->team);
-		}
-	}
-	self->team = NULL;
-	if (!self->model) {
-		G_Error("func_breakable with NULL model\n");
-	}
-	InitBBrush( self );
-
-	char	buffer[MAX_QPATH];
-	char	*s;
-	if ( G_SpawnString( "noise", "*NOSOUND*", &s ) )
-	{
-		Q_strncpyz( buffer, s, sizeof(buffer) );
-		COM_DefaultExtension( buffer, sizeof(buffer), ".wav");
-		self->noise_index = G_SoundIndex(buffer);
-	}
-
-	int forceVisible = 0;
-	G_SpawnInt( "forcevisible", "0", &forceVisible );
-	if ( forceVisible )
-	{//can see these through walls with force sight, so must be broadcast
-		if ( VectorCompare( self->s.origin, vec3_origin ) )
-		{//no origin brush
-			self->svFlags |= SVF_BROADCAST;
-		}
-		self->s.eFlags |= EF_FORCE_VISIBLE;
-	}
-
-	int redCrosshair = 0;
-	G_SpawnInt( "redCrosshair", "0", &redCrosshair );
-	if ( redCrosshair )
-	{//can see these through walls with force sight, so must be broadcast
-		self->flags |= FL_RED_CROSSHAIR;
-	}
-}
-
+#include "g_breakable_brush_spawn.inc"
 
 void misc_model_breakable_pain ( gentity_t *self, gentity_t *inflictor, gentity_t *other, const vec3_t point, int damage, int mod,int hitLoc )
 {
@@ -481,6 +97,7 @@ void misc_model_breakable_pain ( gentity_t *self, gentity_t *inflictor, gentity_
 
 void misc_model_breakable_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int damage, int meansOfDeath,int dFlags,int hitLoc )
 {
+ if(G_CrystalCrateDie(self,attacker))return;
 	int		numChunks;
 	float	size = 0, scale;
 	vec3_t	dir, up, dis;
@@ -850,7 +467,8 @@ void TieFighterThink ( gentity_t *self )
 					{
 						gentity_t	*bolt;
 
-						bolt = G_Spawn();
+						bolt = G_TrySpawn();
+						if (!bolt) return;
 
 						bolt->classname = "tie_proj";
 						bolt->nextthink = level.time + 10000;
@@ -917,7 +535,8 @@ void TieFighterUse( gentity_t *self, gentity_t *other, gentity_t *activator )
 	AngleVectors( self->currentAngles, fwd, rt, NULL );
 
 	gentity_t	*bolt;
-	bolt = G_Spawn();
+	bolt = G_TrySpawn();
+	if (!bolt) return;
 
 	bolt->classname = "tie_proj";
 	bolt->nextthink = level.time + 10000;
@@ -941,7 +560,8 @@ void TieFighterUse( gentity_t *self, gentity_t *other, gentity_t *activator )
 	SnapVector( bolt->s.pos.trDelta );		// save net bandwidth
 	VectorCopy( self->currentOrigin, bolt->currentOrigin);
 
-	bolt = G_Spawn();
+	bolt = G_TrySpawn();
+	if (!bolt) return;
 
 	bolt->classname = "tie_proj";
 	bolt->nextthink = level.time + 10000;
@@ -1009,6 +629,11 @@ void TieBomberThink( gentity_t *self )
 		// can be attached to (kinda inefficient, I know).
 		char name1[200] = "models/players/gonk/model.glm";
 		gentity_t *bomb = G_CreateObject( self, self->s.pos.trBase, self->s.apos.trBase, 0, 0, TR_GRAVITY, 0 );
+		if (!bomb)
+		{
+			self->attackDebounceTime = level.time + 1000;
+			return;
+		}
 		bomb->s.modelindex = G_ModelIndex( name1 );
 		gi.G2API_InitGhoul2Model( bomb->ghoul2, name1, bomb->s.modelindex, NULL_HANDLE, NULL_HANDLE, 0, 0);
 		bomb->s.radius = 50;
@@ -1400,13 +1025,15 @@ void SP_misc_model_breakable( gentity_t *ent )
 
 // Really naughty cheating.  Put in an EVENT at some point...
 extern void cgi_R_GetBModelVerts(int bmodelIndex, vec3_t *verts, vec3_t normal );
-extern void CG_DoGlass( vec3_t verts[4], vec3_t normal, vec3_t dmgPt, vec3_t dmgDir, float dmgRadius );
+extern void CG_DoGlass( vec3_t verts[4], vec3_t normal, vec3_t dmgPt, vec3_t dmgDir, float dmgRadius, int maxShards );
 extern	cgs_t			cgs;
 
 //-----------------------------------------------------
 void funcGlassDie( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int damage, int mod,int dFlags,int hitLoc )
 {
-	vec3_t		verts[4], normal;
+	vec3_t		verts[4]{}, normal{};
+	const int maxShards=jar::bspSection::SectionGlassVertices(*self,verts,normal);
+	if(maxShards)self->takedamage=qfalse;
 
 	// if a missile is stuck to us, blow it up so we don't look dumb....we could, alternately, just let the missile drop off??
 	for ( int i = 0; i < MAX_GENTITIES; i++ )
@@ -1418,21 +1045,22 @@ void funcGlassDie( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, i
 	}
 
 	// Really naughty cheating.  Put in an EVENT at some point...
-	cgi_R_GetBModelVerts( cgs.inlineDrawModel[self->s.modelindex], verts, normal );
-	CG_DoGlass( verts, normal, self->pos1, self->pos2, self->splashRadius );
+	if(!maxShards)cgi_R_GetBModelVerts( cgs.inlineDrawModel[self->s.modelindex], verts, normal );
+	CG_DoGlass( verts, normal, self->pos1, self->pos2, self->splashRadius, maxShards );
 
 	self->takedamage = qfalse;//stop chain reaction runaway loops
 
 	G_SetEnemy( self, self->enemy );
 
 	//NOTE: MUST do this BEFORE clearing contents, or you may not open the area portal!!!
-	gi.AdjustAreaPortalState( self, qtrue );
+	if(!maxShards)gi.AdjustAreaPortalState( self, qtrue );
 
 	//So chunks don't get stuck inside me
 	self->s.solid = 0;
 	self->contents = 0;
 	self->clipmask = 0;
-	gi.linkentity(self);
+	if(maxShards)gi.unlinkentity(self);
+	else gi.linkentity(self);
 
 	if ( self->target && attacker != NULL )
 	{
@@ -1449,6 +1077,16 @@ void funcGlassUse( gentity_t *self, gentity_t *other, gentity_t *activator )
 
 	// For now, we just break on use
 	G_ActivateBehavior( self, BSET_USE );
+	vec3_t verts[4],normal;
+	if(jar::bspSection::SectionGlassVertices(*self,verts,normal)){
+		VectorAdd(verts[0],verts[2],self->pos1);VectorScale(self->pos1,.5f,self->pos1);
+		if(other)VectorSubtract(self->pos1,other->currentOrigin,self->pos2);
+		else VectorCopy(normal,self->pos2);
+		VectorNormalize(self->pos2);VectorScale(self->pos2,390,self->pos2);
+		self->splashRadius=40;
+		funcGlassDie(self,other,activator,self->health,MOD_UNKNOWN);
+		return;
+	}
 
 	VectorAdd( self->mins, self->maxs, temp1 );
 	VectorScale( temp1, 0.5f, temp1 );
@@ -1499,7 +1137,7 @@ void SP_func_glass( gentity_t *self )
 
 	VectorCopy( self->s.origin, self->pos1 );
 
-	gi.SetBrushModel( self, self->model );
+	G_JAR_SetBrushModel( self, self->model );
 	self->svFlags |= (SVF_GLASS_BRUSH|SVF_BBRUSH);
 	self->material = MAT_GLASS;
 

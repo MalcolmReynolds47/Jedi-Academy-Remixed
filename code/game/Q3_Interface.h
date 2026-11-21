@@ -553,7 +553,7 @@ typedef struct pscript_s
 } pscript_t;
 
 // STL map type definitions for the Entity List and Script Buffer List.
-typedef	std::map < std::string, int >		entitylist_t;
+typedef	std::multimap < std::string, int >		entitylist_t;
 typedef std::map < std::string, pscript_t* >	scriptlist_t;
 
 // STL map type definitions for the variable containers.

@@ -1,0 +1,162 @@
+{
+  "audit_date": "2026-11-17",
+  "scope": "Multiplayer, shared dependencies, content, release and retention tooling",
+  "stage": {
+    "version": "1.340.0",
+    "build": "20261116-211610-7177d4c9",
+    "bytes": 1507407826,
+    "sha256": "9d093cb3e5bdb53adb99e66544c13489e1efad83dabfbc7b6b37ecab1b99e0b0",
+    "verified_files": 75
+  },
+  "steam_install": {
+    "version": "1.339.0",
+    "receipt_file_hashes_matched": 75,
+    "modified_by_audit": false
+  },
+  "configured_release_ctest": {
+    "passed": 159,
+    "failed": 0,
+    "elapsed_seconds": 12.62
+  },
+  "rollback_fixture": {
+    "previousReceiptRetained": true,
+    "backupAfterPrune": false,
+    "zeroChangeReceiptRetained": true,
+    "previousBackupHash": "D2B7AD839E4D8847862C9CC9C350A03CB7E28FEE6145C8C4EC7526515A987088"
+  },
+  "squad_sort": {
+    "evidence": [
+      "Actual waypoint branch (number:waypoint:cost:buddy): 1:50:0:1 2:50:0:2 3:50:0:3",
+      "Controlled differing cost, member numbers: 3 99 99"
+    ],
+    "member_waypoints": [
+      10,
+      30,
+      45
+    ],
+    "enemy_waypoint": 50,
+    "controlled_costs": [
+      30,
+      20,
+      10
+    ],
+    "empty_slot_sentinel": 99
+  },
+  "legacy_world_save": {
+    "map": "mp/ffa3",
+    "loaded": [
+      "crate only",
+      "NPC only",
+      "unlinked pair",
+      "crate to world rope"
+    ],
+    "failed": "distant crate to NPC rope; load rolled back",
+    "reason_for_route_rejection": "unconfirmed",
+    "positive_control_flatgrass": {
+      "crate": [
+        -412.0,
+        576.0,
+        161.0
+      ],
+      "npc": [
+        -284.0,
+        576.0,
+        161.0
+      ],
+      "length": 192,
+      "load": "JA:R: Loaded closepair revision 1: 2 objects, 1 attachments as server-owned. jar_worldEditing controls player edits.",
+      "status_before_save": "JA:R: World: 2 objects, 1 attachments, 0 pending native members; map maps/gm_flatgrass.bsp. Autosave auto_e4cec21b_6e6cf2f0 (120s): loaded; save pending.",
+      "save": "JA:R: Saved closecurrent revision 1: 2 objects, 1 attachments. Previous revision retained.",
+      "reload": "JA:R: Loaded closecurrent revision 1: 2 objects, 1 attachments as server-owned. jar_worldEditing controls player edits.",
+      "status_after_reload": "JA:R: World: 2 objects, 1 attachments, 0 pending native members; map maps/gm_flatgrass.bsp. Autosave auto_e4cec21b_6e6cf2f0 (120s): loaded; save pending."
+    }
+  },
+  "retention_size": {
+    "old_fixtures": [
+      {
+        "directory": "mp-grenade-visibility-1.335.0",
+        "file_count": 855,
+        "logical_bytes": 28776051693,
+        "pk3_count": 176,
+        "pk3_logical_bytes": 28566406551
+      },
+      {
+        "directory": "mp-prop-visibility-1.336.0",
+        "file_count": 737,
+        "logical_bytes": 12178517401,
+        "pk3_count": 72,
+        "pk3_logical_bytes": 11916566196
+      }
+    ],
+    "logical_bytes_combined": 40954569094,
+    "file_identity": {
+      "distinct_files": 1087,
+      "distinct_bytes": 3017399732,
+      "bytes_all_links_inside_pair": 1792390793,
+      "bytes_with_outside_links": 1225008939,
+      "bytes_single_link": 238644371
+    },
+    "allocated_space_reclaimed": "not measured; no deletion"
+  },
+  "appearance_archive_overlap": {
+    "sp_entries": 2297,
+    "mp_entries": 1767,
+    "identical_same_path_members": 1766,
+    "sum_compressed_member_bytes_in_mp": 640791110,
+    "sum_compressed_member_bytes_in_sp": 616804101
+  },
+  "native_network": {
+    "loopback_only": true,
+    "pure_server": true,
+    "graphical_clients": 0,
+    "protocol": 1051,
+    "wrong_protocol_rejected": true,
+    "wrong_challenge_rejected": true,
+    "client_count": 2,
+    "maps_served_in_separate_runs": [
+      "gm_construct",
+      "gm_flatgrass"
+    ],
+    "npc_undo": {
+      "count_updates": [
+        1,
+        2,
+        1,
+        0
+      ],
+      "observer_saw_cleanup": true
+    },
+    "portals": {
+      "both_saw_active_and_disabled": true,
+      "undo_removed": [
+        54,
+        55
+      ]
+    },
+    "movement": {
+      "gravity": 400,
+      "ground_friction": 2,
+      "other_client_gravity": 800,
+      "other_client_friction_override": false
+    },
+    "model_count": 26,
+    "hilts": [
+      "desann",
+      "droid",
+      "jar_pike",
+      "sith_sword"
+    ],
+    "distinct_rgb_values": 26
+  },
+  "prior_evidence": {
+    "file": "build/mp-undo-crash-1.340.0/verification.json",
+    "crowd_undo_70_to_69_cases": 4,
+    "rerun_by_this_audit": false
+  },
+  "open_checks": [
+    "graphical listen host plus a second physical client and WAN joining",
+    "long mixed NPC and physics session with measured frame times",
+    "individual map section and SP playthroughs",
+    "world checks blocked by legacy fixture"
+  ]
+}

@@ -25,6 +25,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_functions.h"
 #include "wp_saber.h"
 #include "w_local.h"
+#include "g_sandbox_charges.h"
 
 //-----------------------
 //	Laser Trip Mine
@@ -33,50 +34,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define PROXIMITY_STYLE 1
 #define TRIPWIRE_STYLE	2
 
-//---------------------------------------------------------
-void touchLaserTrap( gentity_t *ent, gentity_t *other, trace_t *trace )
-//---------------------------------------------------------
-{
-	ent->s.eType = ET_GENERAL;
-
-	// a tripwire so add draw line flag
-	VectorCopy( trace->plane.normal, ent->movedir );
-
-	// make it shootable
-	VectorSet( ent->mins, -4, -4, -4 );
-	VectorSet( ent->maxs, 4, 4, 4 );
-
-	ent->clipmask = MASK_SHOT;
-	ent->contents = CONTENTS_SHOTCLIP;
-	ent->takedamage = qtrue;
-	ent->health = 15;
-
-	ent->e_DieFunc = dieF_WP_ExplosiveDie;
-	ent->e_TouchFunc = touchF_NULL;
-
-	// so we can trip it too
-	ent->activator = ent->owner;
-	ent->owner = NULL;
-
-	WP_Stick( ent, trace );
-
-	if ( ent->count == TRIPWIRE_STYLE )
-	{
-		vec3_t		mins = {-4,-4,-4}, maxs = {4,4,4};//FIXME: global these
-		trace_t		tr;
-		VectorMA( ent->currentOrigin, 32, ent->movedir, ent->s.origin2 );
-		gi.trace( &tr, ent->s.origin2, mins, maxs, ent->currentOrigin, ent->s.number, MASK_SHOT, G2_RETURNONHIT, 0 );
-		VectorCopy( tr.endpos, ent->s.origin2 );
-
-		ent->e_ThinkFunc = thinkF_laserTrapThink;
-	}
-	else
-	{
-		ent->e_ThinkFunc = thinkF_WP_prox_mine_think;
-	}
-
-	ent->nextthink = level.time + LT_ACTIVATION_DELAY;
-}
+#include "wp_trip_mine_stick.inc"
 
 // copied from flechette prox above...which will not be used if this gets approved
 //---------------------------------------------------------
@@ -133,7 +91,6 @@ void laserTrapThink( gentity_t *ent )
 //---------------------------------------------------------
 {
 	gentity_t	*traceEnt;
-	vec3_t		end, mins = {-4,-4,-4}, maxs = {4,4,4};
 	trace_t		tr;
 
 	// turn on the beam effect
@@ -149,8 +106,7 @@ void laserTrapThink( gentity_t *ent )
 	ent->nextthink = level.time + FRAMETIME;
 
 	// Find the main impact point
-	VectorMA( ent->s.pos.trBase, 2048, ent->movedir, end );
-	gi.trace( &tr, ent->s.origin2, mins, maxs, end, ent->s.number, MASK_SHOT, G2_RETURNONHIT, 0 );
+	G_SandboxChargeTraceBeam(*ent,tr);
 
 	traceEnt = &g_entities[ tr.entityNum ];
 
@@ -288,7 +244,7 @@ void WP_PlaceLaserTrap( gentity_t *ent, qboolean alt_fire )
 	WP_RemoveOldTraps( ent );
 
 	//FIXME: surface must be within 64
-	laserTrap = G_Spawn();
+	laserTrap = G_TrySpawn();
 
 	if ( laserTrap )
 	{

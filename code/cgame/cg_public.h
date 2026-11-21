@@ -34,7 +34,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // needs to be larger than PACKET_BACKUP
 
 
-#define	MAX_ENTITIES_IN_SNAPSHOT	512
+#define	MAX_ENTITIES_IN_SNAPSHOT	MAX_GENTITIES
 
 #define	SNAPFLAG_RATE_DELAYED		1		// the server withheld a packet to save bandwidth
 #define	SNAPFLAG_DROPPED_COMMANDS	2		// the server lost some cmds coming from the client
@@ -77,7 +77,7 @@ functions imported from the main executable
 ==================================================================
 */
 
-#define	CGAME_IMPORT_API_VERSION	4
+#define	CGAME_IMPORT_API_VERSION	5
 
 typedef enum {
 	CG_PRINT,
@@ -221,6 +221,12 @@ Ghoul2 Insert End
 
 	CG_OPENJK_MENU_PAINT,
 	CG_OPENJK_GETMENU_BYNAME,
+	CG_R_ADDPORTALTOSCENE,
+	CG_R_SETREFLECTIONPROBES,
+	CG_CM_BSPMODELINFO,
+	CG_CM_SECTION_SKY,
+	CG_CM_RIFTSECTIONAIR,
+	CG_CM_SECTION_PVS,
 } cgameImport_t;
 
 #ifdef JK2_MODE
