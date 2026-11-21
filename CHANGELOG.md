@@ -1,3 +1,14 @@
+# JA:R 1.341.0
+
+- Multiplayer squads now use each NPC's own path to the enemy. Sorting keeps every member and distinguishes unreachable paths; an NPC cannot select itself as its nearest buddy.
+- Host map search discovers titles from off-page BSPs while keeping preview generation limited to visible cards.
+- World restore explains when there is no clear rope route and leaves existing objects intact. Independent server tests cover that rollback, a valid linked save, autosave, joints, rigid bodies and attachments.
+- The build keeps the last usable installation backup after a no-op reinstall and removes old visibility-test runtimes without discarding their evidence.
+- The full Windows ZIP stores shared font and interface streams once. For a manual install, extract to an empty folder and run **Expand-JA-R.ps1** before copying the game files. The source deployer does this automatically. MP archive compression changed; the entry order, contents, pure protocol and game-visible archive checksums are unchanged.
+- The multiplayer guide distinguishes the published source, a staged package and the version actually installed.
+
+## OpenJK history
+
 This file will generally summarise the Github repo commit history
 Key: [-] removed, [+] added, [\*] modified
 

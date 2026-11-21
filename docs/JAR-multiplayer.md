@@ -1,5 +1,13 @@
 # JA:R multiplayer sandbox
 
+The public source version is defined in `shared/qcommon/jar_release.h`. For a local installation, read the **Version** and **BuildId** in `JediAcademyRemixed/build-info.json` under GameData. A staged ZIP or a separate multiplayer test ZIP does not change the installed version. The dated entries below describe earlier builds.
+
+Full Windows releases from 1.341.0 store shared UI data once. Extract the ZIP
+to an empty folder, run **Expand-JA-R.ps1** there, and wait for the verified
+message before copying the contents of **JediAcademy** into **GameData**.
+The source deployment script handles this step automatically. The separate
+multiplayer-only friend package keeps its own installation instructions.
+
 ## Player models and lightsabers
 
 The multiplayer Player menu lists installed humanoid player and NPC
@@ -32,7 +40,7 @@ server can use cheat commands. The choice applies to subsequent
 `1` before the `map` command to enable cheats and pass
 `+set net_port <port>` to the launcher to choose a startup port.
 
-## Latest installed release (1.94.0, 2026-11-12)
+## Release history: 1.94.0 (2026-11-12)
 
 Build `20261112-003238-c002b144` installed at `2026-11-12T00:40:01.8191294-05:00` through the JA:R release scripts.
 All 152 automated suites passed. Independent readback verified

@@ -49,6 +49,7 @@ function Invoke-JarTool([string]$Program, [string[]]$Arguments) {
     if ($LASTEXITCODE -ne 0) { throw "$Program failed with exit code $LASTEXITCODE" }
 }
 
+Invoke-JarTool $PythonExecutable @((Join-Path $jarRoot 'tests\jar\compact_release.py'))
 Invoke-JarTool $PythonExecutable @((Join-Path $jarRoot 'scripts\build-legacy-npcs.py'), '--game-data', $GameDataPath)
 Invoke-JarTool $PythonExecutable @((Join-Path $jarRoot 'scripts\build-yt1300.py'), '--game-data', $GameDataPath)
 Invoke-JarTool $PythonExecutable @((Join-Path $jarRoot 'tests\jar\yt1300_assets.py'), '--game-data', $GameDataPath)
@@ -72,6 +73,7 @@ Invoke-JarTool $PythonExecutable @((Join-Path $jarRoot 'tests\jar\retail_bsp_adm
 Invoke-JarTool $PythonExecutable @((Join-Path $jarRoot 'scripts\test-vehicle-variants.py'), '--game-data', $GameDataPath, '--build', (Join-Path $jarBuild $Configuration))
 Invoke-JarTool $PythonExecutable @((Join-Path $jarRoot 'scripts\test-mp-droids.py'), '--game-data', $GameDataPath, '--build', (Join-Path $jarBuild $Configuration))
 Invoke-JarTool $PythonExecutable @((Join-Path $jarRoot 'scripts\test-yt1300.py'), '--game-data', $GameDataPath, '--build', (Join-Path $jarBuild $Configuration))
+Invoke-JarTool $PythonExecutable @((Join-Path $jarRoot 'scripts\test-mp-world-suite.py'), '--game-data', $GameDataPath, '--build', (Join-Path $jarBuild $Configuration))
 Invoke-JarTool $PythonExecutable @((Join-Path $jarRoot 'scripts\test-mp-server.py'), '--game-data', $GameDataPath, '--build', (Join-Path $jarBuild $Configuration), '--curated-catalog')
 Invoke-JarTool $PythonExecutable @((Join-Path $jarRoot 'scripts\test-mp-server.py'), '--game-data', $GameDataPath, '--build', (Join-Path $jarBuild $Configuration), '--network-lights', '--network-music')
 Invoke-JarTool $PythonExecutable @((Join-Path $jarRoot 'scripts\test-mp-server.py'), '--game-data', $GameDataPath, '--build', (Join-Path $jarBuild $Configuration), '--network-section')
@@ -287,7 +289,7 @@ Copy-Item -LiteralPath $jarHashFile -Destination $jarSymbols
 Compress-Archive -LiteralPath $jarSymbols -DestinationPath ($jarSymbols+'.zip')
 Write-Host "JA:R symbols and source: $jarSymbols.zip"
 $jarPendingZip = Join-Path $jarRoot ("build\JediAcademyRemixed-$jarReleaseVersion-$jarBuildId-staging.zip")
-Compress-Archive -LiteralPath $jarRuntime -DestinationPath $jarPendingZip
+Invoke-JarTool $PythonExecutable @((Join-Path $PSScriptRoot 'jar_compact_release.py'), $jarRuntime, $jarPendingZip)
 Invoke-JarTool $PythonExecutable @((Join-Path $jarRoot 'scripts\verify-jar-release.py'), $jarPendingZip, $jarReleaseVersion, $jarBuildId)
 Move-Item -LiteralPath $jarPendingZip -Destination $jarZip -Force
 Write-Host "JA:R runtime: $jarRuntime"

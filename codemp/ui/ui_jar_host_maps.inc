@@ -6,10 +6,11 @@ typedef struct {
     char name[MAX_QPATH], title[64];
     jarHostMapStatus_t status;
     qhandle_t preview;
-    qboolean inspected;
+    qboolean inspected, previewRead;
 } hostMap_t;
 static hostMap_t hostMaps[HOST_MAP_LIMIT];
 static int hostMapRows[HOST_MAP_LIMIT], hostMapsFound, hostMapCount, hostMapPage;
+static int hostMapTitleCursor;
 static char hostMapSearch[64], hostMapPageText[64], hostMapTitles[HOST_MAP_CARDS][64];
 static char hostMapDetails[HOST_MAP_CARDS][64];
 
@@ -41,7 +42,7 @@ static int CompareHostMaps(const void* left, const void* right) {
 
 static void HostMapsDiscover(void) {
     static char files[HOST_MAP_LIMIT*MAX_QPATH];
-    hostMapsFound=0;
+    hostMapTitleCursor=hostMapsFound=0;
     if (!trap->FS_GetFileList) return;
     const int count=trap->FS_GetFileList("maps",".bsp",files,sizeof(files));
     const char* next=files;
@@ -104,22 +105,23 @@ static void HostMapsPaint(void) {
     HostMapShow(Menu_FindItemByName(menu,"next"),(hostMapPage+1)*HOST_MAP_CARDS<hostMapCount);
 }
 
-static void HostMapInspect(hostMap_t* map) {
-    if (map->inspected) return;
+static void HostMapInspect(hostMap_t* map, qboolean preview) {
+    if (preview ? map->previewRead : map->inspected) return;
     char title[sizeof(map->title)];
-    map->status=UI_JAR_InspectHostMap(trap,map->name,title,sizeof(title),&map->preview);
+    map->status=UI_JAR_InspectHostMap(trap,map->name,title,sizeof(title),preview ? &map->preview : NULL);
     if (!map->title[0] && title[0]) Q_strncpyz(map->title,title,sizeof(map->title));
     map->inspected=qtrue;
+    if (preview) map->previewRead=qtrue;
 }
 
 static void HostMapsFilter(void) {
-    Value("ui_jarHostMapSearch",hostMapSearch,sizeof(hostMapSearch));
-    hostMapCount=hostMapPage=0;
+    hostMapCount=0;
     for (int i=0; i<hostMapsFound; ++i) {
-        const hostMap_t* map=&hostMaps[i];
+        hostMap_t* map=&hostMaps[i];
         if (*hostMapSearch && !Q_stristr(map->name,hostMapSearch) && !Q_stristr(map->title,hostMapSearch)) continue;
         hostMapRows[hostMapCount++]=i;
     }
+    if (hostMapPage*HOST_MAP_CARDS >= hostMapCount) hostMapPage=0;
     HostMapsPaint();
 }
 
@@ -155,6 +157,7 @@ static void HostMapsAction(const char* action) {
             Menu_PostParse(menu);
         }
         trap->Cvar_Set("ui_jarHostMapSearch","");
+        hostMapSearch[0]=0; hostMapPage=0;
         HostMapsFilter();
         Open("jarMPHostMaps");
         return;
@@ -172,7 +175,7 @@ static void HostMapsAction(const char* action) {
         const int row=hostMapPage*HOST_MAP_CARDS+action[0]-'0';
         if (row<hostMapCount) {
             hostMap_t* map=&hostMaps[hostMapRows[row]];
-            HostMapInspect(map);
+            HostMapInspect(map,qtrue);
             if (map->status!=JAR_HOST_MAP_PLAYABLE) { HostMapsPaint(); return; }
             trap->Cvar_Set("ui_jarHostMap",map->name);
             Open("jarMPHost");
@@ -185,13 +188,24 @@ static void HostMapsRefresh(void) {
     if (!menu || Q_stricmp(menu->window.name,"jarMPHostMaps")) return;
     char search[sizeof(hostMapSearch)];
     Value("ui_jarHostMapSearch",search,sizeof(search));
-    if (strcmp(search,hostMapSearch)) HostMapsFilter();
+    qboolean changed=strcmp(search,hostMapSearch)!=0;
+    if (changed) { Q_strncpyz(hostMapSearch,search,sizeof(hostMapSearch)); hostMapPage=0; }
+    // Index off-page titles independently, without registering their thumbnails
+    // or opening thousands of BSPs in a single frame when the user types.
+    int budget=4;
+    while (hostMapTitleCursor<hostMapsFound && budget>0) {
+        hostMap_t* map=&hostMaps[hostMapTitleCursor++];
+        if (map->inspected || map->title[0]) continue;
+        HostMapInspect(map,qfalse); --budget;
+        if (*hostMapSearch && map->title[0] && Q_stristr(map->title,hostMapSearch)) changed=qtrue;
+    }
+    if (changed) HostMapsFilter();
     // Like the SP picker, process one visible BSP per refresh.
     const int first=hostMapPage*HOST_MAP_CARDS;
     for (int row=first;row<hostMapCount && row<first+HOST_MAP_CARDS;++row) {
         hostMap_t* map=&hostMaps[hostMapRows[row]];
-        if (map->inspected) continue;
-        HostMapInspect(map);
+        if (map->previewRead) continue;
+        HostMapInspect(map,qtrue);
         HostMapsPaint();
         break;
     }

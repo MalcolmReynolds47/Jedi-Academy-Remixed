@@ -1,6 +1,7 @@
 # Retain the latest staged release and the source/symbol archive needed by the
 # installed build. Shareable packages and deployment backups are separate.
 function Remove-JarObsoleteBuilds {
+    [CmdletBinding(SupportsShouldProcess)]
     param([string]$Root, [version]$LatestVersion, [string]$LatestBuildId,
           [string]$GameDataPath, [datetime]$BuildStarted, [string]$Configuration)
 
@@ -21,6 +22,15 @@ function Remove-JarObsoleteBuilds {
                 (Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json).GameDataPath -eq $GameDataPath
             }
         })
+    # A verified no-op has a receipt, but no files to restore.
+    $rollbackRun = $deployed | Where-Object {
+        $receipt = Get-Content -Raw -LiteralPath (Join-Path $_.FullName 'receipt.json') | ConvertFrom-Json
+        $receipt.ChangedFiles -gt 0 -and (Test-Path -LiteralPath (Join-Path $_.FullName 'backup') -PathType Container)
+    } | Sort-Object {
+        $receipt = Get-Content -Raw -LiteralPath (Join-Path $_.FullName 'receipt.json') | ConvertFrom-Json
+        if ($receipt.InstalledAt) { [DateTimeOffset]::Parse($receipt.InstalledAt).UtcDateTime }
+        else { (Get-Item -LiteralPath (Join-Path $_.FullName 'receipt.json')).LastWriteTimeUtc }
+    } -Descending | Select-Object -First 1
     $targets = @(
         Get-ChildItem -LiteralPath $rootPath -File | Where-Object {
             $_.Name -match '^JediAcademyRemixed-(\d+\.\d+\.\d+)-win64\.zip$' -and [version]$Matches[1] -lt $LatestVersion
@@ -31,7 +41,7 @@ function Remove-JarObsoleteBuilds {
         }
         $deployed | Select-Object -Skip 1 | ForEach-Object {
             Get-ChildItem -LiteralPath $_.FullName -Directory |
-                Where-Object { $_.Name -in 'payload', 'backup' }
+                Where-Object { $_.Name -eq 'payload' -or ($_.Name -eq 'backup' -and (!$rollbackRun -or $_.Parent.FullName -ne $rollbackRun.FullName)) }
         }
         Get-ChildItem -LiteralPath (Join-Path $rootPath 'symbols') -Force | Where-Object {
             $_.Name -match '^(\d{8}-\d{6}-[a-f0-9]{8})(?:\.zip)?$' -and
@@ -47,6 +57,27 @@ function Remove-JarObsoleteBuilds {
             Get-ChildItem -LiteralPath $_.FullName -Force | Where-Object {
                 ($_.PSIsContainer -and $_.Name -in 'friend-extracted', 'friend-fixture', 'friend-smoke') -or
                 (!$_.PSIsContainer -and $_.Name -match '^(?:first|second)-build-\d{8}-\d{6}-[a-f0-9]{8}\.zip$')
+            }
+        }
+        # Opt in only generated runtime layouts. Keep the run logs, stacks,
+        # images and receipts alongside them. Never recurse through links.
+        foreach ($suite in (Get-ChildItem -LiteralPath $rootPath -Directory | Where-Object {
+            !$_.LinkType -and $_.Name -match '^mp-(?:grenade|prop)-visibility-(\d+\.\d+\.\d+)$' -and
+            [version]$Matches[1] -lt $LatestVersion
+        })) {
+            $dir = $suite.FullName
+            $raw = Join-Path $dir 'raw-runtime'
+            if (Test-Path -LiteralPath (Join-Path $raw 'jar_server.x86_64.exe')) { Get-Item -LiteralPath $raw }
+            Get-ChildItem -Directory -LiteralPath $dir | Where-Object Name -Match '^(baseline|candidate|packaged)(-(vanilla|rend2))?-[0-9]{10}$' | ForEach-Object {
+                $game = Join-Path $_.FullName 'game'
+                if (Test-Path -LiteralPath (Join-Path $game 'base/assets0.pk3')) { Get-Item -LiteralPath $game }
+            }
+        }
+        # New smoke runners use an explicit marker on the disposable runtime only.
+        Get-ChildItem -Directory -LiteralPath $rootPath | Where-Object { $_.Name -match '^[\w-]+-\d+\.\d+\.\d+$' } | ForEach-Object {
+            Get-ChildItem -Directory -LiteralPath $_.FullName | Where-Object { !$_.LinkType } | ForEach-Object {
+                $runtime = Join-Path $_.FullName 'game'
+                if ($_.CreationTimeUtc -lt $BuildStarted -and (Test-Path -LiteralPath (Join-Path $runtime '.jar-test-runtime'))) { Get-Item -LiteralPath $runtime }
             }
         }
         Get-ChildItem -LiteralPath (Join-Path $rootPath "jar/$Configuration") -Directory | Where-Object {
@@ -70,12 +101,13 @@ function Remove-JarObsoleteBuilds {
                 throw "Path is outside $rootPath"
             }
             for ($part = $resolved; $part -ne $rootPath; $part = Split-Path -Parent $part) {
-                if ((Get-Item -LiteralPath $part -Force).LinkType) { throw "Linked path: $part" }
+                if ((Get-Item -LiteralPath $part -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Linked path: $part" }
             }
             if ($target.PSIsContainer -and (Get-ChildItem -LiteralPath $resolved -Recurse -Force |
                 Where-Object LinkType -in 'Junction','SymbolicLink','MountPoint' | Select-Object -First 1)) {
                 throw 'Directory contains a linked entry.'
             }
+            if (!$PSCmdlet.ShouldProcess($resolved, "Prune generated JA:R files")) { continue }
             Remove-Item -LiteralPath $resolved -Force -Recurse:$target.PSIsContainer -ErrorAction Stop
             ++$removed
         } catch {

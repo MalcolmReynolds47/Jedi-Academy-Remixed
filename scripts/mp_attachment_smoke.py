@@ -24,7 +24,8 @@ def check_attachments(root, mod, game_data, rcon):
     directory = mod / 'jar/worlds'
     assert 'Saved attach_seed revision 1' in rcon('jar_world_save attach_seed')
     seed = (directory / 'attach_seed.0.jrw').read_bytes()
-    assert struct.unpack_from('<I', seed)[0] == 0x3657524a
+    version = decode(directory/'attach_seed.0.jrw')['version']
+    assert version >= 6
     name = 'models/chunks/crate/crate2_1.md3'
     catalog = (root / 'codemp/game/jar_mp_catalog.h').read_text(encoding='utf-8')
     ident = int(re.search(r'\{(\d+),1,\d+,"'+re.escape(name)+'"', catalog)[1])
@@ -83,15 +84,22 @@ def check_attachments(root, mod, game_data, rcon):
     restored = save('attach_mount_restored')['nodes'][0]
     assert restored[25:33]==moving[25:33] and restored[2]==1
     assert 'world cleared' in rcon('jar_world_clear')
+    # Legacy unmounted thrust now pushes down. Measure it in free flight,
+    # before a floor impact can produce real spin on the irregular crate shard.
+    from mp_network_smoke import SECTION_MAP
+    rcon('map '+SECTION_MAP)
+    assert 'Saved legacy_air revision 1' in rcon('jar_world_save legacy_air')
+    seed = (directory/'legacy_air.0.jrw').read_bytes()
+    point = (0., 0., 1024.)
     legacy = bytearray(node(thruster=1, gravity=1)[:100])
     struct.pack_into('<f', legacy, 24, 1500.)
     fixture('attach_legacy', legacy, version=2)
     older = save('attach_legacy_restored')['nodes'][0]
     assert older[25]==0 and older[26]==3000 and math.dist(older[22:25], (0,0,0)) < .001, older
-    assert older[21] > 1, older
+    assert older[21] < -1, older
     assert 'world cleared' in rcon('jar_world_clear')
     (mod.parent/'attachment-result.json').write_text(json.dumps(dict(native_module=True, map='mp/ffa3',
         rigid_world_rope=True, rope_length=50, measured_anchor_distance=distance,
         off_center_rotation=True, mounted_thruster_power=450, mounted_thruster_spin=spin,
-        mounted_frame_restored=True, rope_restored=True, legacy_thruster_no_added_torque=True, world_write_version=6,
+        mounted_frame_restored=True, rope_restored=True, legacy_thruster_no_added_torque=True, world_write_version=version,
         graphical_clients=0), indent=2)+'\n', encoding='utf-8')

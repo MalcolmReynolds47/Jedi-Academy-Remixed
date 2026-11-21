@@ -31,7 +31,8 @@ def check_autosave(root, mod, game_data, rcon):
     assert match, status
     slot = match[1]
     baseline = latest(directory, slot)[1]['generation']
-    seed = (directory / 'seed.0.jrw').read_bytes()
+    assert 'Saved autosave_seed revision 1' in rcon('jar_world_save autosave_seed')
+    seed = (directory / 'autosave_seed.0.jrw').read_bytes()
     catalog = (root / 'codemp/game/jar_mp_catalog.h').read_text(encoding='utf-8')
     match = re.search(r'\{(\d+),1,\d+,"models/chunks/crate/crate2_1.md3","[^"]*","[^"]*",([^,]+),([^,]+),([^}]+)\}', catalog)
     assert match

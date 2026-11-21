@@ -56,8 +56,25 @@ def check_rigid(root, mod, game_data, rcon):
     match = re.search(r'Box3D active; (\d+) triangles; (\d+) fixed steps', status)
     assert match and int(match[1]) > 100 and int(match[2]) > 300, status
     assert 'world cleared' in rcon('jar_world_clear')
+    # A splinter legitimately rolls off a second splinter. Use a flat-topped
+    # retail crate on known clear geometry to exercise actual stacked contact.
+    from mp_network_smoke import SECTION_MAP
+    rcon('map '+SECTION_MAP)
+    assert 'Saved stack_seed revision 1' in rcon('jar_world_save stack_seed')
+    seed = (directory/'stack_seed.0.jrw').read_bytes()
+    point = (0., 0., 192.)
+    name = 'models/map_objects/nar_shaddar/crate_xplode.md3'
+    ident = int(re.search(r'\{(\d+),1,\d+,"'+re.escape(name)+'"', catalog)[1])
+    for archive in sorted((game_data/'base').glob('assets*.pk3')):
+        with zipfile.ZipFile(archive) as z:
+            if name in z.namelist():
+                model = z.read(name)
+                bounds = struct.unpack_from('<6f', model, struct.unpack_from('<I', model, 92)[0])
+                break
+    else:
+        raise AssertionError(name)
     base = (*point[:2], point[2]+20)
-    fixture('rigid_stack', [node(base, frozen=1), node((*base[:2], base[2]+16))])
+    fixture('rigid_stack', [node(base, frozen=1), node((*base[:2], base[2]+bounds[5]-bounds[2]+8))])
     time.sleep(4)
     stacked = save('rigid_stacked')
     assert len(stacked)==2 and stacked[0][1]==1 and stacked[1][1]==0

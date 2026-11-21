@@ -13,7 +13,7 @@ def check_joints(root, mod, game_data, rcon):
     assert 'world cleared' in rcon('jar_world_clear')
     rcon('devmap mp/ffa3');assert 'world cleared' in rcon('jar_world_clear')
     directory=mod/'jar/worlds';assert 'Saved joint_seed revision 1' in rcon('jar_world_save joint_seed')
-    seed=(directory/'joint_seed.0.jrw').read_bytes();assert struct.unpack_from('<I',seed)[0]==0x3657524a
+    seed=(directory/'joint_seed.0.jrw').read_bytes();version=decode(directory/'joint_seed.0.jrw')['version']; assert version >= 6
     catalog=(root/'codemp/game/jar_mp_catalog.h').read_text(encoding='utf-8')
 
     def entry(name):
@@ -96,7 +96,7 @@ def check_joints(root, mod, game_data, rcon):
             assert 'world cleared' in rcon('jar_world_clear')
     finally:
         rcon('set d_npcfreeze 0')
-    (mod.parent/'joint-result.json').write_text(json.dumps(dict(native_module=True,world_write_version=6,
+    (mod.parent/'joint-result.json').write_text(json.dumps(dict(native_module=True,world_write_version=version,
         rigid_world_weld=True,rigid_axial_hinge=True,hinge_spin_restored=True,immutable_frames=True,
         mixed_two_prop_npc_graph=True,mixed_graph_restored=True,native_only_world_welds=native,
         graphical_clients=0,ai_decisions_frozen=True),indent=2)+'\n',encoding='utf-8')

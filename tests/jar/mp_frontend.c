@@ -66,10 +66,17 @@ static void HostFixture(void){
  memcpy(blockedBsp+header.lumps[LUMP_ENTITIES].fileofs,blocked,sizeof(blocked));
  blockedBspSize=header.lumps[LUMP_ENTITIES].fileofs+sizeof(blocked);
 }
+static qboolean largeMapCatalog;
 static int MapList(const char*path,const char*extension,char*list,int size){
  static const char names[]="gm_flatgrass.bsp\0gm_construct.bsp\0custom/brush.bsp\0blocked.bsp\0custom/brush.bsp\0../escape.bsp\0wrong.txt\0bad.bsp\0";
  assert(!strcmp(path,"maps")&&!strcmp(extension,".bsp")&&size>=sizeof(names));
- memcpy(list,names,sizeof(names));return 8;
+ memcpy(list,names,sizeof(names));
+ if(largeMapCatalog){
+  static const char more[]="a0.bsp\0a1.bsp\0a2.bsp\0a3.bsp\0a4.bsp\0a5.bsp\0a6.bsp\0a7.bsp\0";
+  assert(size>=sizeof(names)+sizeof(more));
+  memcpy(list+sizeof(names)-1,more,sizeof(more));return 16;
+ }
+ return 8;
 }
 static int File(const char*name,fileHandle_t*f,fsMode_t mode){
  fileOffset=0;
@@ -225,9 +232,10 @@ int main(void){
  Run("jarStartHost","");assert(commands==beforeMap+1&&!strcmp(command,"map gm_flatgrass\n"));
  focused=m;Run("jarHost","");Run("jarHostMaps","open");Run("jarHostMaps","3");Run("jarStartHost","");
  assert(commands==beforeMap+2&&!strcmp(command,"map gm_construct\n"));
- focused=m;Run("jarHost","");Run("jarHostMaps","open");
- for(int i=0;i<5;++i)UI_JAR_Refresh();
- Set("ui_jarHostMapSearch","BRUSH COURT");UI_JAR_Refresh();
+ largeMapCatalog=qtrue;
+ focused=m;Run("jarHost","");Run("jarHostMaps","open");assert(hostMapCount>HOST_MAP_CARDS);
+ // Search before any visible card is inspected.
+ Set("ui_jarHostMapSearch","BRUSH COURT");for(int tick=0;tick<4;++tick)UI_JAR_Refresh();
  assert(hostMapCount==1&&!strcmp(hostMapTitles[0],"Brush Courtyard")&&thumbnailWrites==2);
  Run("jarHostMaps","0");Run("jarStartHost","");
  assert(commands==beforeMap+3&&!strcmp(command,"map custom/brush\n"));

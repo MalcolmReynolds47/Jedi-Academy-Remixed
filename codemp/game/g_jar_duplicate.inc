@@ -350,6 +350,7 @@ void JAR_MP_CopyNPCReady(gentity_t*e){
 }
 static qboolean PlaceCopyState(gentity_t*p,const jarCopy_t*copy,const vec3_t anchor,const vec3_t*velocity,const vec3_t*angular,
                               const jarSectionStates_t *timers){
+ const char *failure="Assembly placement failed and was rolled back. Existing objects preserved.";
  int mapped[MAX_GENTITIES],index,free=0,ropeCount=0,newActors=0,propCount=0,newProps=0,newMedia=0;
  trace_t tr;static jarMPSectionAdmission_t sections[JAR_MP_SECTION_COUNT];qboolean sectionRead[JAR_MP_SECTION_COUNT]={0};
  if(copy->count<0||copy->count>MAX_GENTITIES||copy->ropes<0||copy->ropes>JAR_MP_ATTACHMENT_LIMIT||!CopyControllersValid(copy))return qfalse;
@@ -450,7 +451,7 @@ static qboolean PlaceCopyState(gentity_t*p,const jarCopy_t*copy,const vec3_t anc
   const qboolean hiddenEndpoint=(link->first>=0&&CopyHiddenBeacon(&copy->node[link->first]))||
                                 (link->second>=0&&CopyHiddenBeacon(&copy->node[link->second]));
   // Dormant links resume normal route admission after the beacon deploys.
-  if(!hiddenEndpoint&&!RopeAdmission(e->s.number,NULL))goto fail;
+  if(!hiddenEndpoint&&!RopeAdmission(e->s.number,NULL)){failure="No clear rope route between the saved anchors. Placement rolled back; existing objects preserved.";goto fail;}
   if(!o->jointKind)e->s.jarRopeState=1;
   e->classname=o->jointKind==1?"jar_weld":o->jointKind==2?"jar_hinge":"jar_rope";e->s.eType=ET_GENERAL;e->s.generic1=251;e->s.weapon=o->jointKind;e->r.svFlags|=o->jointKind?SVF_NOCLIENT:SVF_BROADCAST;e->s.time2=(int)o->length;
   vec3_t a,b;Endpoint(o->first-1,o->anchorA,a);Endpoint(o->second-1,o->anchorB,b);Move(e,a);VectorCopy(b,e->s.origin2);
@@ -480,7 +481,7 @@ fail:
  // this transaction, including native spawners/helpers that failed before Track.
  for(int n=MAX_CLIENTS;n<level.num_entities;++n)if(!before[n])objects[n].copyPending=0;
  for(int n=level.num_entities-1;n>=MAX_CLIENTS;--n)if(!before[n]&&g_entities[n].inuse)G_FreeEntity(&g_entities[n]);
- Tell(p,"Assembly placement failed and was rolled back. Existing objects preserved.");return qfalse;
+ Tell(p,failure);return qfalse;
 }
 
 static qboolean PlaceCopy(gentity_t*p,const jarCopy_t*copy,const vec3_t anchor,const vec3_t*velocity,const vec3_t*angular){

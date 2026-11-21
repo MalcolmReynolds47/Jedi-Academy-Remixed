@@ -15,10 +15,10 @@ with zipfile.ZipFile(a.source) as src:
     names = sorted(n for n in src.namelist() if n.startswith(('jar/font/', 'jar/ui/', 'jar/licenses/')))
     assert names and len(names) == len(set(names))
     manifest = {'schema': 1, 'description': 'Unmodified SP font/UI assets and license notices for MP', 'files': []}
-    with zipfile.ZipFile(a.output, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=1) as dst:
+    with zipfile.ZipFile(a.output, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as dst:
         for n in names:
             data = src.read(n)
-            dst.writestr(zipfile.ZipInfo(n, (2026, 10, 12, 0, 0, 0)), data, compress_type=zipfile.ZIP_DEFLATED, compresslevel=1)
+            dst.writestr(zipfile.ZipInfo(n, (2026, 10, 12, 0, 0, 0)), data, compress_type=zipfile.ZIP_DEFLATED, compresslevel=6)
             manifest['files'].append({'path': n, 'sha256': hashlib.sha256(data).hexdigest()})
         dst.writestr(zipfile.ZipInfo('jar/interface-manifest.json', (2026, 10, 12, 0, 0, 0)), json.dumps(manifest, indent=2))
     with zipfile.ZipFile(a.output) as dst:

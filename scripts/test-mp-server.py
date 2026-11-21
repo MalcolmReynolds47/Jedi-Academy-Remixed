@@ -89,6 +89,9 @@ if section_fixture:
     if not args.network_pure:
         write_section_map(mod)
     map_name = SECTION_MAP
+if (args.world or args.vehicles or args.forces or args.rigid or args.attachments) and not section_fixture:
+    from mp_network_smoke import write_section_map
+    write_section_map(mod)
 server_game_data = Path(args.game_data).resolve()
 client_game_data = None
 pure_layout = None
@@ -307,7 +310,7 @@ with (run / 'stdout.log').open('wb') as log:
             (run / 'protocol-rejection.txt').write_bytes(mismatch)
             assert f'Server uses protocol version {protocol} (yours is {protocol - 1})'.encode('ascii') in mismatch, mismatch
 
-        if args.world or args.vehicles or args.forces or args.autosave or args.rigid or args.attachments or args.poses or args.skeletal or args.joints or args.aliases or args.vehicle_variants:
+        if args.world or args.vehicles or args.forces:
             from mp_world_smoke import check_world
             check_world(root, mod, Path(args.game_data), rcon, vehicles=args.vehicles, forces=args.forces)
         if args.capacity:

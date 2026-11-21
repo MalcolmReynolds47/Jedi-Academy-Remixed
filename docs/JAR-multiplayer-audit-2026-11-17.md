@@ -1,5 +1,8 @@
 # JA:R audit — November 17, 2026
 
+**Follow-up, November 20:** The seven findings below describe 1.340.0. See the
+[1.341.0 changes](../CHANGELOG.md) for their fixes and the manual ZIP expansion step.
+
 **Release decision:** Keep 1.340.0 staged. It contains the fix for the reported crowd Undo crash and passed the configured suite. Two defects reproduced outside that suite: cleanup can delete the useful rollback backup, and NPC squad sorting loses information. The native world smoke also fails before several other checks can run. Fix rollback first, then squad sorting. No runtime files or installation were changed by this audit.
 
 The review covers multiplayer and the shared code, content, and release tooling it uses. It combines inspection of the current tree, isolated runs of the packaged native server, the configured Release CTest suite, and a review of earlier gameplay evidence. It is not a line-by-line certification, a new SP campaign playthrough, or an Internet multiplayer playtest. [Machine-readable evidence](audits/2026-11-17-evidence.json) preserves the measurements independently of build-directory cleanup.

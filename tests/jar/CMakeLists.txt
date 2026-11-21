@@ -257,6 +257,8 @@ if(WIN32 AND MSVC AND BuildSPEngine)
     if(NOT JAR_POWERSHELL)
         message(FATAL_ERROR "PowerShell is required for the JA:R launcher regression test")
     endif()
+    add_test(NAME jar_release_retention_tests COMMAND ${JAR_POWERSHELL} -NoProfile -ExecutionPolicy Bypass
+        -File ${CMAKE_CURRENT_SOURCE_DIR}/release_retention.ps1)
     add_test(NAME jar_launcher_tests COMMAND ${JAR_POWERSHELL} -NoProfile -ExecutionPolicy Bypass
         -File ${CMAKE_CURRENT_SOURCE_DIR}/launcher.ps1
         -Launcher $<TARGET_FILE:jar_launcher> -Child $<TARGET_FILE:jar_launcher_test_child>
@@ -392,6 +394,9 @@ endif()
 add_test(NAME jar_vehicle_variants_mp_tests COMMAND jar_vehicle_variants_mp_tests)
 
 jar_test(jar_asset_policy_tests asset_policy.cpp)
+add_executable(jar_mp_squad_navigation_tests mp_squad_navigation.c)
+add_test(NAME jar_mp_squad_navigation_tests COMMAND jar_mp_squad_navigation_tests)
+
 add_executable(jar_mp_frontend_tests mp_frontend.c ${MPDir}/ui/ui_jar_map_bsp.cpp ${SharedDir}/qcommon/q_string.c)
 target_include_directories(jar_mp_frontend_tests PRIVATE ${MPDir} ${SharedDir} ${CMAKE_BINARY_DIR}/shared ${GSLIncludeDirectory})
 target_compile_definitions(jar_mp_frontend_tests PRIVATE JAR_MP UI_BUILD)

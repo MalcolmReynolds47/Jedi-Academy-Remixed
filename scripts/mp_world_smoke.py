@@ -297,17 +297,29 @@ def check_world(root, mod, game_data, rcon, vehicles=False, forces=False):
         return ident, kind, (-radius, -radius, bottom), (radius, radius, bottom + height)
     prop = entry('models/chunks/crate/crate2_1.md3')
     npc = entry('stormtrooper2')
-    prop_record = struct.pack('<6I16f', prop[0], 1, 1, 1, 0, 0, 250., *points[0], 0., 25., 0., *prop[2], *prop[3], 12., 34., 0.)
-    npc_record = struct.pack('<6I16f', npc[0], 1, 0, 0, 173, 0, 80., *points[1], 0., 90., 0., *npc[2], *npc[3], 0., 0., 0.)
-    internal = struct.pack('<ii7f', 0, 1, 1., 2., 3., 4., 5., 6., math.dist(points[0], points[1]) + 100)
-    anchor = (*points[0][:2], points[0][2] + 64)
-    external = struct.pack('<ii7f', 0, -1, 0., 0., 0., *anchor, 64.)
-    data = legacy_header(seed)
-    struct.pack_into('<2I', data, 12, 2, 2)
-    data += prop_record + npc_record + internal + external
-    data += struct.pack('<I', checksum(data))
-    (directory / 'fixture.0.jrw').write_bytes(data)
-    assert 'Loaded fixture revision 1: 2 objects, 2 attachments' in rcon('jar_world_load fixture')
+    def fixture(slot, points, seed):
+        prop_record = struct.pack('<6I16f', prop[0], 1, 1, 1, 0, 0, 250., *points[0], 0., 25., 0., *prop[2], *prop[3], 12., 34., 0.)
+        npc_record = struct.pack('<6I16f', npc[0], 1, 0, 0, 173, 0, 80., *points[1], 0., 90., 0., *npc[2], *npc[3], 0., 0., 0.)
+        internal = struct.pack('<ii7f', 0, 1, 1., 2., 3., 4., 5., 6., math.dist(points[0], points[1]) + 100)
+        anchor = (*points[0][:2], points[0][2] + 64)
+        external = struct.pack('<ii7f', 0, -1, 0., 0., 0., *anchor, 64.)
+        data = legacy_header(seed)
+        struct.pack_into('<2I', data, 12, 2, 2)
+        data += prop_record + npc_record + internal + external
+        data += struct.pack('<I', checksum(data))
+        (directory / (slot+'.0.jrw')).write_bytes(data)
+        return anchor
+    fixture('blocked_route', points, seed)
+    rejected = rcon('jar_world_load blocked_route')
+    assert 'No clear rope route' in rejected and 'rolled back' in rejected, rejected
+    assert 'World: 0 objects, 0 attachments' in rcon('jar_world_status')
+    from mp_network_smoke import SECTION_MAP
+    rcon('map '+SECTION_MAP)
+    assert 'Saved open_seed revision 1' in rcon('jar_world_save open_seed')
+    points = [(0., 0., 128.), (128., 0., 128.)]
+    anchor = fixture('fixture', points, (directory/'open_seed.0.jrw').read_bytes())
+    result = rcon('jar_world_load fixture')
+    assert 'Loaded fixture revision 1: 2 objects, 2 attachments' in result, result
     # Longer than the pending-native timeout: verifies actual NPC_Begin callback.
     time.sleep(4)
     assert 'World: 2 objects, 2 attachments, 0 pending native members' in rcon('jar_world_status')
@@ -328,7 +340,7 @@ def check_world(root, mod, game_data, rcon, vehicles=False, forces=False):
     assert 'World: 2 objects, 2 attachments, 0 pending native members' in rcon('jar_world_status')
     # Map-start restore uses a fresh module with no connected players.
     rcon('set jar_worldLoad roundtrip')
-    rcon('map mp/ffa3')
+    rcon('map '+SECTION_MAP)
     time.sleep(4)
     assert 'World: 2 objects, 2 attachments, 0 pending native members' in rcon('jar_world_status')
     assert 'world cleared' in rcon('jar_world_clear')
@@ -337,6 +349,8 @@ def check_world(root, mod, game_data, rcon, vehicles=False, forces=False):
         native_npc_health=173, native_npc_freeze=True, internal_and_world_ropes=True,
         save_reload=True, map_start_restore=True, preserved_prop_velocity=True,
         map=roundtrip['map'], bsp_checksum=roundtrip['bsp']), indent=2) + '\n', encoding='utf-8')
+    rcon('set jar_worldLoad ""')
+    rcon('map mp/ffa3')
     if vehicles or forces:
         # Taspir has outdoor airspace for the native fighter hull. Keep the
         # smaller actor/world regression above on its original Tatooine map.

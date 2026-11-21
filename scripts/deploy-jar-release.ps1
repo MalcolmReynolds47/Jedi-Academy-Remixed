@@ -114,11 +114,17 @@ $jarPayload = Join-Path $jarRun 'payload'
 $jarBackup = Join-Path $jarRun 'backup'
 New-Item -ItemType Directory -Path $jarPayload -Force | Out-Null
 $jarEntries = @{}
+$transport = @{}
 $zip = [IO.Compression.ZipFile]::OpenRead($jarZip)
 try {
     foreach ($entry in $zip.Entries) {
         $name = $entry.FullName.Replace('\', '/')
         if ($name.EndsWith('/')) { continue }
+        if ($name -cin 'JAR-interface.json','Expand-JA-R.ps1','READ-ME-FIRST.txt') {
+            if ($transport.ContainsKey($name)) { throw "Duplicate transport member: $name" }
+            $transport[$name]=$entry
+            continue
+        }
         if (-not $name.StartsWith('JediAcademy/', [StringComparison]::Ordinal)) {
             throw "Unexpected release ZIP root: $name"
         }
@@ -129,8 +135,11 @@ try {
         $jarEntries[$relative] = $entry
         [void](Get-JarChildPath $jarGame $relative)
     }
+    $interface = 'JediAcademyRemixedMP/jar-interface.pk3'
+    if ($transport.Count -and ($transport.Count -ne 3 -or $jarEntries.ContainsKey($interface))) { throw 'Invalid compact release layout' }
+    if ($transport.Count) { [void](Get-JarChildPath $jarGame $interface) }
     foreach ($required in $jarRequired) {
-        if (-not $jarEntries.ContainsKey($required)) { throw "Missing release file: $required" }
+        if (-not $jarEntries.ContainsKey($required) -and !($transport.Count -and $required -eq $interface)) { throw "Missing release file: $required" }
     }
     if ($jarEntries.ContainsKey($jarLocalMapFiles[0]) -ne $jarEntries.ContainsKey($jarLocalMapFiles[1])) {
         throw 'Local map pack must be present in both SP and MP.'
@@ -140,6 +149,13 @@ try {
         $destination = Get-JarChildPath $jarPayload $relative
         New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
         [IO.Compression.ZipFileExtensions]::ExtractToFile($jarEntries[$relative], $destination)
+    }
+    if ($transport.Count) {
+        $recipeFile = Join-Path $jarRun 'JAR-interface.json'
+        if ($transport['JAR-interface.json'].Length -gt 16MB) { throw 'Oversized interface recipe.' }
+        [IO.Compression.ZipFileExtensions]::ExtractToFile($transport['JAR-interface.json'], $recipeFile)
+        & (Join-Path $PSScriptRoot 'Expand-JA-R.ps1') -Payload $jarPayload -Recipe $recipeFile
+        $jarEntries[$interface] = $true
     }
 } finally { $zip.Dispose() }
 
