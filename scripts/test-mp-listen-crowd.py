@@ -488,6 +488,7 @@ def compare_falls(tool, run):
 
 
 def main():
+    from mp_listen_follow import compare_follow, exercise_follow
     from mp_listen_platforms import compare_rides, compare_vehicle_lift, exercise_rides, exercise_vehicle_lift
     from mp_listen_throws import compare_throws, exercise_throws
 
@@ -498,6 +499,10 @@ def main():
     parser.add_argument('--results', type=Path, required=True)
     scenarios = parser.add_mutually_exclusive_group()
     parser.set_defaults(scenario=(exercise, compare))
+    scenarios.add_argument('--npc-follow', dest='scenario', action='store_const',
+                           const=(partial(exercise_follow, player=Player, free_port=free_port),
+                                  partial(compare_follow, read_demo=read_demo)),
+                           help='Check friendly NPCs following the host and guest around a wall of props')
     scenarios.add_argument('--physgun-throws', dest='scenario', action='store_const',
                            const=(partial(exercise_throws, player=Player, free_port=free_port), compare_throws),
                            help='Check NPC throws, post-landing combat, player holds and opt-out on a listen server')

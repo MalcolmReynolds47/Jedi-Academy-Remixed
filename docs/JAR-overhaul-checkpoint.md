@@ -59,9 +59,37 @@ work for multiplayer. The earlier single-player rope hold still applies.
     advance, back away, move around obstructions and follow a friendly
     spawning player while idle. Scripted tasks and specialized NPC behavior
     keep their native logic. NPC landings now apply damage based on impact
-    severity and honor the server's fall-damage setting.
+    severity and honor the server's fall-damage setting. In 1.345.0 NPCs
+    ignore passive props during enemy searches, and a follower can pass a
+    barricade to reach the player who spawned it.
 
 [November 17 multiplayer audit](JAR-multiplayer-audit-2026-11-17.md): verified release state, reproduced defects, test coverage, and recommended follow-up.
+
+## Multiplayer NPCs following around scenery
+
+In 1.344.0 a rebel following either the host or the joined player fired at
+a row of seven frozen crates and stopped 653 units short of its owner.
+The crates had a positive health value even though they could take no
+damage. Fixing the enemy search alone stopped the gunfire, but the
+follower then stalled at the wall, about 419 units from its owner.
+
+In 1.345.0 a grounded follower checks the face of the obstacle and keeps
+the same direction long enough to pass adjacent props. It checks ground
+and hull clearance at every step. On Flatgrass the rebel went around the
+end of the barricade for both owners. The two Classic clients recorded
+matching NPC positions at shared server times. The clear-path run also
+reached the owner. These cases use two processes on one computer.
+
+Run `scripts/test-mp-listen-crowd.py --npc-follow` with the staged MP
+package, retail game data, native snapshot reader and a fresh results
+directory. The scenario covers both owners, an unobstructed route and
+opposing riflemen fighting beside the same barricade.
+
+The next AI investigation is multiplayer sight and sound alerts. The
+native alert search returns early when player slot zero has no health.
+The native follow behavior also indexes the alert list when the search
+returns no event. Guest detection while the host is dead and behavior
+after the first player disconnects still need verification.
 
 ## Multiplayer patrols and combat squads
 

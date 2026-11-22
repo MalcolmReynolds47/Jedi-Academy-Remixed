@@ -1,3 +1,8 @@
+# JA:R 1.345.0
+
+- Multiplayer NPCs ignore indestructible scenery when searching for enemies. A crate with health assigned by Sandbox no longer draws fire away from a player or hostile NPC.
+- Friendly Sandbox NPCs following a player can keep moving around a row of props when their direct path is blocked. They still check for solid ground before each step.
+
 # JA:R 1.344.0
 
 - The multiplayer Physgun plays the stock Force-grip pose when holding a humanoid NPC or player. Letting go restores the actor's previous animation and releases it with its throwing momentum.

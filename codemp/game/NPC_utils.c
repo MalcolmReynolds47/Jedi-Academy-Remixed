@@ -1253,8 +1253,9 @@ int NPC_FindNearestEnemy( gentity_t *ent )
 	for ( i = 0; i < numEnts; i++ )
 	{
 		radEnt = &g_entities[iradiusEnts[i]];
-		//Don't consider self
-		if ( radEnt == ent )
+		// Passive scenery can have health for Sandbox bookkeeping. It
+		// should not become a combat target just because it is nearby.
+		if ( radEnt == ent || (!radEnt->client && !radEnt->takedamage) )
 			continue;
 
 		//Must be valid
