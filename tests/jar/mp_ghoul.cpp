@@ -34,7 +34,9 @@ void QDECL Com_Printf(const char*,...){}
 void QDECL Com_DPrintf(const char*,...){}
 int QDECL Com_sprintf(char*b,int size,const char*f,...){va_list a;va_start(a,f);int n=vsnprintf(b,size,f,a);va_end(a);return n;}
 
+void TestGhoulDraw();
 int main(){return RunTests("posed Ghoul2 visible surfaces, weighted bones and bounded geometry",[]{
+ TestGhoulDraw();
  CGhoul2Info_v empty;vec3_t emptyLow{},emptyHigh{};CHECK(!G2API_JAR_ModelBounds(empty,0,emptyLow,emptyHigh));
  std::array<byte,4096> data{};auto*h=reinterpret_cast<mdxmHeader_t*>(data.data());h->ofsEnd=int(data.size());h->numSurfaces=3;
  auto*offsets=reinterpret_cast<mdxmHierarchyOffsets_t*>(h+1);mdxmSurfHierarchy_t*info[3];mdxmVertex_t*verts[3];int cursor=sizeof(*h)+3*sizeof(int);

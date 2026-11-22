@@ -532,10 +532,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--game-data', type=Path, required=True)
     parser.add_argument('--package', type=Path, required=True, help='Staged JediAcademyRemixedMP folder')
-    parser.add_argument('--reader', type=Path, required=True, help='jar_mp_snapshot_tests.exe')
+    parser.add_argument('--reader', type=Path, help='jar_mp_snapshot_tests.exe for live scenarios')
     parser.add_argument('--results', type=Path, required=True)
     scenarios = parser.add_mutually_exclusive_group()
     parser.set_defaults(scenario=(exercise, compare))
+    scenarios.add_argument('--crowd-timedemo', type=Path, metavar='DEMO',
+                           help='Benchmark a recorded crowd fight in the staged Classic client')
     scenarios.add_argument('--camera-feeds', dest='scenario', action='store_const',
                            const=(partial(exercise_feeds, player=Player, free_port=free_port), compare_feeds),
                            help='Check four simultaneous multiplayer cameras, feed sharing, fallback and frame time')
@@ -571,6 +573,8 @@ def main():
                            const=(partial(crowd_scale, rate_limited_guest=True), compare_crowd_scale),
                            help='Repeat crowd scaling with LAN rate override disabled and a 25000 byte/s UDP guest')
     args = parser.parse_args()
+    if not args.crowd_timedemo and not args.reader:
+        parser.error('--reader is required for live scenarios')
     scenario, verify = args.scenario
     run = args.results.resolve()
     run.mkdir(parents=True, exist_ok=False)
@@ -589,6 +593,12 @@ def main():
         for path in package.iterdir():
             if path.suffix.lower() in ('.pk3', '.dll', '.exe'):
                 link_asset(path, mod / path.name)
+        if args.crowd_timedemo:
+            from mp_crowd_timedemo import replay
+            result = replay(mod, data / 'profiles', run, args.crowd_timedemo.resolve(), Player, free_port, link_asset)
+            (run / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
+            print(run / 'result.json', flush=True)
+            return
         phases = scenario(mod, data / 'profiles', run, stack)
         (run / 'observations.json').write_text(json.dumps(phases, indent=2))
     result = verify(args.reader.resolve(), run)

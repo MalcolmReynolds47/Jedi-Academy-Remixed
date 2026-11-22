@@ -1,3 +1,7 @@
+# JA:R 1.350.0
+
+- The Classic multiplayer renderer takes less time to draw animated crowds. It resolves each bone once per mesh surface and processes vertex transforms and diffuse lighting in parallel on supported CPUs. Models keep their existing detail, animation and visibility.
+
 # JA:R 1.349.0
 
 - Multiplayer frame profiling starts with the first complete frame after enabling `com_speeds`. Turning it on during play could previously report time since game startup as a single frame.

@@ -367,6 +367,7 @@ if(MSVC)
 else()
     target_compile_options(jar_mp_ghoul_tests PRIVATE -UNDEBUG)
 endif()
+target_sources(jar_mp_ghoul_tests PRIVATE mp_ghoul_draw.cpp)
 add_test(NAME jar_mp_ghoul_tests COMMAND jar_mp_ghoul_tests)
 
 jar_test(jar_workshop_save_tests workshop_save.cpp ${SPDir}/game/g_sandbox_charges.cpp

@@ -215,8 +215,31 @@ kept drawing the fight, and all 384 NPCs and 16 props remained on the
 server. Each setting ran for eight seconds in opposite orders across the
 two fights. The host renderer's 95th-percentile work fell from 18–19 ms
 to 1–2 ms.
-Reducing the cost of drawing a visible crowd remains open. The rendering
-switch was a diagnostic control in an isolated profile.
+This experiment used an isolated profile. Players kept their normal rendering
+settings.
+
+In 1.350.0 the Classic multiplayer renderer reuses each bone transform
+within a mesh surface and calculates groups of vertex colors together.
+It evaluates bones in their original order and keeps the same models,
+poses and detail settings. An instrumented replay of a 384-NPC fight
+compared 217,541,000 posed vertices and 217,807,240 lit vertices across
+520 frames. Every position, normal and color matched the original math.
+The crowd test accepts a recorded fight via `--crowd-timedemo` so future
+renderer changes can be measured against the same sequence.
+
+On the same computer at 800 × 600, the 832-frame replay ran at a median
+of 51.1 FPS with the 1.349.0 Classic renderer and 64.5 FPS with 1.350.0.
+Three runs per renderer used the same packaged 1.350.0 client and demo.
+Mean renderer backend time after warm-up fell from 12.75 to 9.24 ms.
+
+Four listen-server fights changed only the host renderer and kept the guest
+on the previous renderer. Both clients agreed on the visible entities and
+their states at every common snapshot. At 384 NPCs, the guest's 95th-percentile
+snapshot gaps were 75 and 75 ms with the old host renderer, and 75 and 50 ms
+with the new one. The two new-renderer runs failed the continuous-visibility
+check when NPCs below the Flatgrass platform disappeared from both clients.
+Both clients saw the extra spawn, its Undo and cleanup. A separate physical
+client and Internet play remain open checks.
 
 ## Multiplayer Physgun holds and throws
 
