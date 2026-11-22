@@ -199,6 +199,25 @@ sets the UDP guest to 25,000 bytes per second with the LAN override off.
 Both runs compare NPC identities, flags and positions, Undo, cleanup and
 the time between snapshots.
 
+In a 1.349.0 replay, both players briefly lost visibility of the same NPC
+under the Flatgrass platform. It returned in the same slot at a height of
+−488 before the spawn and Undo. The crowd check records opening visibility
+changes for up to three seconds and requires every missing NPC to return
+alive below the platform. It then requires at least 30 continuous seconds
+of full crowd visibility for both players, followed by the extra spawn,
+its Undo and complete cleanup. A missing prop or mid-fight roster change
+still fails the test.
+
+In two later 384-NPC listen-server fights on 1.349.0, disabling entity
+drawing only on the host reduced the guest's 95th-percentile snapshot gap
+from 75 to 50 ms in one fight and from 50 to 25 ms in the other. The guest
+kept drawing the fight, and all 384 NPCs and 16 props remained on the
+server. Each setting ran for eight seconds in opposite orders across the
+two fights. The host renderer's 95th-percentile work fell from 18–19 ms
+to 1–2 ms.
+Reducing the cost of drawing a visible crowd remains open. The rendering
+switch was a diagnostic control in an isolated profile.
+
 ## Multiplayer Physgun holds and throws
 
 On 1.343.0 a listen host and a connected guest recorded 202 shared held-NPC
@@ -373,7 +392,8 @@ budget is full. The map's own portal or mirror keeps its view.
 
 The Classic and Rend2 renderer tests cover matching screens, different
 camera views, offscreen panels, failed renders, and fallback materials.
-Single-player camera output and four-feed frame timing remain open.
+The multiplayer test below covers four live feeds. Single-player camera
+output and frame timing still need in-game testing.
 
 ### Multiplayer portal screens
 
@@ -403,7 +423,29 @@ a linked panel, then joins with a Rend2 client. On Flatgrass it points
 the camera at the ground and the sky, powers the panel off, and repeats
 at 128×192, 1152×192 and 128×12 units. It checks pixels inside the screen
 and the silhouette of a second camera against the sky. The test uses one
-computer. Four simultaneous feeds and their frame cost remain open.
+computer.
+
+The `--camera-feeds` test uses six screens and five cameras on Flatgrass.
+The Classic host starts with four live camera views before a Rend2 player
+joins. Both players see the same sequence as individual cameras switch
+between sky and ground. The lower-coverage fifth camera stays dark while
+a second screen using an active camera still shows its picture.
+Powering off a larger screen through the multiplayer Context property
+gives the fifth camera its slot. Restoring power returns the slot to the
+larger screen with all eleven objects still present. Each test checks
+102 screen interiors across seventeen screenshots.
+
+The test samples engine work with zero, one and four feeds. In 1.348.0,
+enabling `com_speeds` after the frame began could report milliseconds since
+startup as a single frame. In one listen-host run that reading reached
+48,211 ms. Version 1.349.0 starts sampling on the next complete frame.
+
+On one RTX 4080 SUPER with both players at 800×600 and a 60 FPS cap,
+the Classic host averaged 1.04 ms of engine work per frame with the
+screens off, 1.73 ms with one feed and 2.20 ms with four. The Rend2
+client averaged 0.96, 1.16 and 1.72 ms respectively. Each result covers
+538 frames. This timer excludes the frame limiter. Testing across two
+physical machines remains open.
 
 ## Single-player NPC patrol routes
 
@@ -963,8 +1005,9 @@ JA:R 1.254 gave up to four visible portable camera screens their own
 256×256 camera feed in SP and MP, in Classic and Rend2. Camera feeds
 and the map's mirror or portal can render in the same view. As of 1.288,
 the four slots are allocated to distinct visible views, and matching
-screens share a feed. In-game camera output and the frame cost of four
-live feeds remain open.
+screens share a feed. The multiplayer results are recorded under
+[Multiplayer portal screens](#multiplayer-portal-screens). Single-player
+output and frame timing still need in-game testing.
 
 ## Portable map section pickup placement
 
@@ -10448,7 +10491,7 @@ These receipt notes leave the immutable package and installed docs unchanged.
 | TOOL-DUP | Duplicate | Implemented owned assemblies, helpers, links and supported properties; owner accepted (24). Campaign scripts and native AI start fresh. SP 1.241 preserves mounted charges and their arming and timing. SP 1.242 copies deployed shields alone or with physically linked assemblies, retaining health, active or lowered state and expiry. SP 1.246 pastes standalone player-planted charges on clear world geometry with native arming and timers. SP 1.252 preserves qualified world anchors and mounted thrusters on copyable native map models. SP 1.259 preserves pending Welder pulses and Laser Arm bursts. Existing save records carry their native data. Live firing, visuals and full save/reload remain open. |
 | TOOL-THRUST | Thruster | Implemented prop/native force, mover translation and non-actor torque. Owner accepted the original tool (25). The later housing request is implemented in both modes. 1.181 adds selectable force direction for new mounts in SP and MP. 1.251 adds SP Context edits and Revert for force, power and direction on existing mounts. 1.274 applies SP mount force on native vehicle movement for empty and settled occupied hulls, with separate saved drift and retained seat relationships. Interactive verification remains open. |
 | TOOL-THRUST-FALLBACK | Make Thruster torque consistent for asymmetric props using native physics | 1.301 computes free-prop torque from local model extents and the world-space bounds center. Unheld fallback rotation keeps that center fixed, sweeps the adjusted body and mounted charges, and retains linear velocity. Linked assemblies use the entity-origin convention of the native constraint solver. Native tests cover centered and off-center thrust, rollback, center-preserving rotation and a world weld. Gameplay verification remains open. |
-| SB-PORTAL-MONITORS | Show live portal camera views on the most prominent portable screens | In 1.302, Classic and Rend2 allocate the four distinct camera feeds by clipped viewport coverage. Screens with the same camera pose and aspect ratio share a feed. Mirrors keep a separate view. Offscreen panels and unsuccessful captures leave room for the next candidate. Native renderer fixtures cover both selection paths. In-game display and frame timing remain open. |
+| SB-PORTAL-MONITORS | Show live portal camera views on the most prominent portable screens | Classic and Rend2 assign four distinct feeds by visible screen area. Matching views share a feed, and map mirrors use a separate view. Native fixtures cover offscreen panels and failed captures. The [multiplayer graphical test](#multiplayer-portal-screens) measures frame work and checks late joining, sharing, overflow and live power changes. Single-player gameplay and frame timing remain open. |
 | CTX-PORTAL-LINKS | Show and edit single-player portal camera and aim links | 1.303 adds live target and camera power feedback, Clear link and lifetime-checked Context Revert for Primary Link and Clear link. Property Revert detects conflicting changes. Activation loop checks distinguish camera and aim links from Use outputs. Native saved fields and clipboard wiring retain their format. In-game interaction and full save/reload remain open. |
 | SB-FORCE-BOON | Restore the retail Force Boon as a single-player pickup | 1.304 registers the native map classname and adds a Q Entities card with the stock model, icon and sound. The 25-second pickup extends an active timer, reduces Force costs and restores six points per normal recharge tick. The timer uses a spare native powerup slot in the existing save layout. Tatooine FFA, Taspir and other sections still require their remaining adapters. In-game pickup and save/reload remain open. |
 | CTX-FORCE-BOON | Edit the duration of a spawned single-player Force Boon | 1.305 exposes whole seconds in Context Properties and uses the retail default at zero. Revert checks the native item and applied duration. Duplication and saves carry the native count. Final item setup uses the selected definition for bounds, amount and item ID, including definitions beyond a missing slot in the table. In-game editing and full save/reload remain open. |

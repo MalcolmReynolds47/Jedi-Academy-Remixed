@@ -414,19 +414,36 @@ def compare_crowd_scale(tool, run):
         together = sorted(host.keys() & guest.keys())
         assert together and all(host[t] == guest[t] for t in together), f'{name}: clients disagree'
         stable = []
+        initial_visibility = {}
         for track in tracks:
             segments = [(key, list(ticks)) for key, ticks in groupby(track, key=lambda t:
                         (frozenset(roster(track[t])), frozenset(props(track[t]))))]
-            assert len(segments) == 4, (name, [(len(n), len(p), len(t)) for (n,p),t in segments])
-            before, added, undone, cleared = (key for key, _ in segments)
+            assert len(segments) >= 4, (name, len(segments))
+            steady, addition, undo, cleanup = segments[-4:]
+            before, added, undone, cleared = (phase[0] for phase in (steady, addition, undo, cleanup))
             npcs, objects = before
             assert len(npcs) == count and len(objects) == 16
             assert added[0] > npcs and len(added[0]) == count+1 and added[1] == objects
             assert before == undone and cleared == (set(), set())
-            stable.append(segments[0][1])
+            # Flatgrass can cull actors below the observers' platform. Only
+            # admit a brief opening interval if the same live actors reappear
+            # below ground. A missing prop, death or later roster change fails.
+            start = steady[1][0]
+            opening_ms = start - segments[0][1][0]
+            assert opening_ms <= 3000, (name, 'crowd took too long to become visible', opening_ms)
+            hidden = set()
+            for (visible, seen_props), ticks in segments[:-4]:
+                assert visible <= npcs and seen_props == objects
+                for slot in npcs - visible:
+                    assert all(slot not in track[t] for t in ticks)
+                    assert track[start][slot][4] < 0, (name, 'missing actor above platform', slot)
+                    hidden.add(slot)
+            peer = 'host' if track is host else 'guest'
+            initial_visibility[peer] = dict(ms=opening_ms, below_platform_slots=sorted(hidden))
+            stable.append(steady[1])
         common = sorted(set(stable[0]) & set(stable[1]))
         fired = {n for t in common for n in npcs if host[t][n][1] & EF_FIRING}
-        assert fired and common[-1] - common[0] >= 8000
+        assert fired and common[-1] - common[0] >= 30000
         gaps = {peer: distribution([b-a for a,b in zip(ticks,ticks[1:])])
                 for peer, ticks in zip(('host','guest'), stable)}
         delayed = {}
@@ -435,7 +452,7 @@ def compare_crowd_scale(tool, run):
             flags = dict(tuple(map(int, line.split())) for line in output.splitlines())
             delayed[peer] = sum(flags[t] for t in ticks)
         assert delayed['host'] == 0 and bool(delayed['guest']) == limited, (name, delayed)
-        results[name] = dict(npcs=count, props=16, shared_crowd_snapshots=len(common),
+        results[name] = dict(npcs=count, props=16, shared_crowd_snapshots=len(common), initial_visibility=initial_visibility,
                              steady_crowd_ms=common[-1]-common[0], distinct_npcs_firing=len(fired),
                              snapshot_gaps_server_ms=gaps, rate_delayed_snapshots=delayed,
                              extra_npc_undone=True, cleanup_seen_by_both=True)
@@ -505,6 +522,7 @@ def compare_falls(tool, run):
 
 def main():
     from mp_listen_alerts import compare_alerts, exercise_alerts
+    from mp_listen_camera_feeds import compare_feeds, exercise_feeds
     from mp_listen_portals import compare_portals, exercise_portals
     from mp_listen_follow import compare_follow, exercise_follow
     from mp_listen_platforms import compare_rides, compare_vehicle_lift, exercise_rides, exercise_vehicle_lift
@@ -518,6 +536,9 @@ def main():
     parser.add_argument('--results', type=Path, required=True)
     scenarios = parser.add_mutually_exclusive_group()
     parser.set_defaults(scenario=(exercise, compare))
+    scenarios.add_argument('--camera-feeds', dest='scenario', action='store_const',
+                           const=(partial(exercise_feeds, player=Player, free_port=free_port), compare_feeds),
+                           help='Check four simultaneous multiplayer cameras, feed sharing, fallback and frame time')
     scenarios.add_argument('--portal-screens', dest='scenario', action='store_const',
                            const=(partial(exercise_portals, player=Player, free_port=free_port), compare_portals),
                            help='Compare actual camera-panel pixels in Classic and Rend2 on a listen server')
@@ -576,7 +597,7 @@ def main():
     result['phases'] = phases
     result['module_sha256'] = {}
     modules = ['jar_mp.x86_64.exe', 'jampgamex86_64.dll', 'cgamex86_64.dll', 'rdjar-mp-vanilla_x86_64.dll']
-    if verify == compare_portals:
+    if verify in (compare_portals, compare_feeds):
         modules.append('rdjar-mp-rend2_x86_64.dll')
     for name in modules:
         with (package / name).open('rb') as src:

@@ -1,3 +1,7 @@
+# JA:R 1.349.0
+
+- Multiplayer frame profiling starts with the first complete frame after enabling `com_speeds`. Turning it on during play could previously report time since game startup as a single frame.
+
 # JA:R 1.348.0
 
 - Multiplayer Portal Surfaces keep showing their linked camera when resized above 1,024 units or below 16 units. Both renderers accept the same dimensions as the server.
