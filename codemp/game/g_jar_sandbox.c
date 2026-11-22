@@ -23,7 +23,16 @@
 #include "../../shared/qcommon/jar_rope_path.h"
 
 typedef struct {int triggerHelper,triggerExtent,triggerActive,activationActor;unsigned activationActorEpoch;int itemConsumed,transientPickup;int laserHelper,laserActive;char controllerText[64];int mediaHelper,mediaActive;int output[2],distanceInput[2],activationClient;unsigned activationEpoch;int jointKind;vec4_t jointA,jointB;int owner,catalog,heldBy,frozen,first,second,thruster,thrustBy,noGravity,nextImpact,copyPending,copyHealth,copyFrozen,copyDeadline,thrustMounted,copyVehicleMotion;unsigned order,poseRevision,contextIdentity,propertyRevision;vec3_t velocity,angular,anchorA,anchorB,copyOrigin,copyAngles,thrustAnchor,thrustAxis,copyVehicleDrift;float length,mass,thrustForce,copyVehicleSpeed;jarRopePath_t ropePath;} jarObject_t;
-typedef struct {int firstTool,linkOutput;jarPropertyUndo_t propertyUndo;int contextEchoAt,contextOpen;vec4_t firstRotation;int poseUndoEntity,poseUndoFrame;unsigned poseUndoIdentity,poseUndoRevision;int held,nextRequest,tool,first,beam,beamUntil,lastButtons,selected,freezeLatch,noTools,noGrabUntil;float distance,ropeSlack,thrustForce,rotationStep;qboolean settingsInitialized;vec3_t firstAnchor;jarMPGrip_t grip;qboolean turnInput,thrustReverse;float turnYaw,turnPitch;} jarPlayer_t;
+enum { JAR_GRIP_EXPIRY_MS=100, JAR_GRIP_SAMPLE_MS=10, JAR_GRIP_SAMPLES=JAR_GRIP_EXPIRY_MS/JAR_GRIP_SAMPLE_MS+2 };
+typedef struct {
+ int time;
+ vec3_t origin;
+} jarGripSample_t;
+typedef struct {
+ jarGripSample_t samples[JAR_GRIP_SAMPLES];
+ int first,count,lastMoveTime;
+} jarGripMotion_t;
+typedef struct {int firstTool,linkOutput;jarPropertyUndo_t propertyUndo;int contextEchoAt,contextOpen;vec4_t firstRotation;int poseUndoEntity,poseUndoFrame;unsigned poseUndoIdentity,poseUndoRevision;int held,nextRequest,tool,first,beam,beamUntil,lastButtons,selected,freezeLatch,noTools,noGrabUntil;float distance,ropeSlack,thrustForce,rotationStep;qboolean settingsInitialized;vec3_t firstAnchor;jarMPGrip_t grip;jarGripMotion_t motion;qboolean turnInput,thrustReverse;float turnYaw,turnPitch;} jarPlayer_t;
 static jarObject_t objects[MAX_GENTITIES];
 // A mount has its own creation order, independent of the body it is on.
 static struct { unsigned order; int owner; } thrustCreation[MAX_GENTITIES];
@@ -259,6 +268,7 @@ static void Beam(gentity_t *p,const vec3_t end,qboolean tool){
 static void EndActor(int n,qboolean fling);
 static void ClearGrip(int client){
  jarPlayer_t*p=&players[client];p->held=ENTITYNUM_NONE;memset(&p->grip,0,sizeof(p->grip));
+ p->motion.count=0;
  p->turnInput=qfalse;p->turnYaw=p->turnPitch=0;
  if(g_entities[client].client)g_entities[client].client->ps.stats[STAT_JAR_PHYSGUN_HOLD]=0;
  if(p->beam<ENTITYNUM_WORLD&&g_entities[p->beam].inuse&&g_entities[p->beam].s.generic1==252){int beam=p->beam;p->beam=ENTITYNUM_NONE;G_FreeEntity(&g_entities[beam]);}
@@ -269,7 +279,11 @@ static void Drop(int client,qboolean freeze){
   if(SectionRoot(n)){objects[n].heldBy=0;objects[n].frozen=1;}
   else if(g_entities[n].client){
    if(freeze&&JAR_MP_ActorControlled(&g_entities[n])){objects[n].heldBy=0;objects[n].frozen=1;VectorClear(objects[n].velocity);}
-   else EndActor(n,qtrue);
+   else{
+    if(p->motion.count&&level.time-p->motion.lastMoveTime>=JAR_GRIP_EXPIRY_MS)
+     VectorClear(objects[n].velocity);
+    EndActor(n,qtrue);
+   }
   }else{objects[n].heldBy=0;JAR_RigidRelease(n,objects[n].mass,objects[n].noGravity?0:1);if(freeze){objects[n].frozen=1;VectorClear(objects[n].velocity);VectorClear(objects[n].angular);}}
  }
  ClearGrip(client);
@@ -1224,9 +1238,60 @@ static qboolean PhysgunMoveVehicle(gentity_t*e,const vec3_t origin,const vec3_t 
  return clear;
 }
 
+// Sample actual on-foot actor displacement across input packets. A server
+// frame without a new aim command can otherwise erase a guest's entire throw.
+static void PhysgunActorVelocity(jarGripMotion_t *m,const vec3_t before,const vec3_t after,
+                                 qboolean obstructed,vec3_t velocity){
+ if(obstructed){
+  m->count=0;
+  VectorClear(velocity);
+  return;
+ }
+ if(!m->count){
+  m->first=0;
+  m->count=1;
+  m->samples[0].time=level.previousTime;
+  VectorCopy(before,m->samples[0].origin);
+  m->lastMoveTime=level.time-JAR_GRIP_EXPIRY_MS;
+ }
+ const int cutoff=level.time-JAR_GRIP_EXPIRY_MS;
+ while(m->count>1){
+  const int next=(m->first+1)%JAR_GRIP_SAMPLES;
+  if(m->samples[next].time>cutoff)break;
+  m->first=next;
+  --m->count;
+ }
+ const jarGripSample_t *old=&m->samples[m->first];
+ if(DistanceSquared(before,after)>=.000001f){
+  // Measure the same span on a smooth host and on a guest whose latest
+  // packet covers several frames. A newly acquired grip starts at rest.
+  vec3_t origin;VectorCopy(old->origin,origin);
+  if(old->time<cutoff){
+   const jarGripSample_t *next=&m->samples[(m->first+1)%JAR_GRIP_SAMPLES];
+   const float *end=m->count>1?next->origin:after;
+   const int endTime=m->count>1?next->time:level.time;
+   vec3_t delta;VectorSubtract(end,origin,delta);
+   VectorMA(origin,(float)(cutoff-old->time)/(endTime-old->time),delta,origin);
+  }
+  VectorSubtract(after,origin,velocity);
+  VectorScale(velocity,1000.f/JAR_GRIP_EXPIRY_MS,velocity);
+  m->lastMoveTime=level.time;
+ }else if(m->lastMoveTime<=cutoff){
+  VectorClear(velocity);
+ }
+ const int last=(m->first+m->count-1)%JAR_GRIP_SAMPLES;
+ if(level.time-m->samples[last].time>=JAR_GRIP_SAMPLE_MS){
+  jarGripSample_t *sample=&m->samples[(last+1)%JAR_GRIP_SAMPLES];
+  sample->time=level.time;
+  VectorCopy(after,sample->origin);
+  ++m->count;
+ }
+}
+
 static void PhysgunMoveNative(gentity_t*e,const jarMPGrip_t*grip,const vec3_t point,const vec3_t facing,float dt){
  const int n=e->s.number;
  qboolean vehicleMoved=qfalse;
+ qboolean obstructed=qfalse;
  vec3_t before,contact,origin,spin;VectorCopy(e->r.currentOrigin,before);
  JAR_GripPoint(grip,before,e->r.currentAngles,contact);
  JAR_AngularVelocity(e->r.currentAngles,facing,1,spin);
@@ -1252,10 +1317,16 @@ static void PhysgunMoveNative(gentity_t*e,const jarMPGrip_t*grip,const vec3_t po
   }else{
    trace_t tr;
    trap->Trace(&tr,e->r.currentOrigin,e->r.mins,e->r.maxs,origin,n,PhysicsMoveMask(e),qfalse,0,0);
+   obstructed=tr.startsolid||tr.allsolid||tr.fraction<1;
    if(!tr.startsolid&&!tr.allsolid)Move(e,tr.endpos);
   }
-  VectorSubtract(e->r.currentOrigin,before,objects[n].velocity);
-  if(dt>0)VectorScale(objects[n].velocity,1/dt,objects[n].velocity);
+  if(e->client&&!e->m_pVehicle&&objects[n].heldBy)
+   PhysgunActorVelocity(&players[objects[n].heldBy-1].motion,before,e->r.currentOrigin,
+                        obstructed,objects[n].velocity);
+  else{
+   VectorSubtract(e->r.currentOrigin,before,objects[n].velocity);
+   if(dt>0)VectorScale(objects[n].velocity,1/dt,objects[n].velocity);
+  }
   const float speed=VectorLength(objects[n].velocity);
   if(speed>1500)VectorScale(objects[n].velocity,1500/speed,objects[n].velocity);
   if(e->m_pVehicle){

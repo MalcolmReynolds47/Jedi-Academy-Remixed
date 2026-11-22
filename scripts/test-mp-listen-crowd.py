@@ -16,7 +16,6 @@ import shutil
 import socket
 import struct
 import subprocess
-import tempfile
 import time
 
 from mp_crowd_session import crowd_world, EF_DEAD, EF_FIRING, EF_NODRAW, PROP, REBEL, STORMTROOPER
@@ -29,6 +28,16 @@ def link_asset(source, destination):
         os.link(source, destination)
     else:
         shutil.copy2(source, destination)
+
+
+def remove_runtime(data):
+    try:
+        shutil.rmtree(data)
+    except PermissionError:
+        # A Windows process can still have an asset open. Leave the marker
+        # where ordinary build retention can find it and preserve the test log.
+        (data / '.jar-test-runtime').touch()
+        print(f'Locked test runtime left for build retention: {data}')
 
 
 def free_port():
@@ -96,13 +105,23 @@ class Player:
 
     def queue(self, *commands):
         index = self.command_id
-        self.command_id += 1
         (self.profile / f'step{index+1}.cfg').write_text('// waiting\n')
         pending = self.profile / 'next.tmp'
         marker = f'LISTEN_STEP_{index}_DONE'
         lines = [f'set test_step "execq step{index+1}.cfg"', *commands, 'echo ' + marker]
         pending.write_text('\n'.join(lines) + '\n')
-        pending.replace(self.profile / f'step{index}.cfg')
+        # On Windows the game briefly holds this file open while polling it.
+        # Advance the queue only after the command is actually available.
+        deadline = time.monotonic()+3
+        while True:
+            try:
+                pending.replace(self.profile / f'step{index}.cfg')
+                break
+            except PermissionError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(.02)
+        self.command_id += 1
         return marker
 
     def do(self, *commands):
@@ -470,6 +489,7 @@ def compare_falls(tool, run):
 
 def main():
     from mp_listen_platforms import compare_rides, compare_vehicle_lift, exercise_rides, exercise_vehicle_lift
+    from mp_listen_throws import compare_throws, exercise_throws
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--game-data', type=Path, required=True)
@@ -478,6 +498,9 @@ def main():
     parser.add_argument('--results', type=Path, required=True)
     scenarios = parser.add_mutually_exclusive_group()
     parser.set_defaults(scenario=(exercise, compare))
+    scenarios.add_argument('--physgun-throws', dest='scenario', action='store_const',
+                           const=(partial(exercise_throws, player=Player, free_port=free_port), compare_throws),
+                           help='Check NPC throws, post-landing combat, player holds and opt-out on a listen server')
     scenarios.add_argument('--interactions', dest='scenario', action='store_const', const=(interactions, compare_falls),
                            help='Check fall damage, late join and player editing permissions')
     scenarios.add_argument('--platforms', dest='scenario', action='store_const',
@@ -498,9 +521,11 @@ def main():
     run = args.results.resolve()
     run.mkdir(parents=True, exist_ok=False)
     package = args.package.resolve()
-    with tempfile.TemporaryDirectory(dir=run, prefix='runtime-') as temp, ExitStack() as stack:
-        data = Path(temp)
+    with ExitStack() as stack:
+        data = run / 'game'
+        data.mkdir()
         (data / '.jar-test-runtime').touch()
+        stack.callback(remove_runtime, data)
         mod = data / package.name
         mod.mkdir()
         (data / 'base').mkdir()

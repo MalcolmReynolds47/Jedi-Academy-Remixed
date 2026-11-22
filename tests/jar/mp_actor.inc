@@ -20,6 +20,18 @@ static gentity_t *ActorNPC(int owner,int custom){
 static void ActorArm(int c,int n){aimed=n;clients[c].ps.weapon=WP_PHYSGUN;clients[c].pers.cmd.buttons=BUTTON_ATTACK;players[c].freezeLatch=0;JAR_MP_Fire(&g_entities[c],qfalse);}
 static void ActorTick(void){level.previousTime=level.time;level.time+=25;JAR_MP_Frame();}
 static void NPCThrowCases(void){
+ // A command packet covering three server frames is one 75 ms movement.
+ // It must not produce three times that speed on the next release.
+ jarGripMotion_t motion={0};vec3_t before={0},after={0},velocity={0};
+ for(int t=1;t<=900;++t){
+  level.previousTime=t-1;level.time=t;VectorCopy(after,before);
+  if(t%75==0)after[0]+=15;
+  PhysgunActorVelocity(&motion,before,after,qfalse,velocity);
+  assert(motion.count<=JAR_GRIP_SAMPLES);
+  if(t>=150)assert(velocity[0]>=149&&velocity[0]<=301);
+ }
+ PhysgunActorVelocity(&motion,after,after,qtrue,velocity);
+ assert(!motion.count&&VectorLength(velocity)==0);
  ActorFixture();
  gentity_t *npc=ActorNPC(0,0);
  npc->NPC=&copyNpcs[npc->s.number];npc->think=NPC_Think;
@@ -66,9 +78,10 @@ static void ActorCases(void){
  ActorArm(1,n);assert(players[1].held==ENTITYNUM_NONE); // Ownership, then shared permission.
  sharedEditing.integer=1;ActorArm(1,n);assert(players[1].held==n);Drop(1,qfalse);sharedEditing.integer=0;
  VectorSet(physgunFixtureHit,84,0,24);imports.Trace=PhysgunFixtureTrace;
+ npc->client->ps.legsAnim=BOTH_RUN1;npc->client->ps.torsoAnim=BOTH_STAND1;
  ActorArm(0,n);imports.Trace=Trace;
  assert(players[0].held==n&&actors[n].active&&npc->client->ps.pm_type==PM_FREEZE);
- assert(npc->s.eType==ET_NPC&&npc->s.number==n&&npc->client->ps.torsoAnim==BOTH_CHOKE3);
+ assert(npc->s.eType==ET_NPC&&npc->s.number==n&&npc->client->ps.torsoAnim==BOTH_CHOKE3&&npc->client->ps.legsAnim==BOTH_CHOKE3);
  ActorArm(2,n);assert(players[2].held==ENTITYNUM_NONE);
  for(int i=0;i<200;++i)ActorTick();
  assert(npc->health==100&&npc->client->ps.stats[STAT_HEALTH]==100&&npc->client->ps.fd.forcePower==100);
@@ -78,6 +91,19 @@ static void ActorCases(void){
  assert(VectorLength(objects[n].velocity)>0&&VectorLength(objects[n].velocity)<=1500.01f);
  clients[0].pers.cmd.buttons=0;ActorTick();assert(!actors[n].active&&npc->client->ps.pm_type==PM_NORMAL&&VectorLength(npc->client->ps.velocity)>0);
  assert(npc->client->ps.forceHandExtend==HANDEXTEND_NONE&&npc->client->ps.legsTimer==0);
+ assert(npc->client->ps.legsAnim==BOTH_RUN1&&npc->client->ps.torsoAnim==BOTH_STAND1);
+ // A frame between remote aim packets retains motion. Parking the hold clears it.
+ ActorArm(0,n);
+ for(int i=0;i<5;++i)ActorTick();
+ clients[0].ps.origin[0]+=12;ActorTick();
+ const float movingSpeed=objects[n].velocity[0];assert(movingSpeed>0);
+ for(int i=0;i<3;++i){ActorTick();assert(objects[n].velocity[0]==movingSpeed);}
+ clients[0].pers.cmd.buttons=0;ActorTick();
+ assert(!actors[n].active&&VectorLength(npc->client->ps.velocity)==0);
+ ActorArm(0,n);ActorTick();clients[0].ps.origin[0]+=12;ActorTick();
+ for(int i=0;i<5;++i)ActorTick();
+ assert(VectorLength(objects[n].velocity)==0);
+ Drop(0,qfalse);
  // Hull obstruction produces no teleport and no stale fling velocity.
  ActorArm(0,n);blocked=1;vec3_t position;VectorCopy(npc->r.currentOrigin,position);ActorTick();assert(VectorCompare(position,npc->r.currentOrigin)&&VectorLength(objects[n].velocity)==0);blocked=0;
  JAR_MP_Fire(&g_entities[0],qtrue);assert(players[0].held==ENTITYNUM_NONE&&objects[n].frozen&&actors[n].active);
@@ -96,6 +122,7 @@ static void ActorCases(void){
  ActorFixture();ActorArm(1,0);assert(players[1].held==0);Drop(1,qfalse);assert(!actors[0].active);
  gentity_t*target=&g_entities[1];
  ActorArm(0,1);assert(players[0].held==1&&target->client->ps.pm_type==PM_FREEZE);
+ assert(target->client->ps.legsAnim==BOTH_CHOKE3&&target->client->ps.torsoAnim==BOTH_CHOKE3);
  usercmd_t cmd={0};cmd.serverTime=level.time+10000;cmd.buttons=BUTTON_ATTACK|BUTTON_USE;cmd.forwardmove=127;
  assert(JAR_MP_ActorThink(target,&cmd)&&target->client->ps.commandTime==level.time+200);
  assert(cmd.buttons==(BUTTON_ATTACK|BUTTON_USE)&&cmd.forwardmove==127); // No persistent input mutation.

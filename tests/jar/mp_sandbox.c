@@ -212,7 +212,13 @@ void BG_EvaluateTrajectory(const trajectory_t*tr,int time,vec3_t result){
  assert(tr->trType==TR_STATIONARY);VectorCopy(tr->trBase,result);
 }
 void G_Sound(gentity_t*e,int c,int s){}
-void G_SetAnim(gentity_t*e,usercmd_t*u,int parts,int anim,int flags,int blend){e->client->ps.legsAnim=e->client->ps.torsoAnim=anim;}
+void G_SetAnim(gentity_t*e,usercmd_t*u,int parts,int anim,int flags,int blend){
+ playerState_t *ps=&e->client->ps;
+ // The native BG_StartLegsAnim and BG_StartTorsoAnim reject frozen actors.
+ if(ps->pm_type>=PM_DEAD)return;
+ if(parts&SETANIM_LEGS)ps->legsAnim=anim;
+ if(parts&SETANIM_TORSO)ps->torsoAnim=anim;
+}
 void SetClientViewAngle(gentity_t*e,vec3_t angles){
  for(int a=0;a<3;++a)e->client->ps.delta_angles[a]=ANGLE2SHORT(angles[a])-e->client->pers.cmd.angles[a];
  VectorCopy(angles,e->s.angles);

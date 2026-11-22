@@ -51,7 +51,9 @@ work for multiplayer. The earlier single-player rope hold still applies.
 9. **Physgun NPC throws.** JA:R 1.338.0 advances a released, airborne NPC
    under ordinary gravity on every multiplayer server frame. The native
    movement code applies the release velocity and handles impacts, gravity
-   and landing. Normal AI steering resumes on landing.
+   and landing. Normal AI steering resumes on landing. JA:R 1.344.0 fixes
+   the missing humanoid grip animation and preserves a moving guest's throw
+   when release falls between aim packets.
 10. **NPC combat, movement and landings.** JA:R 1.339.0 gives ground-based
     ranged Sandbox NPCs clear-shot aiming, pursuit and spacing. They can
     advance, back away, move around obstructions and follow a friendly
@@ -120,6 +122,36 @@ spawns and undoes an additional NPC. The `--crowd-scale-paced` variant
 sets the UDP guest to 25,000 bytes per second with the LAN override off.
 Both runs compare NPC identities, flags and positions, Undo, cleanup and
 the time between snapshots.
+
+## Multiplayer Physgun holds and throws
+
+On 1.343.0 a listen host and a connected guest recorded 202 shared held-NPC
+snapshots across their two throws. None showed the stock grip pose. In the
+guest's throw the trooper moved 41 units horizontally during the swing,
+then dropped straight down. The animation starters were receiving an actor
+whose movement had already been frozen. Release velocity used only the last
+server frame, which could have the same aim as the preceding frame.
+
+In 1.344.0 the server applies the native grip pose to humanoids before
+freezing movement. It measures the on-foot actor's actual displacement
+over the preceding 100 ms. When a frame gets no movement, the last measured swing
+velocity is held for up to 100 ms. A blocked trace discards earlier motion.
+Parking or re-grabbing the actor clears the old momentum.
+Vehicles keep their existing movement calculations.
+
+The graphical `scripts/test-mp-listen-crowd.py --physgun-throws` scenario
+records the host and guest on Flatgrass. It compares the trooper's pose,
+trajectory, health and return to combat, and checks both players' release
+paths. The guest also throws with outgoing input capped at 20 packets per
+second. Internet play and the feel of a physical mouse remain owner checks.
+
+On the staged 1.344.0 build, the host, guest and capped guest threw the NPC
+349, 182 and 454 units horizontally. The two clients agreed on position,
+pose and landing, and the NPC resumed firing in all three cases. A stock
+30-health trooper kept its health during the stationary holds. The combat
+checks raised its health through Context so it could survive hard landings.
+Both players stayed at 100 health when held. The player who opted out moved
+54 units before the holder released the trigger.
 
 ## Multiplayer support on props and moving platforms
 

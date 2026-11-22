@@ -1,3 +1,8 @@
+# JA:R 1.344.0
+
+- The multiplayer Physgun plays the stock Force-grip pose when holding a humanoid NPC or player. Letting go restores the actor's previous animation and releases it with its throwing momentum.
+- Throwing an on-foot actor keeps the momentum of the swing when release falls between a guest's aim updates. Holding still or hitting a wall clears the old swing.
+
 # JA:R 1.343.0
 
 - Multiplayer hosts and clients using the server's LAN rate override now receive large crowd snapshots in batches of up to four fragments per server frame. This reduces the delay between updates during busy fights. Download and Internet rate limits still apply.

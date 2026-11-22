@@ -45,7 +45,7 @@ def camera(client):
     return int(match[3])
 
 
-def select_deck(host, x, y, height, catalog_id):
+def select_from_above(host, x, y, height, catalog_id):
     host.do('developer 1')
     start = len(host.text())
     host.do(f'cmd jar_select ray_{x:.2f}_{y:.2f}_{height+72:.2f}_0_0_-1')
@@ -56,7 +56,7 @@ def select_deck(host, x, y, height, catalog_id):
             if len(fields) >= 6 and fields[5] == str(catalog_id):
                 return fields[3]
         time.sleep(.05)
-    raise AssertionError(f'Host could not select deck {catalog_id}')
+    raise AssertionError(f'{host.name} could not select catalog entry {catalog_id}')
 
 
 def listen_players(mod, profile, run, stack, player, free_port):
@@ -85,7 +85,7 @@ def exercise_vehicle_lift(mod, profile, run, stack, player, free_port):
     deck, = decode(worlds / 'deck.0.jrw')['nodes']
     assert deck[0] == 93973657
     x, y, z = deck[7:10]
-    token = select_deck(host, x, y, z + deck[18], deck[0])
+    token = select_from_above(host, x, y, z + deck[18], deck[0])
     # The same aim point places the stock Swoop directly over the grate.
     host.do('cmd jar_spawn 60671213')
     time.sleep(2)
@@ -141,7 +141,7 @@ def exercise_rides(mod, profile, run, stack, player, free_port):
         x, y, z = node[7:10]
         top = z + node[18]
         place(host, x-170, y, 44, 0)
-        token = select_deck(host, x, y, top, item) if name == 'lift' else None
+        token = select_from_above(host, x, y, top, item) if name == 'lift' else None
         place(guest, x, y, top+60, 90)
         time.sleep(1.5)
         for client in (host, guest):

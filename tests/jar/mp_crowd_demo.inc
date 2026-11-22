@@ -27,7 +27,7 @@ static void DemoGameState(msg_t *msg) {
         throw std::runtime_error("Unsupported demo terrain data");
 }
 
-enum class DemoView { Crowd, Rider, Vehicle, Timing };
+enum class DemoView { Crowd, Rider, Vehicle, Timing, Throw, PlayerGrip };
 
 static void DemoCrowdFrame(msg_t *msg, int sequence, DemoView view) {
     clSnapshot_t frame{};
@@ -53,6 +53,33 @@ static void DemoCrowdFrame(msg_t *msg, int sequence, DemoView view) {
         return;
     if (view == DemoView::Timing) {
         printf("%d %d\n", frame.serverTime, (frame.snapFlags & SNAPFLAG_RATE_DELAYED) != 0);
+        return;
+    }
+    if (view == DemoView::PlayerGrip) {
+        const auto &p = frame.ps;
+        printf("%d %d %d %d %d %d,%d,%.9g,%.9g,%.9g", frame.serverTime, p.clientNum,
+               p.stats[STAT_JAR_PHYSGUN_HOLD]-1, p.stats[STAT_HEALTH], p.pm_type == PM_FREEZE,
+               p.clientNum, p.legsAnim == BOTH_CHOKE3 && p.torsoAnim == BOTH_CHOKE3,
+               p.origin[0], p.origin[1], p.origin[2]);
+        for (int i = 0; i < frame.numEntities; ++i) {
+            const auto &e = cl.parseEntities[(frame.parseEntitiesNum+i) & (MAX_PARSE_ENTITIES-1)];
+            if (e.eType == ET_PLAYER && e.number != p.clientNum)
+                printf(" %d,%d,%.9g,%.9g,%.9g", e.number, e.legsAnim == BOTH_CHOKE3 && e.torsoAnim == BOTH_CHOKE3,
+                       e.pos.trBase[0], e.pos.trBase[1], e.pos.trBase[2]);
+        }
+        puts("");
+        return;
+    }
+    if (view == DemoView::Throw) {
+        printf("%d %d %d", frame.serverTime, frame.ps.clientNum, frame.ps.stats[STAT_JAR_PHYSGUN_HOLD] - 1);
+        for (int i = 0; i < frame.numEntities; ++i) {
+            const auto &e = cl.parseEntities[(frame.parseEntitiesNum + i) & (MAX_PARSE_ENTITIES - 1)];
+            if (e.eType == ET_NPC)
+                printf(" %d,%d,%d,%d,%.9g,%.9g,%.9g", e.number, e.groundEntityNum != ENTITYNUM_NONE,
+                       e.legsAnim == BOTH_CHOKE3 && e.torsoAnim == BOTH_CHOKE3,
+                       e.eFlags, e.pos.trBase[0], e.pos.trBase[1], e.pos.trBase[2]);
+        }
+        puts("");
         return;
     }
     printf("%d %d %d", frame.serverTime, frame.ps.clientNum, frame.ps.stats[STAT_HEALTH]);
