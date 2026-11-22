@@ -624,6 +624,26 @@ static int SV_RateMsec( client_t *client, int messageSize ) {
 }
 
 extern void SV_WriteDemoMessage ( client_t *cl, msg_t *msg, int headerBytes );
+
+static bool SV_LocalSnapshotRate(const client_t *client) {
+	return client->netchan.remoteAddress.type == NA_LOOPBACK ||
+		(sv_lanForceRate->integer && Sys_IsLANAddress(&client->netchan.remoteAddress));
+}
+
+static int SV_NextLocalSnapshotTime() {
+	return svs.time + static_cast<int>(1000.0 / sv_fps->integer * com_timescale->value);
+}
+
+// Leave room in the 16-packet loopback queue for other traffic. Large local
+// snapshots can span several frames without stalling small updates behind
+// a full internet-rate delay per fragment.
+static const int LOCAL_FRAGMENTS_PER_FRAME = 4;
+
+static void SV_SendLocalFragments(client_t *client, int budget) {
+	while (budget-- > 0 && client->netchan.unsentFragments)
+		SV_Netchan_TransmitNextFragment(&client->netchan);
+	client->nextSnapshotTime = SV_NextLocalSnapshotTime();
+}
 /*
 =======================
 SV_SendMessageToClient
@@ -672,8 +692,8 @@ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 	// local clients get snapshots every server frame
 	// TTimo - https://zerowing.idsoftware.com/bugzilla/show_bug.cgi?id=491
 	// added sv_lanForceRate check
-	if ( client->netchan.remoteAddress.type == NA_LOOPBACK || (sv_lanForceRate->integer && Sys_IsLANAddress (&client->netchan.remoteAddress)) ) {
-		client->nextSnapshotTime = svs.time + ((int) (1000.0 / sv_fps->integer * com_timescale->value));
+	if ( SV_LocalSnapshotRate(client) ) {
+		client->nextSnapshotTime = SV_NextLocalSnapshotTime();
 		return;
 	}
 
@@ -821,6 +841,10 @@ void SV_SendClientMessages( void ) {
 		// send additional message fragments if the last message
 		// was too large to send at once
 		if ( c->netchan.unsentFragments ) {
+			if (c->state == CS_ACTIVE && !*c->downloadName && SV_LocalSnapshotRate(c)) {
+				SV_SendLocalFragments(c, LOCAL_FRAGMENTS_PER_FRAME);
+				continue;
+			}
 			c->nextSnapshotTime = svs.time +
 				SV_RateMsec( c, c->netchan.unsentLength - c->netchan.unsentFragmentStart );
 			SV_Netchan_TransmitNextFragment( &c->netchan );
@@ -829,6 +853,8 @@ void SV_SendClientMessages( void ) {
 
 		// generate and send a new message
 		SV_SendClientSnapshot( c );
+		if (c->netchan.unsentFragments && c->state == CS_ACTIVE && !*c->downloadName && SV_LocalSnapshotRate(c))
+			SV_SendLocalFragments(c, LOCAL_FRAGMENTS_PER_FRAME - 1);
 	}
 }
 

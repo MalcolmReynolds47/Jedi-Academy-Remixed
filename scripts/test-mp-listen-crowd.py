@@ -370,9 +370,11 @@ def props(frame):
 
 def compare_crowd_scale(tool, run):
     results = {}
+    limited = json.loads((run / 'observations.json').read_text()).get('rate_limited_guest', False)
     for count in (192, 384):
         name = f'crowd{count}'
-        tracks = [read_demo(tool, next(run.glob(f'{peer}-{name}.dm_*'))) for peer in ('Host', 'Late')]
+        demos = [next(run.glob(f'{peer}-{name}.dm_*')) for peer in ('Host', 'Late')]
+        tracks = [read_demo(tool, demo) for demo in demos]
         host, guest = tracks
         together = sorted(host.keys() & guest.keys())
         assert together and all(host[t] == guest[t] for t in together), f'{name}: clients disagree'
@@ -392,9 +394,16 @@ def compare_crowd_scale(tool, run):
         assert fired and common[-1] - common[0] >= 8000
         gaps = {peer: distribution([b-a for a,b in zip(ticks,ticks[1:])])
                 for peer, ticks in zip(('host','guest'), stable)}
+        delayed = {}
+        for peer, demo, ticks in zip(('host', 'guest'), demos, stable):
+            output = subprocess.check_output([str(tool), '--timing-demo', str(demo)], text=True)
+            flags = dict(tuple(map(int, line.split())) for line in output.splitlines())
+            delayed[peer] = sum(flags[t] for t in ticks)
+        assert delayed['host'] == 0 and bool(delayed['guest']) == limited, (name, delayed)
         results[name] = dict(npcs=count, props=16, shared_crowd_snapshots=len(common),
                              steady_crowd_ms=common[-1]-common[0], distinct_npcs_firing=len(fired),
-                             snapshot_gaps_server_ms=gaps, extra_npc_undone=True, cleanup_seen_by_both=True)
+                             snapshot_gaps_server_ms=gaps, rate_delayed_snapshots=delayed,
+                             extra_npc_undone=True, cleanup_seen_by_both=True)
     return results
 
 

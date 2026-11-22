@@ -143,6 +143,8 @@ int main(int argc, char **argv){
         return ReadCrowdDemo(argv[2], DemoView::Rider);
     if (argc == 3 && !strcmp(argv[1], "--vehicle-demo"))
         return ReadCrowdDemo(argv[2], DemoView::Vehicle);
+    if (argc == 3 && !strcmp(argv[1], "--timing-demo"))
+        return ReadCrowdDemo(argv[2], DemoView::Timing);
     {
         playerState_t base{},holding{},received{};
         holding.stats[STAT_JAR_PHYSGUN_HOLD]=10001;

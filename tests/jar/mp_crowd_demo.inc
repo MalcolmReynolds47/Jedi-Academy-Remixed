@@ -27,7 +27,7 @@ static void DemoGameState(msg_t *msg) {
         throw std::runtime_error("Unsupported demo terrain data");
 }
 
-enum class DemoView { Crowd, Rider, Vehicle };
+enum class DemoView { Crowd, Rider, Vehicle, Timing };
 
 static void DemoCrowdFrame(msg_t *msg, int sequence, DemoView view) {
     clSnapshot_t frame{};
@@ -51,6 +51,10 @@ static void DemoCrowdFrame(msg_t *msg, int sequence, DemoView view) {
     cl.snapshots[sequence & PACKET_MASK] = frame;
     if (frame.snapFlags & SNAPFLAG_NOT_ACTIVE)
         return;
+    if (view == DemoView::Timing) {
+        printf("%d %d\n", frame.serverTime, (frame.snapFlags & SNAPFLAG_RATE_DELAYED) != 0);
+        return;
+    }
     printf("%d %d %d", frame.serverTime, frame.ps.clientNum, frame.ps.stats[STAT_HEALTH]);
     const bool vehicle = view == DemoView::Vehicle;
     if (view != DemoView::Crowd)

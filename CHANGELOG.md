@@ -1,3 +1,7 @@
+# JA:R 1.343.0
+
+- Multiplayer hosts and clients using the server's LAN rate override now receive large crowd snapshots in batches of up to four fragments per server frame. This reduces the delay between updates during busy fights. Download and Internet rate limits still apply.
+
 # JA:R 1.342.0
 
 - Multiplayer NPCs no longer merge patrols or combat squads across factions, even when they share an enemy. NPCs that switch teams leave their old squad on its next update.

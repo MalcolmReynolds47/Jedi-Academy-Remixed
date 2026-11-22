@@ -94,6 +94,33 @@ crowd run records both perspectives and samples host server work, process
 memory and snapshot intervals. A friend connecting from a second machine
 over the Internet remains an open check.
 
+## Multiplayer crowd snapshot delivery
+
+In 1.342.0, a Flatgrass host and guest running at 40 server ticks per second
+both received updates a median of 75 ms apart with 384 live NPCs and 16 props.
+Small local snapshots got the next server frame. A fragmented snapshot
+could take several frames because each remaining piece was scheduled
+separately, with an additional network rate delay.
+
+In 1.343.0, an active listen host and clients covered by the server's LAN
+override can receive up to four fragments per frame. Larger messages
+continue on subsequent frames. Downloads and clients using ordinary network
+rate limits use their existing scheduler. The message and demo formats are
+unchanged.
+
+In the staged Windows build the two recordings agreed at 1,410 server times
+during 35.6 simulated seconds with 384 live NPCs and 16 props. Both clients
+received a median update every 25 ms at 192 and 384 NPCs. Both saw the
+additional NPC appear and disappear on Undo, then saw the crowd disappear
+on cleanup. These same-machine measurements used the Classic renderer.
+
+The graphical `scripts/test-mp-listen-crowd.py --crowd-scale` scenario
+records both players during 35-second fights at 192 and 384 NPCs and then
+spawns and undoes an additional NPC. The `--crowd-scale-paced` variant
+sets the UDP guest to 25,000 bytes per second with the LAN override off.
+Both runs compare NPC identities, flags and positions, Undo, cleanup and
+the time between snapshots.
+
 ## Multiplayer support on props and moving platforms
 
 On Flatgrass in staged 1.342.0, a connected player stood on an unfrozen
