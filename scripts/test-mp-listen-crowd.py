@@ -491,6 +491,7 @@ def main():
     from mp_listen_alerts import compare_alerts, exercise_alerts
     from mp_listen_follow import compare_follow, exercise_follow
     from mp_listen_platforms import compare_rides, compare_vehicle_lift, exercise_rides, exercise_vehicle_lift
+    from mp_listen_targets import compare_targets, exercise_targets
     from mp_listen_throws import compare_throws, exercise_throws
 
     parser = argparse.ArgumentParser(description=__doc__)
@@ -500,6 +501,9 @@ def main():
     parser.add_argument('--results', type=Path, required=True)
     scenarios = parser.add_mutually_exclusive_group()
     parser.set_defaults(scenario=(exercise, compare))
+    scenarios.add_argument('--npc-targets', dest='scenario', action='store_const',
+                           const=(partial(exercise_targets, player=Player, free_port=free_port), compare_targets),
+                           help='Check NPC target priority with hundreds of nearby props and two visible players')
     scenarios.add_argument('--npc-alerts', dest='scenario', action='store_const',
                            const=(partial(exercise_alerts, player=Player, free_port=free_port), compare_alerts),
                            help='Check NPC reactions to a joined player firing behind them')

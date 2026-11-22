@@ -1,3 +1,7 @@
+# JA:R 1.347.0
+
+- Multiplayer NPCs can find the nearest visible enemy in a prop-heavy scene. A search considers the full area around the NPC and skips visibility traces for targets farther than an enemy it can already see.
+
 # JA:R 1.346.0
 
 - Multiplayer NPCs can hear a nearby player firing behind them, including a joined player while the first player is dead or disconnected. Sight and hearing follow their own range and visibility checks.

@@ -63,6 +63,7 @@ work for multiplayer. The earlier single-player rope hold still applies.
     ignore passive props during enemy searches, and a follower can pass a
     barricade to reach the player who spawned it. In 1.346.0 nearby player
     gunfire also alerts hostile NPCs independently of the first player slot.
+    In 1.347.0 nearby props no longer truncate the NPC's search for targets.
 
 [November 17 multiplayer audit](JAR-multiplayer-audit-2026-11-17.md): verified release state, reproduced defects, test coverage, and recommended follow-up.
 
@@ -112,10 +113,31 @@ and hearing separately, including occlusion, range, priority, full-queue
 eviction, simultaneous expiry and reuse of an actor slot. Testing between
 separate computers remains open.
 
-A further priority 10 check is target acquisition when many nearby props
-share the combat area. The native nearest-enemy query returns at most
-256 nearby entities before it filters scenery and checks visibility. The
-effect of this cap on a growing Sandbox world needs a gameplay test.
+## Multiplayer target selection in prop-heavy worlds
+
+In 1.346.0 two hostile NPCs still fought each other with 320 frozen props
+above the firing lane. With two eligible players to choose from, the same
+scene exposed a different defect. A stormtrooper picked the nearer guest
+at 0 and 192 props, then fired exclusively at the farther host at 320.
+With 512 props, swapping player positions made it shoot the farther guest.
+The engine returned the first 256 nearby entities in spatial sector order.
+Scenery could fill that list before it reached the nearer player.
+
+In 1.347.0 enemy acquisition reads the complete spatial query into reusable
+storage sized for the engine's entity slots. It still filters factions,
+notarget, range, field of view and line of sight. Once it finds an eligible
+visible enemy it skips visibility checks for farther candidates. The
+`scripts/test-mp-listen-crowd.py --npc-targets` scenario compares real
+listen-host and guest recordings at 0, 192, 320 and 512 props. It tests both
+players in the nearer position and a nearer player who opts out with
+notarget. In a separate four-minute Flatgrass fight, the server saved all
+96 NPCs and 16 props after an extra spawn and Undo. Host and guest agreed
+on all 9,857 shared snapshots, including momentary changes to the visible
+roster on lower ground. A three-NPC control confirmed that an observer on
+the upper platform and one below receive different actors across the map's
+visibility boundary while the server retains all three. The graphical host
+and guest ran on the same machine. Internet play on separate computers
+remains outstanding.
 
 ## Multiplayer patrols and combat squads
 

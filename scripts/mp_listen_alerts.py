@@ -152,7 +152,10 @@ def read_alert_demo(tool, path):
     lines = subprocess.check_output([str(tool), '--alert-demo', str(path)], text=True).splitlines()
     frames = {}
     for line in lines:
-        t, slot, health, armor, firing, blaster, x, y, actor = line.split()
+        fields = line.split()
+        if len(fields) == 8:  # The recorded server has not spawned the NPC yet.
+            continue
+        t, slot, health, armor, firing, blaster, x, y, actor = fields
         number, shooting, yaw, nx, ny = actor.split(',')
         npc = Actor(int(number), int(shooting), float(yaw), float(nx), float(ny))
         frames[int(t)] = Frame(int(slot), int(health), int(armor), int(firing), int(blaster), float(x), float(y), npc)
