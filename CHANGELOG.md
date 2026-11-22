@@ -1,3 +1,8 @@
+# JA:R 1.346.0
+
+- Multiplayer NPCs can hear a nearby player firing behind them, including a joined player while the first player is dead or disconnected. Sight and hearing follow their own range and visibility checks.
+- NPC alerts expire together when due. Removing an actor or disconnecting a player clears its alerts before the slot can be reused.
+
 # JA:R 1.345.0
 
 - Multiplayer NPCs ignore indestructible scenery when searching for enemies. A crate with health assigned by Sandbox no longer draws fire away from a player or hostile NPC.

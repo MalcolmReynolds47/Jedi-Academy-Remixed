@@ -27,7 +27,7 @@ static void DemoGameState(msg_t *msg) {
         throw std::runtime_error("Unsupported demo terrain data");
 }
 
-enum class DemoView { Crowd, Rider, Vehicle, Timing, Throw, PlayerGrip };
+enum class DemoView { Crowd, Rider, Vehicle, Timing, Throw, PlayerGrip, Alert };
 
 static void DemoCrowdFrame(msg_t *msg, int sequence, DemoView view) {
     clSnapshot_t frame{};
@@ -51,6 +51,19 @@ static void DemoCrowdFrame(msg_t *msg, int sequence, DemoView view) {
     cl.snapshots[sequence & PACKET_MASK] = frame;
     if (frame.snapFlags & SNAPFLAG_NOT_ACTIVE)
         return;
+    if (view == DemoView::Alert) {
+        const auto &p = frame.ps;
+        printf("%d %d %d %d %d %d %.9g %.9g", frame.serverTime, p.clientNum, p.stats[STAT_HEALTH],
+               p.stats[STAT_ARMOR], (p.eFlags & EF_FIRING) != 0, p.weapon == WP_BLASTER, p.origin[0], p.origin[1]);
+        for (int j = 0; j < frame.numEntities; ++j) {
+            const auto &e = cl.parseEntities[(frame.parseEntitiesNum + j) & (MAX_PARSE_ENTITIES - 1)];
+            if (e.eType == ET_NPC)
+                printf(" %d,%d,%.9g,%.9g,%.9g", e.number, (e.eFlags & EF_FIRING) != 0,
+                       e.apos.trBase[YAW], e.pos.trBase[0], e.pos.trBase[1]);
+        }
+        puts("");
+        return;
+    }
     if (view == DemoView::Timing) {
         printf("%d %d\n", frame.serverTime, (frame.snapFlags & SNAPFLAG_RATE_DELAYED) != 0);
         return;

@@ -239,10 +239,7 @@ void NPC_BSGrenadier_Patrol( void )
 					NPCS.NPCInfo->lastAlertID = level.alertEvents[alertEvent].ID;
 					if ( level.alertEvents[alertEvent].level == AEL_DISCOVERED )
 					{
-						if ( level.alertEvents[alertEvent].owner &&
-							level.alertEvents[alertEvent].owner->client &&
-							level.alertEvents[alertEvent].owner->health >= 0 &&
-							level.alertEvents[alertEvent].owner->client->playerTeam == NPCS.NPC->client->enemyTeam )
+						if ( NPC_IsHostileAlertOwner(level.alertEvents[alertEvent].owner) )
 						{//an enemy
 							G_SetEnemy( NPCS.NPC, level.alertEvents[alertEvent].owner );
 							//NPCInfo->enemyLastSeenTime = level.time;

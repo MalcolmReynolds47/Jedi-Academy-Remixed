@@ -61,7 +61,8 @@ work for multiplayer. The earlier single-player rope hold still applies.
     keep their native logic. NPC landings now apply damage based on impact
     severity and honor the server's fall-damage setting. In 1.345.0 NPCs
     ignore passive props during enemy searches, and a follower can pass a
-    barricade to reach the player who spawned it.
+    barricade to reach the player who spawned it. In 1.346.0 nearby player
+    gunfire also alerts hostile NPCs independently of the first player slot.
 
 [November 17 multiplayer audit](JAR-multiplayer-audit-2026-11-17.md): verified release state, reproduced defects, test coverage, and recommended follow-up.
 
@@ -85,11 +86,36 @@ package, retail game data, native snapshot reader and a fresh results
 directory. The scenario covers both owners, an unobstructed route and
 opposing riflemen fighting beside the same barricade.
 
-The next AI investigation is multiplayer sight and sound alerts. The
-native alert search returns early when player slot zero has no health.
-The native follow behavior also indexes the alert list when the search
-returns no event. Guest detection while the host is dead and behavior
-after the first player disconnects still need verification.
+## Multiplayer NPC reactions to player gunfire
+
+In 1.345.0 a stormtrooper failed to respond to a joined player firing an
+E-11 behind it, with the listen host alive or dead and with slot zero vacant
+on a dedicated server. A player still in sight could be detected through
+the normal visual search. Ordinary blaster shots did not generate native
+sight or sound alerts, and the alert search depended on slot zero's health.
+
+In 1.346.0 nearby NPCs can hear a player's gunfire or see its muzzle
+flash, regardless of the shooter's slot. Ordinary firearms use the stock sound
+radius of 256 units and a sight radius twice that size. The disruptor uses
+50 and 100. NPCs still need a clear shot to fire. Scripted sense selection,
+faction rules, silent Sandbox tools and player notarget are preserved.
+Alert expiry, overflow and actor removal keep event IDs stable for listeners.
+
+The repeatable `scripts/test-mp-listen-crowd.py --npc-alerts` scenario
+records the host and joined player's ordinary snapshots. It also starts a
+separate dedicated server, disconnects the first graphical client and repeats
+the shot with the remaining player in slot one. A friendly rebel and a player
+using notarget provide controls. With a row of crates between the actors,
+the test measures the trooper turning and moving around cover, and checks
+the firing flag while the crates screen its shot. Native tests exercise sight
+and hearing separately, including occlusion, range, priority, full-queue
+eviction, simultaneous expiry and reuse of an actor slot. Testing between
+separate computers remains open.
+
+A further priority 10 check is target acquisition when many nearby props
+share the combat area. The native nearest-enemy query returns at most
+256 nearby entities before it filters scenery and checks visibility. The
+effect of this cap on a growing Sandbox world needs a gameplay test.
 
 ## Multiplayer patrols and combat squads
 

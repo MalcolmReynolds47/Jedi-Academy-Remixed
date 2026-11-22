@@ -4619,6 +4619,36 @@ void FireWeapon( gentity_t *ent, qboolean altFire ) {
 		}
 	}
 
+	// Publish ordinary player gunfire to the same senses the native AI
+	// uses for map events. Tools, placed charges and silent actions stay quiet.
+	if (ent->s.number < level.maxclients && !(ent->flags & FL_NOTARGET))
+	{
+		int radius = 256;
+		switch (ent->s.weapon)
+		{
+		case WP_DISRUPTOR:
+			radius = 50;
+			break;
+		case WP_BRYAR_PISTOL:
+		case WP_BRYAR_OLD:
+		case WP_BLASTER:
+		case WP_BOWCASTER:
+		case WP_REPEATER:
+		case WP_DEMP2:
+		case WP_FLECHETTE:
+		case WP_ROCKET_LAUNCHER:
+		case WP_CONCUSSION:
+			break;
+		default:
+			radius = 0;
+			break;
+		}
+		if (radius)
+		{
+			AddSoundEvent(ent, muzzle, radius, AEL_DISCOVERED, qfalse);
+			AddSightEvent(ent, muzzle, radius * 2, AEL_DISCOVERED, 20);
+		}
+	}
 	G_LogWeaponFire(ent->s.number, ent->s.weapon);
 }
 

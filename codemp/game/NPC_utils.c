@@ -1286,6 +1286,11 @@ NPC_PickEnemyExt
 -------------------------
 */
 
+qboolean NPC_IsHostileAlertOwner(gentity_t *source)
+{
+	return source && source->client && NPC_ValidEnemy(source);
+}
+
 gentity_t *NPC_PickEnemyExt( qboolean checkAlerts )
 {
 	//If we've asked for the closest enemy
@@ -1310,10 +1315,14 @@ gentity_t *NPC_PickEnemyExt( qboolean checkAlerts )
 
 			if ( event->level >= AEL_DISCOVERED )
 			{
-				//If it's the player, attack him
-				//OJKFIXME: clientnum 0
-				if ( event->owner == &g_entities[0] )
+				// A heard shot gives the NPC its source position, even when the
+				// shooter is outside its field of view.
+				if (event->owner->s.number < level.maxclients && NPC_IsHostileAlertOwner(event->owner))
+				{
+					VectorCopy(event->position, NPCS.NPCInfo->enemyLastSeenLocation);
+					NPCS.NPCInfo->enemyLastSeenTime = level.time;
 					return event->owner;
+				}
 
 				//If it's on our team, then take its enemy as well
 				if ( ( event->owner->client ) && ( event->owner->client->playerTeam == NPCS.NPC->client->playerTeam ) )

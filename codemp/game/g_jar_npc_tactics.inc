@@ -173,7 +173,7 @@ static qboolean NPC_SandboxTactics(void)
 	{
 		G_ClearEnemy(npc);
 		if ((info->scriptFlags & SCF_LOOK_FOR_ENEMIES) && !(info->scriptFlags & SCF_DONT_FIRE))
-			NPC_FindEnemy(qfalse);
+			NPC_FindEnemy((info->scriptFlags & SCF_IGNORE_ALERTS) == 0);
 	}
 
 	if (!npc->enemy)

@@ -137,6 +137,8 @@ static void TeleportPilotSnapshotCases() {
 }
 
 int main(int argc, char **argv){
+    if (argc == 3 && !strcmp(argv[1], "--alert-demo"))
+        return ReadCrowdDemo(argv[2], DemoView::Alert);
     if (argc == 3 && !strcmp(argv[1], "--crowd-demo"))
         return ReadCrowdDemo(argv[2]);
     if (argc == 3 && !strcmp(argv[1], "--rider-demo"))

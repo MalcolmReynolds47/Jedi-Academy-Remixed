@@ -281,6 +281,7 @@ extern qboolean NPC_SetCombatPoint( int combatPointID );
 
 extern qboolean NPC_ValidEnemy( gentity_t *ent );
 extern qboolean NPC_CheckEnemyExt( qboolean checkAlerts ); //checkAlerts = qfalse
+extern qboolean NPC_IsHostileAlertOwner(gentity_t *source);
 extern qboolean NPC_FindPlayer( void );
 extern qboolean NPC_CheckCanAttackExt( void );
 

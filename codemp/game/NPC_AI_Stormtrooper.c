@@ -476,28 +476,10 @@ void NPC_BSST_Sleep( void )
 		//See if it was enough to wake us up
 		if ( level.alertEvents[alertEvent].level == AEL_DISCOVERED && (NPCS.NPCInfo->scriptFlags&SCF_LOOK_FOR_ENEMIES) )
 		{
-			int			i;
-			float		dist;
-			float		bestDist	= 16384.0f;
-			gentity_t	*bestCl		= NULL;
-			gentity_t	*ent		= NULL;
-
-			for ( i=0; i<MAX_CLIENTS; i++ ) {
-				ent = &g_entities[i];
-				if ( ent->inuse && ent->health > 0 && !(ent->client->ps.eFlags & EF_DEAD) &&
-					G_ClearLOS( NPCS.NPC, NPCS.NPC->s.origin, ent->s.origin ) )
-				{
-					if ( ( dist = Distance( NPCS.NPC->s.origin, ent->s.origin ) ) < bestDist )
-					{
-						bestCl		= ent;
-						bestDist	= dist;
-					}
-				}
-			}
-
-			if ( bestCl )
+			gentity_t *source = level.alertEvents[alertEvent].owner;
+			if (NPC_IsHostileAlertOwner(source))
 			{
-				G_SetEnemy( NPCS.NPC, bestCl );
+				G_SetEnemy(NPCS.NPC, source);
 				return;
 			}
 		}
@@ -805,10 +787,7 @@ static qboolean NPC_ST_InvestigateEvent( int eventID, qboolean extraSuspicious )
 		if ( level.alertEvents[eventID].level == AEL_DISCOVERED && (NPCS.NPCInfo->scriptFlags&SCF_LOOK_FOR_ENEMIES) )
 		{
 			NPCS.NPCInfo->lastAlertID = level.alertEvents[eventID].ID;
-			if ( !level.alertEvents[eventID].owner ||
-				!level.alertEvents[eventID].owner->client ||
-				level.alertEvents[eventID].owner->health <= 0 ||
-				level.alertEvents[eventID].owner->client->playerTeam != NPCS.NPC->client->enemyTeam )
+			if ( !NPC_IsHostileAlertOwner(level.alertEvents[eventID].owner) )
 			{//not an enemy
 				return qfalse;
 			}

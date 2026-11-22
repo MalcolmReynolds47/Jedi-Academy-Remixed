@@ -24,6 +24,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "b_local.h"
 
+#include <limits.h>
+
 extern int eventClearTime;
 /*
 qboolean G_ClearLineOfSight(const vec3_t point1, const vec3_t point2, int ignore, int clipmask)
@@ -362,10 +364,9 @@ static int G_CheckSoundEvents( gentity_t *self, float maxHearDist, int ignoreAle
 
 	for ( i = 0; i < level.numAlertEvents; i++ )
 	{
-		//are we purposely ignoring this alert?
-		if ( i == ignoreAlert )
+		// The caller remembers an event ID across queue compaction.
+		if ( level.alertEvents[i].ID == ignoreAlert )
 			continue;
-		//We're only concerned about sounds
 		if ( level.alertEvents[i].type != AET_SOUND )
 			continue;
 		//must be at least this noticable
@@ -437,10 +438,8 @@ static int G_CheckSightEvents( gentity_t *self, int hFOV, int vFOV, float maxSee
 	maxSeeDist *= maxSeeDist;
 	for ( i = 0; i < level.numAlertEvents; i++ )
 	{
-		//are we purposely ignoring this alert?
-		if ( i == ignoreAlert )
+		if ( level.alertEvents[i].ID == ignoreAlert )
 			continue;
-		//We're only concerned about sounds
 		if ( level.alertEvents[i].type != AET_SIGHT )
 			continue;
 		//must be at least this noticable
@@ -503,34 +502,19 @@ int G_CheckAlertEvents( gentity_t *self, qboolean checkSight, qboolean checkSoun
 	int bestSoundAlert = -1;
 	int bestSightAlert = -1;
 
-	//OJKFIXME: clientnum 0
-	if ( &g_entities[0] == NULL || g_entities[0].health <= 0 )
+	if (checkSound)
 	{
-		//player is dead
-		return -1;
+		bestSoundEvent = G_CheckSoundEvents(self, maxHearDist, ignoreAlert, mustHaveOwner, minAlertLevel);
+		if (bestSoundEvent >= 0)
+			bestSoundAlert = level.alertEvents[bestSoundEvent].level;
 	}
-
-	//get sound event
-	bestSoundEvent = G_CheckSoundEvents( self, maxHearDist, ignoreAlert, mustHaveOwner, minAlertLevel );
-	//get sound event alert level
-	if ( bestSoundEvent >= 0 )
+	if (checkSight)
 	{
-		bestSoundAlert = level.alertEvents[bestSoundEvent].level;
-	}
-
-	//get sight event
-	if ( self->NPC )
-	{
-		bestSightEvent = G_CheckSightEvents( self, self->NPC->stats.hfov, self->NPC->stats.vfov, maxSeeDist, ignoreAlert, mustHaveOwner, minAlertLevel );
-	}
-	else
-	{
-		bestSightEvent = G_CheckSightEvents( self, 80, 80, maxSeeDist, ignoreAlert, mustHaveOwner, minAlertLevel );//FIXME: look at cg_view to get more accurate numbers?
-	}
-	//get sight event alert level
-	if ( bestSightEvent >= 0 )
-	{
-		bestSightAlert = level.alertEvents[bestSightEvent].level;
+		const int hfov = self->NPC ? self->NPC->stats.hfov : 80;
+		const int vfov = self->NPC ? self->NPC->stats.vfov : 80;
+		bestSightEvent = G_CheckSightEvents(self, hfov, vfov, maxSeeDist, ignoreAlert, mustHaveOwner, minAlertLevel);
+		if (bestSightEvent >= 0)
+			bestSightAlert = level.alertEvents[bestSightEvent].level;
 	}
 
 	//return the one that has a higher alert (or sound if equal)
@@ -597,158 +581,69 @@ qboolean NPC_CheckForDanger( int alertEvent )
 AddSoundEvent
 -------------------------
 */
-qboolean RemoveOldestAlert( void );
-void AddSoundEvent( gentity_t *owner, vec3_t position, float radius, alertEventLevel_e alertLevel, qboolean needLOS )
+static void G_AddAlert(gentity_t *owner, vec3_t position, float radius, alertEventLevel_e priority,
+                       alertEventType_e type, float addLight)
 {
-	//FIXME: Handle this in another manner?
-	if ( level.numAlertEvents >= MAX_ALERT_EVENTS )
-	{
-		if ( !RemoveOldestAlert() )
-		{//how could that fail?
-			return;
-		}
-	}
-
-	if ( owner == NULL && alertLevel < AEL_DANGER )	//allows un-owned danger alerts
+	if (!owner && priority < AEL_DANGER)
 		return;
-
-	//FIXME: if owner is not a player or player ally, and there are no player allies present,
-	//			perhaps we don't need to store the alert... unless we want the player to
-	//			react to enemy alert events in some way?
-
-	VectorCopy( position, level.alertEvents[ level.numAlertEvents ].position );
-
-	level.alertEvents[ level.numAlertEvents ].radius	= radius;
-	level.alertEvents[ level.numAlertEvents ].level		= alertLevel;
-	level.alertEvents[ level.numAlertEvents ].type		= AET_SOUND;
-	level.alertEvents[ level.numAlertEvents ].owner		= owner;
-	if ( needLOS )
-	{//a very low-level sound, when check this sound event, check for LOS
-		level.alertEvents[ level.numAlertEvents ].addLight	= 1;	//will force an LOS trace on this sound
-	}
-	else
+	// Alerts are appended in server time order. Evict the oldest on overflow.
+	if (level.numAlertEvents == MAX_ALERT_EVENTS)
 	{
-		level.alertEvents[ level.numAlertEvents ].addLight	= 0;	//will force an LOS trace on this sound
+		--level.numAlertEvents;
+		memmove(level.alertEvents, level.alertEvents + 1, level.numAlertEvents * sizeof(alertEvent_t));
 	}
-	level.alertEvents[ level.numAlertEvents ].ID		= level.curAlertID++;
-	level.alertEvents[ level.numAlertEvents ].timestamp	= level.time;
-
-	level.numAlertEvents++;
+	alertEvent_t *event = &level.alertEvents[level.numAlertEvents++];
+	VectorCopy(position, event->position);
+	event->owner = owner;
+	event->radius = radius;
+	event->type = type;
+	event->level = priority;
+	event->light = 0;
+	event->addLight = addLight;
+	// Zero is the initial lastAlertID of a freshly spawned NPC.
+	level.curAlertID = level.curAlertID == INT_MAX ? 1 : level.curAlertID + 1;
+	event->ID = level.curAlertID;
+	event->timestamp = level.time;
 }
 
-/*
--------------------------
-AddSightEvent
--------------------------
-*/
-
-void AddSightEvent( gentity_t *owner, vec3_t position, float radius, alertEventLevel_e alertLevel, float addLight )
+void AddSoundEvent(gentity_t *owner, vec3_t position, float radius, alertEventLevel_e priority, qboolean needLOS)
 {
-	//FIXME: Handle this in another manner?
-	if ( level.numAlertEvents >= MAX_ALERT_EVENTS )
-	{
-		if ( !RemoveOldestAlert() )
-		{//how could that fail?
-			return;
-		}
-	}
-
-	if ( owner == NULL && alertLevel < AEL_DANGER )	//allows un-owned danger alerts
-		return;
-
-	//FIXME: if owner is not a player or player ally, and there are no player allies present,
-	//			perhaps we don't need to store the alert... unless we want the player to
-	//			react to enemy alert events in some way?
-
-	VectorCopy( position, level.alertEvents[ level.numAlertEvents ].position );
-
-	level.alertEvents[ level.numAlertEvents ].radius	= radius;
-	level.alertEvents[ level.numAlertEvents ].level		= alertLevel;
-	level.alertEvents[ level.numAlertEvents ].type		= AET_SIGHT;
-	level.alertEvents[ level.numAlertEvents ].owner		= owner;
-	level.alertEvents[ level.numAlertEvents ].addLight	= addLight;	//will get added to actual light at that point when it's checked
-	level.alertEvents[ level.numAlertEvents ].ID		= level.curAlertID++;
-	level.alertEvents[ level.numAlertEvents ].timestamp	= level.time;
-
-	level.numAlertEvents++;
+	G_AddAlert(owner, position, radius, priority, AET_SOUND, needLOS ? 1.0f : 0.0f);
 }
 
-/*
--------------------------
-ClearPlayerAlertEvents
--------------------------
-*/
-
-void ClearPlayerAlertEvents( void )
+void AddSightEvent(gentity_t *owner, vec3_t position, float radius, alertEventLevel_e priority, float addLight)
 {
-	int curNumAlerts = level.numAlertEvents;
-	int i;
-	//loop through them all (max 32)
-	for ( i = 0; i < curNumAlerts; i++ )
-	{
-		//see if the event is old enough to delete
-		if ( level.alertEvents[i].timestamp && level.alertEvents[i].timestamp + ALERT_CLEAR_TIME < level.time )
-		{//this event has timed out
-			//drop the count
-			level.numAlertEvents--;
-			//shift the rest down
-			if ( level.numAlertEvents > 0 )
-			{//still have more in the array
-				if ( (i+1) < MAX_ALERT_EVENTS )
-				{
-					memmove( &level.alertEvents[i], &level.alertEvents[i+1], sizeof(alertEvent_t)*(MAX_ALERT_EVENTS-(i+1) ) );
-				}
-			}
-			else
-			{//just clear this one... or should we clear the whole array?
-				memset( &level.alertEvents[i], 0, sizeof( alertEvent_t ) );
-			}
-		}
-	}
-	//make sure this never drops below zero... if it does, something very very bad happened
-	assert( level.numAlertEvents >= 0 );
+	G_AddAlert(owner, position, radius, priority, AET_SIGHT, addLight);
+}
 
-	if ( eventClearTime < level.time )
-	{//this is just a 200ms debouncer so things that generate constant alerts (like corpses and missiles) add an alert every 200 ms
+void G_ForgetAlertOwner(gentity_t *owner)
+{
+	// Clients and NPCs can be replaced in the same slot before an alert expires.
+	int kept = 0;
+	for (int i = 0; i < level.numAlertEvents; ++i)
+	{
+		if (level.alertEvents[i].owner == owner)
+			continue;
+		if (kept != i)
+			level.alertEvents[kept] = level.alertEvents[i];
+		++kept;
+	}
+	level.numAlertEvents = kept;
+}
+
+void ClearPlayerAlertEvents(void)
+{
+	int expired = 0;
+	while (expired < level.numAlertEvents &&
+	       level.time - level.alertEvents[expired].timestamp > ALERT_CLEAR_TIME)
+		++expired;
+	if (expired)
+	{
+		level.numAlertEvents -= expired;
+		memmove(level.alertEvents, level.alertEvents + expired, level.numAlertEvents * sizeof(alertEvent_t));
+	}
+	if (eventClearTime < level.time)
 		eventClearTime = level.time + ALERT_CLEAR_TIME;
-	}
-}
-
-qboolean RemoveOldestAlert( void )
-{
-	int	oldestEvent = -1, oldestTime = Q3_INFINITE;
-	int i;
-	//loop through them all (max 32)
-	for ( i = 0; i < level.numAlertEvents; i++ )
-	{
-		//see if the event is old enough to delete
-		if ( level.alertEvents[i].timestamp < oldestTime )
-		{
-			oldestEvent = i;
-			oldestTime = level.alertEvents[i].timestamp;
-		}
-	}
-	if ( oldestEvent != -1 )
-	{
-		//drop the count
-		level.numAlertEvents--;
-		//shift the rest down
-		if ( level.numAlertEvents > 0 )
-		{//still have more in the array
-			if ( (oldestEvent+1) < MAX_ALERT_EVENTS )
-			{
-				memmove( &level.alertEvents[oldestEvent], &level.alertEvents[oldestEvent+1], sizeof(alertEvent_t)*(MAX_ALERT_EVENTS-(oldestEvent+1) ) );
-			}
-		}
-		else
-		{//just clear this one... or should we clear the whole array?
-			memset( &level.alertEvents[oldestEvent], 0, sizeof( alertEvent_t ) );
-		}
-	}
-	//make sure this never drops below zero... if it does, something very very bad happened
-	assert( level.numAlertEvents >= 0 );
-	//return true is have room for one now
-	return (level.numAlertEvents<MAX_ALERT_EVENTS);
 }
 
 /*
