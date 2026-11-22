@@ -1,5 +1,6 @@
 #include "mp_message_support.inc"
 #include "mp_capacity_snapshot.inc"
+#include "mp_crowd_demo.inc"
 #include "../../codemp/game/jar_mp_teleport_volume.h"
 #include "../../codemp/game/bg_jar_physgun_input.h"
 #include "../../shared/qcommon/jar_galak_surfaces.h"
@@ -135,7 +136,13 @@ static void TeleportPilotSnapshotCases() {
     }
 }
 
-int main(){
+int main(int argc, char **argv){
+    if (argc == 3 && !strcmp(argv[1], "--crowd-demo"))
+        return ReadCrowdDemo(argv[2]);
+    if (argc == 3 && !strcmp(argv[1], "--rider-demo"))
+        return ReadCrowdDemo(argv[2], DemoView::Rider);
+    if (argc == 3 && !strcmp(argv[1], "--vehicle-demo"))
+        return ReadCrowdDemo(argv[2], DemoView::Vehicle);
     {
         playerState_t base{},holding{},received{};
         holding.stats[STAT_JAR_PHYSGUN_HOLD]=10001;

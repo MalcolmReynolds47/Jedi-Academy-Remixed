@@ -1,3 +1,8 @@
+# JA:R 1.342.0
+
+- Multiplayer NPCs no longer merge patrols or combat squads across factions, even when they share an enemy. NPCs that switch teams leave their old squad on its next update.
+- Squad merging skips empty slots after despawn. Nearby allied patrols can still merge, including when they exactly fill a squad.
+
 # JA:R 1.341.0
 
 - Multiplayer squads now use each NPC's own path to the enemy. Sorting keeps every member and distinguishes unreachable paths; an NPC cannot select itself as its nearest buddy.

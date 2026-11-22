@@ -1440,7 +1440,7 @@ class LocalPureArchives:
 def check_network_clients(port, executable, run, protocol, light_ids=None, music_id=None, pure_game_data=None,
                           section_ids=None, *, map_name='mp/ffa3', physgun_id=None, section_save=None,
                           movement_markers=False, directional_trigger=False, searchlight=False, portals=False, angular=False,
-                          console_npcs=False, space_volume=False):
+                          console_npcs=False, space_volume=False, crowd_session=False):
     assert Path(executable).is_file(), f'Missing native wire probe: {executable}'
     clients = []
     lights = {}
@@ -1482,6 +1482,9 @@ def check_network_clients(port, executable, run, protocol, light_ids=None, music
             assert following == '0'
             state.update(snapshot_time=int(server_time), snapshot_entities=int(entities), health=int(health))
             clients.append((name, sock, probe, state))
+            if i == 0 and crowd_session:
+                from mp_crowd_session import load_crowd
+                crowd = load_crowd(clients[0], section_save)
             if i == 0 and section_ids:
                 section = spawn_sections(clients[0], section_ids)
             if i == 0 and music_id:
@@ -1493,6 +1496,9 @@ def check_network_clients(port, executable, run, protocol, light_ids=None, music
                 lights[kind] = spawn_light(clients[0], kind, ident)
 
         assert clients[0][3]['slot'] != clients[1][3]['slot']
+        if crowd_session:
+            from mp_crowd_session import check_crowd
+            check_crowd(clients, section_save, crowd, run)
         if movement_markers:
             result = check_movement_markers(clients)
             (run / 'movement-markers.json').write_text(json.dumps(result, indent=2)+'\n', encoding='utf-8')

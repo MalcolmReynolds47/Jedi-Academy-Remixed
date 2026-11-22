@@ -394,6 +394,9 @@ endif()
 add_test(NAME jar_vehicle_variants_mp_tests COMMAND jar_vehicle_variants_mp_tests)
 
 jar_test(jar_asset_policy_tests asset_policy.cpp)
+add_executable(jar_mp_squad_merge_tests mp_squad_merge.c)
+add_test(NAME jar_mp_squad_merge_tests COMMAND jar_mp_squad_merge_tests)
+
 add_executable(jar_mp_squad_navigation_tests mp_squad_navigation.c)
 add_test(NAME jar_mp_squad_navigation_tests COMMAND jar_mp_squad_navigation_tests)
 
