@@ -1,3 +1,9 @@
+# JA:R 1.348.0
+
+- Multiplayer Portal Surfaces keep showing their linked camera when resized above 1,024 units or below 16 units. Both renderers accept the same dimensions as the server.
+- Classic draws the sky in portable camera feeds and uses the panel's proportions for its field of view. Both multiplayer renderers omit the camera housing at the lens while drawing its feed.
+- Fixed missing triangles in multiplayer Rend2 maps. When combining several map faces into one draw, Rend2 now uploads every face and uses their combined bounds. The defect was visible as holes in the ground on Flatgrass.
+
 # JA:R 1.347.0
 
 - Multiplayer NPCs can find the nearest visible enemy in a prop-heavy scene. A search considers the full area around the NPC and skips visibility traces for targets farther than an enemy it can already see.

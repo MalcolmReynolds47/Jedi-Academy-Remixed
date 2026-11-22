@@ -373,7 +373,37 @@ budget is full. The map's own portal or mirror keeps its view.
 
 The Classic and Rend2 renderer tests cover matching screens, different
 camera views, offscreen panels, failed renders, and fallback materials.
-In-game camera output and frame timing remain open.
+Single-player camera output and four-feed frame timing remain open.
+
+### Multiplayer portal screens
+
+In 1.347.0 a multiplayer server accepted a 1,152-unit-wide screen and a
+12-unit-high screen, but both clients could see through them when powered.
+Classic also showed dark gray sky at the default size. The sky was present
+in the draw list, but Classic skipped it because the main view had already
+drawn its sky into a different framebuffer.
+
+JA:R 1.348.0 uses the server's size rules in both multiplayer renderers.
+Classic draws the monitor's sky and uses the same camera field of view for
+culling and projection. Both renderers omit the housing at the active lens.
+A separate camera standing in its field of view remains visible.
+
+Rend2 also dropped triangles when merging map faces. It counted the whole
+group, uploaded indices for only its first face, then drew the full count.
+Merging now follows the actual members, includes their bounds and indices,
+and redirects each leaf only after the combined draw is ready. Flatgrass
+ground in a wide camera view is checked against the original unmerged faces.
+In three ordinary `gm_construct` views, 18–83% of sampled pixels in
+1.347.0 differed from the unmerged reference by over 30 levels in at
+least one RGB channel. The same views in 1.348.0 were below 0.05%.
+Three views on the stock `mp/ffa3` map also stayed below 0.05%.
+
+The `--portal-screens` graphical test starts a Classic listen host, loads
+a linked panel, then joins with a Rend2 client. On Flatgrass it points
+the camera at the ground and the sky, powers the panel off, and repeats
+at 128×192, 1152×192 and 128×12 units. It checks pixels inside the screen
+and the silhouette of a second camera against the sky. The test uses one
+computer. Four simultaneous feeds and their frame cost remain open.
 
 ## Single-player NPC patrol routes
 

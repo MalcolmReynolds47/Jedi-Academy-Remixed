@@ -1381,6 +1381,13 @@ Ghoul2 Insert End
 	VectorCopy( cent->lerpOrigin, ent.origin);
 	VectorCopy( cent->lerpOrigin, ent.oldorigin);
 
+	if (s1->eType == ET_GENERAL && s1->generic1 == 250 && s1->bolt2 == JAR_MP_PORTAL_CAMERA_TAG) {
+		ent.renderfx |= RF_JAR_PORTAL_CAMERA;
+		// The housing has a single model frame. Preserve its snapshot anchor
+		// for the monitor even while the visible housing interpolates.
+		VectorCopy(s1->pos.trBase, ent.oldorigin);
+	}
+
 	if (cent->currentState.modelGhoul2)
 	{ //If the game says this guy uses a ghoul2 model and the g2 instance handle is null, then initialize it
 		if (portableEmplaced) {

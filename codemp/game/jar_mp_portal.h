@@ -1,6 +1,7 @@
 // Portable portal state using existing entity-state fields.
 #pragma once
 #include "../../shared/qcommon/jar_portal_limits.h"
+#include "../qcommon/jar_portal_size.h"
 
 #define JAR_MP_PORTAL_SURFACE_ID 88142876u
 #define JAR_MP_PORTAL_CAMERA_ID 97890286u

@@ -522,10 +522,12 @@ void R_SetupProjection( void ) {
 	zNear	= r_znear->value;
 	zFar	= tr.viewParms.zFar;
 
-	ymax = zNear * tan( tr.refdef.fov_y * M_PI / 360.0f );
+	// Use the same view as frustum culling. A portable camera has its
+	// own aspect and field of view, independent of the player's window.
+	ymax = zNear * tan( tr.viewParms.fovY * M_PI / 360.0f );
 	ymin = -ymax;
 
-	xmax = zNear * tan( tr.refdef.fov_x * M_PI / 360.0f );
+	xmax = zNear * tan( tr.viewParms.fovX * M_PI / 360.0f );
 	xmin = -xmax;
 
 	width = xmax - xmin;
@@ -1165,6 +1167,9 @@ void R_AddEntitySurfaces (void) {
 		if ( (ent->e.renderfx & RF_FIRST_PERSON) && tr.viewParms.isPortal) {
 			continue;
 		}
+			if (tr.viewParms.portalMonitor && JAR_PortalCameraAtEye(&ent->e, tr.viewParms.ori.origin)) {
+				continue;
+			}
 
 		// simple generated models, like sprites and beams, are not culled
 		switch ( ent->e.reType ) {

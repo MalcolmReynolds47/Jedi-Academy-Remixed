@@ -62,8 +62,9 @@ def memory_mib(process):
 
 
 class Player:
-    def __init__(self, name, mod, home, evidence, port, entry):
+    def __init__(self, name, mod, home, evidence, port, entry, renderer='rdjar-mp-vanilla'):
         self.name = name
+        self.renderer = renderer
         self.evidence = evidence
         self.profile = home / mod.name
         self.profile.mkdir(parents=True)
@@ -73,7 +74,7 @@ class Player:
         (self.profile / 'watch.cfg').write_text('vstr test_step\nwait 5\nexecq watch.cfg\n')
         settings = dict(fs_basepath=mod.parent, fs_homepath=home, fs_game=mod.name,
                         dedicated=0, net_ip='127.0.0.1', net_port=port, net_enabled=1,
-                        r_fullscreen=0, r_mode=4, cl_renderer='rdjar-mp-vanilla', logfile=2)
+                        r_fullscreen=0, r_mode=4, cl_renderer=renderer, logfile=2)
         command = [str(mod / 'jar_mp.x86_64.exe')]
         for key, value in settings.items():
             command += ['+set', key, str(value)]
@@ -142,11 +143,26 @@ class Player:
         else:
             raise AssertionError(f'{self.name} did not enter the map')
         self.do('ui_openmenu jar_probe_empty', 'cg_draw2D 0', 'cg_drawGun 0')
-        assert 'rdjar-mp-vanilla_x86_64.dll' in self.text()
+        renderers = re.findall(r'Trying to load "(rd[^"]+\.dll)"', self.text())
+        assert renderers and set(renderers) == {self.renderer + '_x86_64.dll'}, renderers
 
     def record(self, name):
         self.do('record ' + name)
         self.wait('recording to demos/' + name + '.dm_')
+
+    def screenshot(self, name):
+        self.do('screenshot_png ' + name)
+        path = self.profile / 'screenshots' / (name + '.png')
+        # The console acknowledgement precedes the renderer's actual write.
+        until = time.monotonic() + 8
+        while time.monotonic() < until:
+            if path.is_file() and path.stat().st_size >= 12:
+                with path.open('rb') as image:
+                    image.seek(-8, 2)
+                    if image.read() == b'IEND\xaeB`\x82':
+                        return
+            time.sleep(.1)
+        raise AssertionError(f'{self.name} did not finish writing {name}.png')
 
     def close(self):
         try:
@@ -489,6 +505,7 @@ def compare_falls(tool, run):
 
 def main():
     from mp_listen_alerts import compare_alerts, exercise_alerts
+    from mp_listen_portals import compare_portals, exercise_portals
     from mp_listen_follow import compare_follow, exercise_follow
     from mp_listen_platforms import compare_rides, compare_vehicle_lift, exercise_rides, exercise_vehicle_lift
     from mp_listen_targets import compare_targets, exercise_targets
@@ -501,6 +518,9 @@ def main():
     parser.add_argument('--results', type=Path, required=True)
     scenarios = parser.add_mutually_exclusive_group()
     parser.set_defaults(scenario=(exercise, compare))
+    scenarios.add_argument('--portal-screens', dest='scenario', action='store_const',
+                           const=(partial(exercise_portals, player=Player, free_port=free_port), compare_portals),
+                           help='Compare actual camera-panel pixels in Classic and Rend2 on a listen server')
     scenarios.add_argument('--npc-targets', dest='scenario', action='store_const',
                            const=(partial(exercise_targets, player=Player, free_port=free_port), compare_targets),
                            help='Check NPC target priority with hundreds of nearby props and two visible players')
@@ -555,7 +575,10 @@ def main():
     result['machines'] = 1
     result['phases'] = phases
     result['module_sha256'] = {}
-    for name in ('jar_mp.x86_64.exe', 'jampgamex86_64.dll', 'cgamex86_64.dll', 'rdjar-mp-vanilla_x86_64.dll'):
+    modules = ['jar_mp.x86_64.exe', 'jampgamex86_64.dll', 'cgamex86_64.dll', 'rdjar-mp-vanilla_x86_64.dll']
+    if verify == compare_portals:
+        modules.append('rdjar-mp-rend2_x86_64.dll')
+    for name in modules:
         with (package / name).open('rb') as src:
             result['module_sha256'][name] = hashlib.file_digest(src, 'sha256').hexdigest()
     (run / 'result.json').write_text(json.dumps(result, indent=2) + '\n')

@@ -10,6 +10,10 @@ static void PortalMenuCases(void){
  CG_JAR_Controller();assert(contextControllerKind==JAR_PORTAL_SURFACE_CONTROLLER&&contextController.pushSpeed==192);
  Click(480,55);Click(460,178);ContextType("256");CG_JAR_Key(A_ENTER,qtrue);
  assert(!strcmp(request,"jar_property controller_portal_height_256 99"));
+ Click(460,152);ContextType("1152");CG_JAR_Key(A_ENTER,qtrue);
+ assert(!strcmp(request,"jar_property controller_portal_width_1152 99"));
+ Click(460,178);ContextType("12");CG_JAR_Key(A_ENTER,qtrue);
+ assert(!strcmp(request,"jar_property controller_portal_height_12 99"));
  Click(460,209);assert(!strcmp(request,"jar_property controller_portal_mode 99"));
  Click(460,237);assert(!strcmp(request,"jar_property controller_portal_power 99"));
  CG_JAR_Key(A_ESCAPE,qtrue);args[14]="0";
@@ -22,6 +26,17 @@ static void PortalMenuCases(void){
  assert(portalView.origin[0]==100&&portalView.cameraOrigin[0]==500);
  cent.currentState.time=JAR_PORTAL_VIEW_MIRROR;
  assert(CG_JAR_Entity(&cent)&&portalDraws==2&&portalView.mirror&&portalView.cameraOrigin[0]==100);
+ cent.currentState.speed=WORLD_SIZE;
+ cent.currentState.eventParm=1;
+ assert(CG_JAR_Entity(&cent)&&portalDraws==3&&portalView.width==WORLD_SIZE&&portalView.height==1);
+ cent.currentState.speed=1;
+ cent.currentState.eventParm=USHRT_MAX;
+ assert(CG_JAR_Entity(&cent)&&portalDraws==4&&portalView.width==1&&portalView.height==USHRT_MAX);
+ cent.currentState.eventParm=USHRT_MAX+1;
+ assert(CG_JAR_Entity(&cent)&&portalDraws==4);
+ cent.currentState.eventParm=192;
+ cent.currentState.speed=WORLD_SIZE+1;
+ assert(CG_JAR_Entity(&cent)&&portalDraws==4);
  imports.R_AddPortalToScene=NULL;
 }
 static void SearchlightMenuCases(void){

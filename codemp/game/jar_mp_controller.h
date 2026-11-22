@@ -167,8 +167,7 @@ static int JAR_ControllerStateValid(int kind,const jarControllerState_t*s){
  if(JAR_ControllerPortal(kind)){
   const int surface=kind==JAR_PORTAL_SURFACE_CONTROLLER;
   return s->active>=0&&s->active<=1&&s->flags>=0&&s->flags<=1&&
-   (surface?(s->speed>0&&s->speed<=JAR_MP_GEOMETRY_SPAN&&
-             s->pushSpeed>0&&s->pushSpeed<=USHRT_MAX):(!s->speed&&!s->pushSpeed))&&
+   (surface?JAR_MP_PortalSizeValid(s->speed,s->pushSpeed):(!s->speed&&!s->pushSpeed))&&
    !s->text[0]&&!s->waitMs&&!s->randomMs&&!s->damage&&!s->repeats&&!s->count&&!s->initial;
  }
  if(kind==JAR_SEARCHLIGHT_CONTROLLER){

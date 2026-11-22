@@ -74,6 +74,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define RF_ALPHA_DEPTH		0x100000 //depth write on alpha model
 
 #define RF_FORCEPOST		0x200000 //force it to post-render -rww
+#define RF_JAR_PORTAL_CAMERA 0x00400000
 #define RF_JAR_SECTION_ARENA 0x08000000
 #define RF_JAR_SECTION_BACKDROP 0x10000000
 #define RF_JAR_SECTION_FOG 0x20000000
@@ -275,6 +276,12 @@ Ghoul2 Insert Start
 Ghoul2 Insert End
 */
 } refEntity_t;
+
+// A panel receives the authoritative camera position in the same snapshot
+// as the housing. Keep the housing in ordinary views and other cameras.
+static inline int JAR_PortalCameraAtEye(const refEntity_t* entity, const vec3_t eye) {
+	return (entity->renderfx & RF_JAR_PORTAL_CAMERA) && VectorCompare(entity->oldorigin, eye);
+}
 
 /*
 Ghoul2 Insert Start
