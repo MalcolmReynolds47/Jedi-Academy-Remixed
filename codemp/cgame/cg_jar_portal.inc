@@ -4,8 +4,7 @@ static void PortalDraw(const centity_t* cent) {
  jarPortablePortalView_t view={0};
  view.width=state->speed;
  view.height=state->eventParm;
- if(!isfinite(view.width)||view.width<=0||view.width>WORLD_SIZE||
-    !isfinite(view.height)||view.height<=0||view.height>WORLD_SIZE)return;
+ if(!JAR_MP_PortalSizeValid(view.width,view.height))return;
  VectorCopy(cent->lerpOrigin,view.origin);
  AnglesToAxis(cent->lerpAngles,view.axis);
  if(state->time==JAR_PORTAL_VIEW_CAMERA||state->time==JAR_PORTAL_VIEW_MIRROR){

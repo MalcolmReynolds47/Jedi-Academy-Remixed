@@ -29,6 +29,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "tr_cache.h"
 #include "tr_weather.h"
+#include <algorithm>
 #include <vector>
 
 #include <cmath>
@@ -3389,20 +3390,18 @@ static void R_MergeLeafSurfaces(world_t *worldData)
 	int numWorldSurfaces;
 	int mergedSurfIndex;
 	int numMergedSurfaces;
-	int numUnmergedSurfaces;
 	VBO_t *vbo;
-	IBO_t *ibo;
 
 	msurface_t *mergedSurf;
-
-	glIndex_t *iboIndexes, *outIboIndexes;
-	int numIboIndexes;
 
 	int startTime, endTime;
 
 	startTime = ri.Milliseconds();
 
 	numWorldSurfaces = worldData->numWorldSurfaces;
+	// A leaf's marks are not sorted by surface number. Follow its actual
+	// members when counting, copying and redirecting a merged draw.
+	std::vector<int> nextMember(numWorldSurfaces, -1);
 
 	// use viewcount to keep track of mergers
 	for (i = 0; i < numWorldSurfaces; i++)
@@ -3425,7 +3424,7 @@ static void R_MergeLeafSurfaces(world_t *worldData)
 
 			surfNum1 = *(worldData->marksurfaces + leaf->firstmarksurface + j);
 
-			if (worldData->surfacesViewCount[surfNum1] != -1)
+			if ((unsigned)surfNum1 >= (unsigned)numWorldSurfaces || worldData->surfacesViewCount[surfNum1] != -1)
 				continue;
 
 			surf1 = worldData->surfaces + surfNum1;
@@ -3447,6 +3446,9 @@ static void R_MergeLeafSurfaces(world_t *worldData)
 
 			if(ShaderRequiresCPUDeforms(shader1))
 				continue;
+			vbo = ((srfBspSurface_t *)surf1->data)->vbo;
+			if (!vbo)
+				continue;
 
 			fogIndex1 = surf1->fogIndex;
 			cubemapIndex1 = surf1->cubemapIndex;
@@ -3463,7 +3465,7 @@ static void R_MergeLeafSurfaces(world_t *worldData)
 
 				surfNum2 = *(worldData->marksurfaces + leaf->firstmarksurface + k);
 
-				if (worldData->surfacesViewCount[surfNum2] != -1)
+				if ((unsigned)surfNum2 >= (unsigned)numWorldSurfaces || worldData->surfacesViewCount[surfNum2] != -1)
 					continue;
 
 				surf2 = worldData->surfaces + surfNum2;
@@ -3477,6 +3479,8 @@ static void R_MergeLeafSurfaces(world_t *worldData)
 
 				if (shader1 != shader2)
 					continue;
+				if (((srfBspSurface_t *)surf2->data)->vbo != vbo)
+					continue;
 
 				fogIndex2 = surf2->fogIndex;
 
@@ -3489,47 +3493,17 @@ static void R_MergeLeafSurfaces(world_t *worldData)
 					continue;
 
 				worldData->surfacesViewCount[surfNum2] = surfNum1;
+				nextMember[surfNum2] = nextMember[surfNum1];
+				nextMember[surfNum1] = surfNum2;
 			}
 		}
 	}
 
-	// don't add surfaces that don't merge to any others to the merged list
-	for (i = 0; i < numWorldSurfaces; i++)
-	{
-		qboolean merges = qfalse;
-
-		if (worldData->surfacesViewCount[i] != i)
-			continue;
-
-		for (j = 0; j < numWorldSurfaces; j++)
-		{
-			if (j == i)
-				continue;
-
-			if (worldData->surfacesViewCount[j] == i)
-			{
-				merges = qtrue;
-				break;
-			}
-		}
-
-		if (!merges)
-			worldData->surfacesViewCount[i] = -1;
-	}
-
-	// count merged/unmerged surfaces
 	numMergedSurfaces = 0;
-	numUnmergedSurfaces = 0;
 	for (i = 0; i < numWorldSurfaces; i++)
 	{
-		if (worldData->surfacesViewCount[i] == i)
-		{
+		if (worldData->surfacesViewCount[i] == i && nextMember[i] >= 0)
 			numMergedSurfaces++;
-		}
-		else if (worldData->surfacesViewCount[i] == -1)
-		{
-			numUnmergedSurfaces++;
-		}
 	}
 
 	// Allocate merged surfaces
@@ -3545,7 +3519,6 @@ static void R_MergeLeafSurfaces(world_t *worldData)
 	worldData->mergedSurfacesPshadowBits =
 		(int *)ri.Hunk_Alloc(
 			sizeof(*worldData->mergedSurfacesPshadowBits) * numMergedSurfaces, h_low);
-	worldData->numMergedSurfaces = numMergedSurfaces;
 
 	// view surfaces are like mark surfaces, except negative ones represent merged surfaces
 	// -1 represents 0, -2 represents 1, and so on
@@ -3553,17 +3526,13 @@ static void R_MergeLeafSurfaces(world_t *worldData)
 		(int *)ri.Hunk_Alloc(
 			sizeof(*worldData->viewSurfaces) * worldData->nummarksurfaces, h_low);
 
-	// copy view surfaces into mark surfaces
-	for (i = 0; i < worldData->nummarksurfaces; i++)
-	{
-		worldData->viewSurfaces[i] = worldData->marksurfaces[i];
-	}
+	std::vector<int> mergedForGroup(numWorldSurfaces, -1);
+	int numUnmergedSurfaces = numWorldSurfaces;
 
 	// need to be synched here
 	R_IssuePendingRenderCommands();
 
 	// actually merge surfaces
-	numIboIndexes = 0;
 	mergedSurfIndex = 0;
 	mergedSurf = worldData->mergedSurfaces;
 	for (i = 0; i < numWorldSurfaces; i++)
@@ -3575,12 +3544,15 @@ static void R_MergeLeafSurfaces(world_t *worldData)
 		int numSurfsToMerge;
 		int numIndexes;
 		int numVerts;
-		int firstIndex;
 
 		srfBspSurface_t *vboSurf;
 
-		if (worldData->surfacesViewCount[i] != i)
+		if (worldData->surfacesViewCount[i] != i || nextMember[i] < 0)
 			continue;
+		// Surface merging is optional. Keep the original draws when all
+		// available index buffers are already in use.
+		if (tr.numIBOs >= MAX_IBOS)
+			break;
 
 		surf1 = worldData->surfaces + i;
 
@@ -3591,13 +3563,10 @@ static void R_MergeLeafSurfaces(world_t *worldData)
 		numSurfsToMerge = 0;
 		numIndexes = 0;
 		numVerts = 0;
-		for (j = i; j < numWorldSurfaces; j++)
+		for (j = i; j >= 0; j = nextMember[j])
 		{
 			msurface_t *surf2;
 			srfBspSurface_t *bspSurf;
-
-			if (worldData->surfacesViewCount[j] != i)
-				continue;
 
 			surf2 = worldData->surfaces + j;
 
@@ -3607,29 +3576,20 @@ static void R_MergeLeafSurfaces(world_t *worldData)
 			numSurfsToMerge++;
 		}
 
-		if (numVerts == 0 || numIndexes == 0 || numSurfsToMerge < 2)
+		if (numVerts == 0 || numIndexes == 0)
 		{
 			continue;
 		}
 
-		// create ibo
-		ibo = tr.ibos[tr.numIBOs++] = (IBO_t*)ri.Hunk_Alloc(sizeof(*ibo), h_low);
-		memset(ibo, 0, sizeof(*ibo));
-		numIboIndexes = 0;
-
-		// allocate indexes
-   		iboIndexes = outIboIndexes = (glIndex_t*)Z_Malloc(numIndexes * sizeof(*outIboIndexes), TAG_BSP);
+		std::vector<glIndex_t> indexes;
+		indexes.reserve(numIndexes);
 
 		// Merge surfaces (indexes) and calculate bounds
 		ClearBounds(bounds[0], bounds[1]);
-		firstIndex = numIboIndexes;
-		for (j = i; j < numWorldSurfaces; j++)
+		for (j = i; j >= 0; j = nextMember[j])
 		{
 			msurface_t *surf2;
 			srfBspSurface_t *bspSurf;
-
-			if (worldData->surfacesViewCount[j] != i)
-				continue;
 
 			surf2 = worldData->surfaces + j;
 
@@ -3639,10 +3599,8 @@ static void R_MergeLeafSurfaces(world_t *worldData)
 			bspSurf = (srfBspSurface_t *) surf2->data;
 			for (k = 0; k < bspSurf->numIndexes; k++)
 			{
-				*outIboIndexes++ = bspSurf->indexes[k] + bspSurf->firstVert;
-				numIboIndexes++;
+				indexes.push_back(bspSurf->indexes[k] + bspSurf->firstVert);
 			}
-			break;
 		}
 
 		vboSurf = (srfBspSurface_t *)ri.Hunk_Alloc(sizeof(*vboSurf), h_low);
@@ -3650,20 +3608,14 @@ static void R_MergeLeafSurfaces(world_t *worldData)
 		vboSurf->surfaceType = SF_VBO_MESH;
 
 		vboSurf->vbo = vbo;
-		vboSurf->ibo = ibo;
+		vboSurf->ibo = R_CreateIBO((byte*)indexes.data(), numIndexes * sizeof(glIndex_t), VBO_USAGE_STATIC);
 
 		vboSurf->numIndexes = numIndexes;
 		vboSurf->numVerts = numVerts;
-		vboSurf->firstIndex = firstIndex;
-
-		vboSurf->minIndex = *(iboIndexes + firstIndex);
-		vboSurf->maxIndex = *(iboIndexes + firstIndex);
-
-		for (j = 0; j < numIndexes; j++)
-		{
-			vboSurf->minIndex = MIN(vboSurf->minIndex, *(iboIndexes + firstIndex + j));
-			vboSurf->maxIndex = MAX(vboSurf->maxIndex, *(iboIndexes + firstIndex + j));
-		}
+		vboSurf->firstIndex = 0;
+		const auto range = std::minmax_element(indexes.begin(), indexes.end());
+		vboSurf->minIndex = *range.first;
+		vboSurf->maxIndex = *range.second;
 
 		VectorCopy(bounds[0], vboSurf->cullBounds[0]);
 		VectorCopy(bounds[1], vboSurf->cullBounds[1]);
@@ -3677,41 +3629,24 @@ static void R_MergeLeafSurfaces(world_t *worldData)
 		mergedSurf->cubemapIndex  = surf1->cubemapIndex;
 		mergedSurf->shader        = surf1->shader;
 
-		// finish up the ibo
-		qglGenBuffers(1, &ibo->indexesVBO);
-
-		R_BindIBO(ibo);
-		qglBufferData(GL_ELEMENT_ARRAY_BUFFER, numIboIndexes * sizeof(*iboIndexes), iboIndexes, GL_STATIC_DRAW);
-		R_BindNullIBO();
-
-		GL_CheckErrors();
-
-   		Z_Free(iboIndexes);
-
-		// redirect view surfaces to this surf
-		for (j = 0; j < numWorldSurfaces; j++)
-		{
-			if (worldData->surfacesViewCount[j] != i)
-				continue;
-
-			for (k = 0; k < worldData->nummarksurfaces; k++)
-			{
-				int *mark = worldData->marksurfaces + k;
-				int *view = worldData->viewSurfaces + k;
-
-				if (*mark == j)
-					*view = -(mergedSurfIndex + 1);
-			}
-		}
-
+		mergedForGroup[i] = mergedSurfIndex;
+		numUnmergedSurfaces -= numSurfsToMerge;
 		mergedSurfIndex++;
 		mergedSurf++;
 	}
 
+	worldData->numMergedSurfaces = mergedSurfIndex;
+	for (k = 0; k < worldData->nummarksurfaces; ++k)
+	{
+		const int mark = worldData->marksurfaces[k];
+		const int group = (unsigned)mark < (unsigned)numWorldSurfaces ? worldData->surfacesViewCount[mark] : -1;
+		const int merged = group < 0 ? -1 : mergedForGroup[group];
+		worldData->viewSurfaces[k] = merged < 0 ? mark : -(merged + 1);
+	}
 	endTime = ri.Milliseconds();
 
 	ri.Printf(PRINT_ALL, "Processed %d surfaces into %d merged, %d unmerged in %5.2f seconds\n",
-		numWorldSurfaces, numMergedSurfaces, numUnmergedSurfaces, (endTime - startTime) / 1000.0f);
+		numWorldSurfaces, mergedSurfIndex, numUnmergedSurfaces, (endTime - startTime) / 1000.0f);
 
 	// reset viewcounts
 	for (i = 0; i < numWorldSurfaces; i++)

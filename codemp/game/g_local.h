@@ -1394,6 +1394,7 @@ void G_WriteSessionData( void );
 //
 // NPC_senses.cpp
 //
+extern void G_ForgetAlertOwner(gentity_t *owner);
 extern void AddSightEvent( gentity_t *owner, vec3_t position, float radius, alertEventLevel_e alertLevel, float addLight ); //addLight = 0.0f
 extern void AddSoundEvent( gentity_t *owner, vec3_t position, float radius, alertEventLevel_e alertLevel, qboolean needLOS ); //needLOS = qfalse
 extern qboolean G_CheckForDanger( gentity_t *self, int alertEvent );

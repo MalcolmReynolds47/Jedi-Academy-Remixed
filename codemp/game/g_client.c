@@ -3917,6 +3917,7 @@ void ClientDisconnect( int clientNum ) {
 		return;
 	}
 
+	G_ForgetAlertOwner(ent);
 	i = 0;
 
 	while (i < NUM_FORCE_POWERS)

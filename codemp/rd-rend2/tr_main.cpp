@@ -1917,6 +1917,9 @@ static void R_AddEntitySurface(const trRefdef_t *refdef, trRefEntity_t *ent, int
 	if ( (ent->e.renderfx & RF_FIRST_PERSON) && (tr.viewParms.flags & VPF_NOVIEWMODEL)) {
 		return;
 	}
+	if (tr.viewParms.portalMonitor && JAR_PortalCameraAtEye(&ent->e, tr.viewParms.ori.origin)) {
+		return;
+	}
 
 	// simple generated models, like sprites and beams, are not culled
 	switch ( ent->e.reType ) {

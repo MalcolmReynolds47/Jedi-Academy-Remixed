@@ -205,13 +205,23 @@ qboolean JAR_MP_ActorThink(gentity_t *e,usercmd_t *cmd){
   EndActor(n,qfalse);return qfalse;
  }
  playerState_t *ps=&e->client->ps;
- ps->pm_type=PM_FREEZE;ps->groundEntityNum=ENTITYNUM_NONE;VectorClear(ps->velocity);VectorClear(ps->moveDir);
+ ps->groundEntityNum=ENTITYNUM_NONE;VectorClear(ps->velocity);VectorClear(ps->moveDir);
  if(ActorVehicle(e))VehicleStop(e);
- else {ps->forceHandExtend=HANDEXTEND_CHOKE;ps->forceHandExtendTime=level.time+200;}
- if(!ActorVehicle(e)&&e->localAnimIndex<=1){
-  G_SetAnim(e,NULL,SETANIM_BOTH,BOTH_CHOKE3,SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD,0);
-  ps->legsTimer=ps->torsoTimer=200;a->posed=qtrue;
+ else {
+  ps->forceHandExtend=HANDEXTEND_CHOKE;ps->forceHandExtendTime=level.time+200;
+  if(e->localAnimIndex>=0&&e->localAnimIndex<=1){
+   if(ps->legsAnim!=BOTH_CHOKE3||ps->torsoAnim!=BOTH_CHOKE3){
+    // The native animation starters reject PM_FREEZE. Set the pose in the
+    // saved movement mode before freezing the actor for this command.
+    ps->pm_type=a->pmType;
+    G_SetAnim(e,NULL,SETANIM_BOTH,BOTH_CHOKE3,SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD,0);
+   }
+   if(ps->legsAnim==BOTH_CHOKE3&&ps->torsoAnim==BOTH_CHOKE3){
+    ps->legsTimer=ps->torsoTimer=200;a->posed=qtrue;
+   }
+  }
  }
+ ps->pm_type=PM_FREEZE;
  SetClientViewAngle(e,e->r.currentAngles);
  // Acknowledge commands while frozen so release never replays old movement.
  int time=cmd?cmd->serverTime:level.time;if(time>level.time+200)time=level.time+200;

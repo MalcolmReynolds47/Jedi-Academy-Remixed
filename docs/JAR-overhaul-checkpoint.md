@@ -51,15 +51,245 @@ work for multiplayer. The earlier single-player rope hold still applies.
 9. **Physgun NPC throws.** JA:R 1.338.0 advances a released, airborne NPC
    under ordinary gravity on every multiplayer server frame. The native
    movement code applies the release velocity and handles impacts, gravity
-   and landing. Normal AI steering resumes on landing.
+   and landing. Normal AI steering resumes on landing. JA:R 1.344.0 fixes
+   the missing humanoid grip animation and preserves a moving guest's throw
+   when release falls between aim packets.
 10. **NPC combat, movement and landings.** JA:R 1.339.0 gives ground-based
     ranged Sandbox NPCs clear-shot aiming, pursuit and spacing. They can
     advance, back away, move around obstructions and follow a friendly
     spawning player while idle. Scripted tasks and specialized NPC behavior
     keep their native logic. NPC landings now apply damage based on impact
-    severity and honor the server's fall-damage setting.
+    severity and honor the server's fall-damage setting. In 1.345.0 NPCs
+    ignore passive props during enemy searches, and a follower can pass a
+    barricade to reach the player who spawned it. In 1.346.0 nearby player
+    gunfire also alerts hostile NPCs independently of the first player slot.
+    In 1.347.0 nearby props no longer truncate the NPC's search for targets.
 
 [November 17 multiplayer audit](JAR-multiplayer-audit-2026-11-17.md): verified release state, reproduced defects, test coverage, and recommended follow-up.
+
+## Multiplayer NPCs following around scenery
+
+In 1.344.0 a rebel following either the host or the joined player fired at
+a row of seven frozen crates and stopped 653 units short of its owner.
+The crates had a positive health value even though they could take no
+damage. Fixing the enemy search alone stopped the gunfire, but the
+follower then stalled at the wall, about 419 units from its owner.
+
+In 1.345.0 a grounded follower checks the face of the obstacle and keeps
+the same direction long enough to pass adjacent props. It checks ground
+and hull clearance at every step. On Flatgrass the rebel went around the
+end of the barricade for both owners. The two Classic clients recorded
+matching NPC positions at shared server times. The clear-path run also
+reached the owner. These cases use two processes on one computer.
+
+Run `scripts/test-mp-listen-crowd.py --npc-follow` with the staged MP
+package, retail game data, native snapshot reader and a fresh results
+directory. The scenario covers both owners, an unobstructed route and
+opposing riflemen fighting beside the same barricade.
+
+## Multiplayer NPC reactions to player gunfire
+
+In 1.345.0 a stormtrooper failed to respond to a joined player firing an
+E-11 behind it, with the listen host alive or dead and with slot zero vacant
+on a dedicated server. A player still in sight could be detected through
+the normal visual search. Ordinary blaster shots did not generate native
+sight or sound alerts, and the alert search depended on slot zero's health.
+
+In 1.346.0 nearby NPCs can hear a player's gunfire or see its muzzle
+flash, regardless of the shooter's slot. Ordinary firearms use the stock sound
+radius of 256 units and a sight radius twice that size. The disruptor uses
+50 and 100. NPCs still need a clear shot to fire. Scripted sense selection,
+faction rules, silent Sandbox tools and player notarget are preserved.
+Alert expiry, overflow and actor removal keep event IDs stable for listeners.
+
+The repeatable `scripts/test-mp-listen-crowd.py --npc-alerts` scenario
+records the host and joined player's ordinary snapshots. It also starts a
+separate dedicated server, disconnects the first graphical client and repeats
+the shot with the remaining player in slot one. A friendly rebel and a player
+using notarget provide controls. With a row of crates between the actors,
+the test measures the trooper turning and moving around cover, and checks
+the firing flag while the crates screen its shot. Native tests exercise sight
+and hearing separately, including occlusion, range, priority, full-queue
+eviction, simultaneous expiry and reuse of an actor slot. Testing between
+separate computers remains open.
+
+## Multiplayer target selection in prop-heavy worlds
+
+In 1.346.0 two hostile NPCs still fought each other with 320 frozen props
+above the firing lane. With two eligible players to choose from, the same
+scene exposed a different defect. A stormtrooper picked the nearer guest
+at 0 and 192 props, then fired exclusively at the farther host at 320.
+With 512 props, swapping player positions made it shoot the farther guest.
+The engine returned the first 256 nearby entities in spatial sector order.
+Scenery could fill that list before it reached the nearer player.
+
+In 1.347.0 enemy acquisition reads the complete spatial query into reusable
+storage sized for the engine's entity slots. It still filters factions,
+notarget, range, field of view and line of sight. Once it finds an eligible
+visible enemy it skips visibility checks for farther candidates. The
+`scripts/test-mp-listen-crowd.py --npc-targets` scenario compares real
+listen-host and guest recordings at 0, 192, 320 and 512 props. It tests both
+players in the nearer position and a nearer player who opts out with
+notarget. In a separate four-minute Flatgrass fight, the server saved all
+96 NPCs and 16 props after an extra spawn and Undo. Host and guest agreed
+on all 9,857 shared snapshots, including momentary changes to the visible
+roster on lower ground. A three-NPC control confirmed that an observer on
+the upper platform and one below receive different actors across the map's
+visibility boundary while the server retains all three. The graphical host
+and guest ran on the same machine. Internet play on separate computers
+remains outstanding.
+
+## Multiplayer patrols and combat squads
+
+In 1.342.0, multiplayer NPCs only merge into occupied squads of their own
+faction with the same enemy. Idle patrols must still pass the native range
+and map visibility checks.
+NPCs that change faction leave their previous roster on the next squad update.
+Groups can fill the last ordinary squad seat on a merge without exceeding the
+existing size limit. This builds on priorities 1 and 10.
+
+The repeatable `scripts/test-mp-server.py --network-crowd` scenario takes the
+usual build and game-data arguments. It puts 48 rebels, 48 stormtroopers and
+16 simulated props in one arena. The second client joins after shooting has
+begun. Both must keep receiving the same NPCs and props for 30 simulated
+seconds and see them disappear after cleanup. The wire probe requests full
+snapshots and records their arrival intervals in server time.
+
+On Flatgrass, a graphical listen host and a second graphical client on the
+same machine recorded the fight with the staged Classic renderer. The guest
+joined after combat began. At matching server times the recordings agreed
+on NPC and prop identifiers, flags and positions, including the extra prop
+spawn, its Undo, and cleanup. Both saw an injured NPC already on the map,
+a new fall from 650 units that left 22 of 50 health, and a lethal fall from
+1,800 units. The guest saw an authorized armor edit and could still edit
+their own player when the server disabled remote edits. Both player opt-out
+and server policy blocked the host from editing the guest.
+
+Run `scripts/test-mp-listen-crowd.py` with the retail GameData directory,
+staged MP package, `jar_mp_snapshot_tests` executable and a fresh results
+directory. Use `--interactions` for falls and player permissions. The
+crowd run records both perspectives and samples host server work, process
+memory and snapshot intervals. A friend connecting from a second machine
+over the Internet remains an open check.
+
+## Multiplayer crowd snapshot delivery
+
+In 1.342.0, a Flatgrass host and guest running at 40 server ticks per second
+both received updates a median of 75 ms apart with 384 live NPCs and 16 props.
+Small local snapshots got the next server frame. A fragmented snapshot
+could take several frames because each remaining piece was scheduled
+separately, with an additional network rate delay.
+
+In 1.343.0, an active listen host and clients covered by the server's LAN
+override can receive up to four fragments per frame. Larger messages
+continue on subsequent frames. Downloads and clients using ordinary network
+rate limits use their existing scheduler. The message and demo formats are
+unchanged.
+
+In the staged Windows build the two recordings agreed at 1,410 server times
+during 35.6 simulated seconds with 384 live NPCs and 16 props. Both clients
+received a median update every 25 ms at 192 and 384 NPCs. Both saw the
+additional NPC appear and disappear on Undo, then saw the crowd disappear
+on cleanup. These same-machine measurements used the Classic renderer.
+
+The graphical `scripts/test-mp-listen-crowd.py --crowd-scale` scenario
+records both players during 35-second fights at 192 and 384 NPCs and then
+spawns and undoes an additional NPC. The `--crowd-scale-paced` variant
+sets the UDP guest to 25,000 bytes per second with the LAN override off.
+Both runs compare NPC identities, flags and positions, Undo, cleanup and
+the time between snapshots.
+
+In a 1.349.0 replay, both players briefly lost visibility of the same NPC
+under the Flatgrass platform. It returned in the same slot at a height of
+−488 before the spawn and Undo. The crowd check records opening visibility
+changes for up to three seconds and requires every missing NPC to return
+alive below the platform. It then requires at least 30 continuous seconds
+of full crowd visibility for both players, followed by the extra spawn,
+its Undo and complete cleanup. A missing prop or mid-fight roster change
+still fails the test.
+
+In two later 384-NPC listen-server fights on 1.349.0, disabling entity
+drawing only on the host reduced the guest's 95th-percentile snapshot gap
+from 75 to 50 ms in one fight and from 50 to 25 ms in the other. The guest
+kept drawing the fight, and all 384 NPCs and 16 props remained on the
+server. Each setting ran for eight seconds in opposite orders across the
+two fights. The host renderer's 95th-percentile work fell from 18–19 ms
+to 1–2 ms.
+This experiment used an isolated profile. Players kept their normal rendering
+settings.
+
+In 1.350.0 the Classic multiplayer renderer reuses each bone transform
+within a mesh surface and calculates groups of vertex colors together.
+It evaluates bones in their original order and keeps the same models,
+poses and detail settings. An instrumented replay of a 384-NPC fight
+compared 217,541,000 posed vertices and 217,807,240 lit vertices across
+520 frames. Every position, normal and color matched the original math.
+The crowd test accepts a recorded fight via `--crowd-timedemo` so future
+renderer changes can be measured against the same sequence.
+
+On the same computer at 800 × 600, the 832-frame replay ran at a median
+of 51.1 FPS with the 1.349.0 Classic renderer and 64.5 FPS with 1.350.0.
+Three runs per renderer used the same packaged 1.350.0 client and demo.
+Mean renderer backend time after warm-up fell from 12.75 to 9.24 ms.
+
+Four listen-server fights changed only the host renderer and kept the guest
+on the previous renderer. Both clients agreed on the visible entities and
+their states at every common snapshot. At 384 NPCs, the guest's 95th-percentile
+snapshot gaps were 75 and 75 ms with the old host renderer, and 75 and 50 ms
+with the new one. The two new-renderer runs failed the continuous-visibility
+check when NPCs below the Flatgrass platform disappeared from both clients.
+Both clients saw the extra spawn, its Undo and cleanup. A separate physical
+client and Internet play remain open checks.
+
+## Multiplayer Physgun holds and throws
+
+On 1.343.0 a listen host and a connected guest recorded 202 shared held-NPC
+snapshots across their two throws. None showed the stock grip pose. In the
+guest's throw the trooper moved 41 units horizontally during the swing,
+then dropped straight down. The animation starters were receiving an actor
+whose movement had already been frozen. Release velocity used only the last
+server frame, which could have the same aim as the preceding frame.
+
+In 1.344.0 the server applies the native grip pose to humanoids before
+freezing movement. It measures the on-foot actor's actual displacement
+over the preceding 100 ms. When a frame gets no movement, the last measured swing
+velocity is held for up to 100 ms. A blocked trace discards earlier motion.
+Parking or re-grabbing the actor clears the old momentum.
+Vehicles keep their existing movement calculations.
+
+The graphical `scripts/test-mp-listen-crowd.py --physgun-throws` scenario
+records the host and guest on Flatgrass. It compares the trooper's pose,
+trajectory, health and return to combat, and checks both players' release
+paths. The guest also throws with outgoing input capped at 20 packets per
+second. Internet play and the feel of a physical mouse remain owner checks.
+
+On the staged 1.344.0 build, the host, guest and capped guest threw the NPC
+349, 182 and 454 units horizontally. The two clients agreed on position,
+pose and landing, and the NPC resumed firing in all three cases. A stock
+30-health trooper kept its health during the stationary holds. The combat
+checks raised its health through Context so it could survive hard landings.
+Both players stayed at 100 health when held. The player who opted out moved
+54 units before the holder released the trigger.
+
+## Multiplayer support on props and moving platforms
+
+On Flatgrass in staged 1.342.0, a connected player stood on an unfrozen
+Box3D supply crate, jumped and landed back on it. The same player rode a
+bobbing crate through 24 units of vertical travel and a vertical lift through
+a 128-unit ascent and return. Both players' recordings agreed on the
+supporting entity, platform position and jump transitions at each shared
+server time. The host's screenshots show the rider moving with each deck.
+
+Use `scripts/test-mp-listen-crowd.py --platforms` with the usual graphical
+test arguments to repeat the three rides. The test uses a Classic listen
+host and a second client on one machine.
+
+The companion `--vehicle-lift` check puts a guest on a stock Swoop over the
+grate. The host activates the lift and observes the pilot and vehicle. Both
+recordings showed the same mounted player and vehicle positions throughout
+the 128-unit ascent and return. The driver dismounted with USE. The host's
+Undo was refused while the Swoop was occupied. Once the driver dismounted,
+Undo removed the Swoop on both clients and left the lift in place.
 
 ## Multiplayer NPC Undo crash
 
@@ -185,7 +415,60 @@ budget is full. The map's own portal or mirror keeps its view.
 
 The Classic and Rend2 renderer tests cover matching screens, different
 camera views, offscreen panels, failed renders, and fallback materials.
-In-game camera output and frame timing remain open.
+The multiplayer test below covers four live feeds. Single-player camera
+output and frame timing still need in-game testing.
+
+### Multiplayer portal screens
+
+In 1.347.0 a multiplayer server accepted a 1,152-unit-wide screen and a
+12-unit-high screen, but both clients could see through them when powered.
+Classic also showed dark gray sky at the default size. The sky was present
+in the draw list, but Classic skipped it because the main view had already
+drawn its sky into a different framebuffer.
+
+JA:R 1.348.0 uses the server's size rules in both multiplayer renderers.
+Classic draws the monitor's sky and uses the same camera field of view for
+culling and projection. Both renderers omit the housing at the active lens.
+A separate camera standing in its field of view remains visible.
+
+Rend2 also dropped triangles when merging map faces. It counted the whole
+group, uploaded indices for only its first face, then drew the full count.
+Merging now follows the actual members, includes their bounds and indices,
+and redirects each leaf only after the combined draw is ready. Flatgrass
+ground in a wide camera view is checked against the original unmerged faces.
+In three ordinary `gm_construct` views, 18–83% of sampled pixels in
+1.347.0 differed from the unmerged reference by over 30 levels in at
+least one RGB channel. The same views in 1.348.0 were below 0.05%.
+Three views on the stock `mp/ffa3` map also stayed below 0.05%.
+
+The `--portal-screens` graphical test starts a Classic listen host, loads
+a linked panel, then joins with a Rend2 client. On Flatgrass it points
+the camera at the ground and the sky, powers the panel off, and repeats
+at 128×192, 1152×192 and 128×12 units. It checks pixels inside the screen
+and the silhouette of a second camera against the sky. The test uses one
+computer.
+
+The `--camera-feeds` test uses six screens and five cameras on Flatgrass.
+The Classic host starts with four live camera views before a Rend2 player
+joins. Both players see the same sequence as individual cameras switch
+between sky and ground. The lower-coverage fifth camera stays dark while
+a second screen using an active camera still shows its picture.
+Powering off a larger screen through the multiplayer Context property
+gives the fifth camera its slot. Restoring power returns the slot to the
+larger screen with all eleven objects still present. Each test checks
+102 screen interiors across seventeen screenshots.
+
+The test samples engine work with zero, one and four feeds. In 1.348.0,
+enabling `com_speeds` after the frame began could report milliseconds since
+startup as a single frame. In one listen-host run that reading reached
+48,211 ms. Version 1.349.0 starts sampling on the next complete frame.
+
+On one RTX 4080 SUPER with both players at 800×600 and a 60 FPS cap,
+the Classic host averaged 1.04 ms of engine work per frame with the
+screens off, 1.73 ms with one feed and 2.20 ms with four. The Rend2
+client averaged 0.96, 1.16 and 1.72 ms respectively. Each result covers
+538 frames. This timer excludes the frame limiter. Testing across two
+physical machines remains open.
 
 ## Single-player NPC patrol routes
 
@@ -745,8 +1028,9 @@ JA:R 1.254 gave up to four visible portable camera screens their own
 256×256 camera feed in SP and MP, in Classic and Rend2. Camera feeds
 and the map's mirror or portal can render in the same view. As of 1.288,
 the four slots are allocated to distinct visible views, and matching
-screens share a feed. In-game camera output and the frame cost of four
-live feeds remain open.
+screens share a feed. The multiplayer results are recorded under
+[Multiplayer portal screens](#multiplayer-portal-screens). Single-player
+output and frame timing still need in-game testing.
 
 ## Portable map section pickup placement
 
@@ -10230,7 +10514,7 @@ These receipt notes leave the immutable package and installed docs unchanged.
 | TOOL-DUP | Duplicate | Implemented owned assemblies, helpers, links and supported properties; owner accepted (24). Campaign scripts and native AI start fresh. SP 1.241 preserves mounted charges and their arming and timing. SP 1.242 copies deployed shields alone or with physically linked assemblies, retaining health, active or lowered state and expiry. SP 1.246 pastes standalone player-planted charges on clear world geometry with native arming and timers. SP 1.252 preserves qualified world anchors and mounted thrusters on copyable native map models. SP 1.259 preserves pending Welder pulses and Laser Arm bursts. Existing save records carry their native data. Live firing, visuals and full save/reload remain open. |
 | TOOL-THRUST | Thruster | Implemented prop/native force, mover translation and non-actor torque. Owner accepted the original tool (25). The later housing request is implemented in both modes. 1.181 adds selectable force direction for new mounts in SP and MP. 1.251 adds SP Context edits and Revert for force, power and direction on existing mounts. 1.274 applies SP mount force on native vehicle movement for empty and settled occupied hulls, with separate saved drift and retained seat relationships. Interactive verification remains open. |
 | TOOL-THRUST-FALLBACK | Make Thruster torque consistent for asymmetric props using native physics | 1.301 computes free-prop torque from local model extents and the world-space bounds center. Unheld fallback rotation keeps that center fixed, sweeps the adjusted body and mounted charges, and retains linear velocity. Linked assemblies use the entity-origin convention of the native constraint solver. Native tests cover centered and off-center thrust, rollback, center-preserving rotation and a world weld. Gameplay verification remains open. |
-| SB-PORTAL-MONITORS | Show live portal camera views on the most prominent portable screens | In 1.302, Classic and Rend2 allocate the four distinct camera feeds by clipped viewport coverage. Screens with the same camera pose and aspect ratio share a feed. Mirrors keep a separate view. Offscreen panels and unsuccessful captures leave room for the next candidate. Native renderer fixtures cover both selection paths. In-game display and frame timing remain open. |
+| SB-PORTAL-MONITORS | Show live portal camera views on the most prominent portable screens | Classic and Rend2 assign four distinct feeds by visible screen area. Matching views share a feed, and map mirrors use a separate view. Native fixtures cover offscreen panels and failed captures. The [multiplayer graphical test](#multiplayer-portal-screens) measures frame work and checks late joining, sharing, overflow and live power changes. Single-player gameplay and frame timing remain open. |
 | CTX-PORTAL-LINKS | Show and edit single-player portal camera and aim links | 1.303 adds live target and camera power feedback, Clear link and lifetime-checked Context Revert for Primary Link and Clear link. Property Revert detects conflicting changes. Activation loop checks distinguish camera and aim links from Use outputs. Native saved fields and clipboard wiring retain their format. In-game interaction and full save/reload remain open. |
 | SB-FORCE-BOON | Restore the retail Force Boon as a single-player pickup | 1.304 registers the native map classname and adds a Q Entities card with the stock model, icon and sound. The 25-second pickup extends an active timer, reduces Force costs and restores six points per normal recharge tick. The timer uses a spare native powerup slot in the existing save layout. Tatooine FFA, Taspir and other sections still require their remaining adapters. In-game pickup and save/reload remain open. |
 | CTX-FORCE-BOON | Edit the duration of a spawned single-player Force Boon | 1.305 exposes whole seconds in Context Properties and uses the retail default at zero. Revert checks the native item and applied duration. Duplication and saves carry the native count. Final item setup uses the selected definition for bounds, amount and item ID, including definitions beyond a missing slot in the table. In-game editing and full save/reload remain open. |
@@ -10291,8 +10575,8 @@ These receipt notes leave the immutable package and installed docs unchanged.
 | SB-WALL | Spawnable switchable wall | 1.83 adds the stock stone wall panel in both modes, model bounds, a nonblocking gizmo when off, blocked reactivation with retryable Undo, activation settings and copy/save persistence. Graphical and SP full-save gameplay confirmation remain open. |
 | SB-DOOR | Spawnable sliding door | Stock panel, configurable motion, obstruction handling, linked Opened/Closed outputs, native save/clipboard state and motor audio are implemented in SP and MP. Graphical gameplay and full interactive SP save/reload remain open. |
 | SB-BUTTON | Spawnable momentary button | Stock animated Imperial switch, two links, hold/activation controls, Undo, copying and saved phase in SP and MP. Visual gameplay and full interactive SP save/reload remain open. |
-| SB-LIFT | Spawnable vertical lift | Stock grate and sounds, on-foot rider, loose cargo and supported occupied vehicle transport, atomic obstruction handling, Context/Undo, Raised/Lowered links and saved progress in SP and MP. Occupied carriage passes controller fixtures and a dedicated two-client Swoop test. Rendered riding and interactive SP saves remain open. |
-| SB-BOBBING | Spawnable bobbing mover | MP 1.92 and SP 1.93 use the stock crate hull, shared vertical motion math, swept rider and cargo movement, and Context amplitude, cycle length, pause/resume, and enabled controls. Undo preserves phase. Duplicate and native saves restore the pose and phase, and SP legacy owned bobbers migrate at the saved pose. Rendered movement and interactive SP save/reload remain open. |
+| SB-LIFT | Spawnable vertical lift | Stock grate and sounds, on-foot rider, loose cargo and supported occupied vehicle transport, atomic obstruction handling, Context/Undo, Raised/Lowered links and saved progress in SP and MP. Occupied carriage passes controller fixtures and a dedicated two-client Swoop test. A Classic MP listen host and guest verified a full on-foot ascent, return and jump back onto the deck. The listen host and a connected Swoop driver also verified the full vehicle ride, dismount and occupied Undo protection. Interactive SP saves remain open. |
+| SB-BOBBING | Spawnable bobbing mover | MP 1.92 and SP 1.93 use the stock crate hull, shared vertical motion math, swept rider and cargo movement, and Context amplitude, cycle length, pause/resume, and enabled controls. Undo preserves phase. Duplicate and native saves restore the pose and phase, and SP legacy owned bobbers migrate at the saved pose. A Classic MP listen host and guest verified the rider through 24 units of vertical travel. Interactive SP movement and save/reload remain open. |
 | SB-CAT | Broad retail and map-specific/unused spawn catalog | Partial: 1,199 SP cards (including nineteen additional map-section variants), zero listed unavailable cards, 29 owner-approved exclusions (21 empty helpers, seven missing-content cards and terrain). Of the original 182 unavailable entries, 154 have routes and 28 were excluded; 204 of 211 entity classes are routed and seven excluded. MP 1.177 has 1,135 catalog entries, including all thirteen single-player Map Sections, both movement markers, the Directional trigger, both portable portal cards, Spinner and Pendulum. SP 1.133 adds Hoth Canyon as the eighth portable stock section, with eight wind emitters and the original canyon fall volume. SP 1.134 routes the retail Hoth backdrop through a room-owned camera in Classic and Rend2. Retail PVS and camera-submission fixtures cover area and instance isolation; rendered acceptance remains open. SP 1.135 adds Imperial Shaft as the ninth portable stock section, including both native lifts, their isolated floor triggers, the fall volume and the six scaled scenery models. Mid-travel rebase and native field serialization are fixture-verified; in-game lift riding, rendering and full save/load remain open. SP 1.136 adds Rift Sanctuary as the tenth portable stock section, with 38 room-owned respawning pickups and both fall triggers. The compound trigger preserves the gap between its brushes. Stock anchor and native lifecycle checks pass. 1.149 restores cold breath in the stock playable BSP area. 1.150 adds room-local character and camera fog in Classic and Rend2. 1.152 adds Korriban FFA as the eleventh portable stock section, including 17 entry points, eight fall triggers, 47 respawning pickups, 28 torches, seven wind emitters and room-local fog. 1.154 adds Yavin Training Grounds as the twelfth portable stock section, with 16 starts, 30 saber-only breakables, 51 scenery models, 16 damage torches, 74 dust emitters driven by the local retail timer, and a detached sky backdrop in Classic and Rend2. Cross-boundary fog, rendered gameplay, and full save/load remain open. 1.73 adds the E-11 shooter and map-model cards. 1.75 adds the native location marker/volume and skeletal map prop. Restored retail actors, vehicles, pickups, rail/camera/sky/weather/reference and other portable controllers retain their documented native and asset checks; new behavior, rendered interaction and full-save acceptance remain separate. BSP collision/render registration, lighting/fog/grid resource ownership, native child ownership/core named-reference isolation, synchronous spawn-allocation rollback, V41 resource-identity restore, and section-frame doors/buttons/platforms/bobbing with oriented automatic triggers, plus rotating/pendulum world-axis paths with rider/Physgun/save handling and an opt-in content/resource admission gate and first usable stock Vjun section controller are implemented. The fixed section retains all 60 children, 17 local entry points and four sound emitters; placement, child transform updates, independent reconstruction and cleanup have native fixture coverage. Remaining BSP work: broader admission, other class-specific geometry, direct named filters and script/camera/reference/navigation isolation, arbitrary section state/copy adapters, actor/view fog and complete gameplay/save acceptance. Terrain was explicitly excluded and hidden with owner approval on 2026-10-12; the disabled legacy system is not replaced. Listings are not completion, and no further exclusions are inferred. Historical release evidence above records each family and its validation boundaries.  MP 1.24 adds Give/Score/Kill and 18 native pickups. Three legacy neutral-flag/Harvester records lack retail models and remain open for adapters, not owner-excluded.  1.25 adds portable native Repeat/Once/Hurt trigger volumes, filters, context outlines and JRW15 pending/spent-state persistence; feature 37.  1.26 adds native MP push/teleport volumes, typed destinations, context controls, four-family vehicle/seat routes and JRW16 state; dynamic-volume client prediction and Box3D-prop pushes remain open. 1.27 adds prop push-volume contacts, real Box3D/fallback velocity and JRW16 motion restoration; feature 39. Earlier Box3D-push gap is implemented; dynamic-volume prediction and live acceptance remain open. 1.28 adds five usable native station families with charge/recharge context properties and JRW17 cooldown persistence, feature 40. 1.29 adds portable MP func_usable with native toggle/button/health callbacks, dormant physics/attachments and JRW17 pending-state persistence, feature 41; authored shader-animation and brush-specific behavior remain open. 1.30 adds three model-backed MP breakables with health/damage/effects, linked actions, dormant broken state, repair and JRW17 timers, feature 42; detailed authored-map variants remain open. 1.31 adds player prediction for portable push volumes, shared rotated geometry/aim, replay-local wait/once state, authoritative consent masks and same-frame prop cooldown publication; occupied-vehicle/teleport prediction and remote gameplay acceptance remain open, feature 43. 1.32 implements occupied-vehicle push prediction with separate pilot permission masks, native hull contact and retained momentum; four-family server/client, replay, seat-policy and codec fixtures pass. Portable teleport prediction and real remote-client acceptance remain open, feature 44. SP 1.45 qualifies Bespin Courtyard, Imperial Control Room and Rancor Pit alongside Vjun, with preserved local children, owned bobbing/torch adapters, registration preflight and incomplete-section rollback. Other section profiles, actual rendered play and full-save acceptance remain open. SP 1.46 qualifies Generator Room and Taspir Landing with proven stock hazard planes, exact sampled contact after rotation, native falling/timed damage and hazard-aware entry. Six stock sections are now usable through the menu; remaining profiles and rendered/full-save acceptance stay open. MP 1.47 adds the SP music controller with shared stock tracks, bringing MP to 1,042 choices. MP 1.50 adds exact stock admission and owned local points and speakers for Imperial Control Room. 1.49 adds Abandoned City, the seventh SP section, with 69 native breakable stone brushes, local wind and exact geometry admission. Rendered gameplay and full native save/load remain open. MP includes the stock explosive Cargo Barrel as of 1.57. MP includes a functional stock emplaced gun as of 1.58. MP includes the stock persistent E-Web as of 1.59. MP 1.60 adds directly spawnable stock exploding crates and gas tanks. 1.61 adds 20 curated prop cards and 14 direct native actor cards to MP. Kejim crate ID 1013 uses the byte-matched retail JA geometry and texture in SP and MP. 1.62 ports the three portable plasma, grenade and rocket shooters with linked aim and saved repeat timing. 1.63 ports the planted bomb and deployable beacon with stock animation and saved phase. 1.64 adds the small cargo crate with stock heavy-weapon break and medpack drop. 1.65 adds the gun rack with three stock, owned shelf pickups and saved collected slots. 1.66 adds the ammo rack with five stock pickups and persisted shelf state. 1.67 adds the stock Jabba door camera with its telescoping parts and saved pose. 1.68 adds the stock welder with native clipped sparks and consent-aware damage, Context settings and saved pulse timing. 1.69 adds the MP crystal crate and native misc_teleporter card. SP portable room geometry now goes through live snapshots at spawn and after loading an older save. In-game visibility remains to be checked. 1.70 centers new MP rooms on the aimed surface, includes visible rooms in Classic projection bounds, and gives each Rend2 brush instance independent surface submission. Owner-reported graphical visibility remains open. |
 | TOOL-ALL | Tools work on every entity, including players | Basic native/player manipulation and mixed Rope/Weld/Hinge/Thruster paths implemented. Remaining special controller cases and native integration acceptance open; 0.52 adds ordinary MP actor control; 0.56 adds empty vehicle holding/freezing/rotation and native hull validation. 0.57 adds native Rope/Thruster forces, consent and attachment cleanup. 0.61 adds MP Box3D; 0.62 adds anchored rigid ropes, mounted thruster torque and tool settings. 0.66 adds MP Weld/Hinge for rigid and native/mixed graphs, with copies, JRW5 and player consent. 0.72 adds occupied-vehicle Physgun/Freeze/context with rider consent, native seat attachment and client freeze prediction. 0.73.1 implements occupied Rope/Thruster/Weld/Hinge with horizontal momentum separate from steering and vertical forces sharing native gravity. 0.74.0 adds JRW6 persistence of commanded speed and horizontal external momentum, with legacy reads and production fixtures. Human occupied driving and full native-action parity remain open. |
 | TOOL-ROPE | Rope tool, including visible ropes | Partial: native/prop/player/world/mixed attachments and thick visible ropes implemented in both engines. 1.42 integrates SP scenery wrapping; 1.43 adds MP authoritative bends, replicated mesh, complete-path tension, bounded swept recovery, JRW18 persistence and copy rerouting/rollback. 1.89 adds routing around moving collision bodies, per-rope cache invalidation and temporary suspension when a body overlaps an anchor. 1.90 transfers taut-rope tension to eligible movable Sandbox props at bends, with Box3D mass and torque, freeze and hold checks, and MP edit permissions. 1.248 accounts for SP prop inertia at mixed or wrapped rope tie points and combines all bend impulses per prop. 1.250 adds Context length edits for individual attached ropes, with Revert and existing save/copy persistence. 1.260 adds independent bend offsets around staggered barriers. 1.261 adds a four-bend search for narrower offset openings and tests saved topology with the SP Workshop codec. 1.262 reduces tightening passes on retained bends and covers 32 moving ropes within the route budget in a native fixture. 1.267 finds six-bend routes through three alternating passages, retains the existing sweep limits and save format, and passes the native SP and MP fixtures and SP Workshop codec test. 1.268 finds eight-bend routes through four alternating passages and validates 180 native layouts, including rotated brushes, under the same limits and codec. Distributed rope mass, retained-route follow-ups, rendered gameplay, full in-game saves and representative remote/load acceptance remain open. The multiplayer length, tension and constraint regressions are in the priority backlog above. |

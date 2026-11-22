@@ -24,6 +24,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // tr_shade_calc.c
 
 #include "tr_local.h"
+#include "tr_diffuse.h"
 #include "../rd-common/tr_common.h"
 
 
@@ -1061,52 +1062,9 @@ void RB_CalcSpecularAlpha( unsigned char *alphas ) {
 */
 void RB_CalcDiffuseColor( unsigned char *colors )
 {
-	int				i, j;
-	float			*v, *normal;
-	float			incoming;
-	trRefEntity_t	*ent;
-	int				ambientLightInt;
-	vec3_t			ambientLight;
-	vec3_t			lightDir;
-	vec3_t			directedLight;
-	int				numVertexes;
-
-	ent = backEnd.currentEntity;
-	ambientLightInt = ent->ambientLightInt;
-	VectorCopy( ent->ambientLight, ambientLight );
-	VectorCopy( ent->directedLight, directedLight );
-	VectorCopy( ent->lightDir, lightDir );
-
-	v = tess.xyz[0];
-	normal = tess.normal[0];
-
-	numVertexes = tess.numVertexes;
-	for (i = 0 ; i < numVertexes ; i++, v += 4, normal += 4) {
-		incoming = DotProduct (normal, lightDir);
-		if ( incoming <= 0 ) {
-			*(int *)&colors[i*4] = ambientLightInt;
-			continue;
-		}
-		j = Q_ftol( ambientLight[0] + incoming * directedLight[0] );
-		if ( j > 255 ) {
-			j = 255;
-		}
-		colors[i*4+0] = j;
-
-		j = Q_ftol( ambientLight[1] + incoming * directedLight[1] );
-		if ( j > 255 ) {
-			j = 255;
-		}
-		colors[i*4+1] = j;
-
-		j = Q_ftol( ambientLight[2] + incoming * directedLight[2] );
-		if ( j > 255 ) {
-			j = 255;
-		}
-		colors[i*4+2] = j;
-
-		colors[i*4+3] = 255;
-	}
+	const trRefEntity_t& ent = *backEnd.currentEntity;
+	diffuse::Colors(colors, tess.normal, tess.numVertexes, ent.lightDir, ent.ambientLight,
+	                ent.directedLight, ent.ambientLightInt);
 }
 
 /*

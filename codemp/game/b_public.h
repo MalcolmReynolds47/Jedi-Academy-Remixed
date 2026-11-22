@@ -232,6 +232,8 @@ typedef struct
 	char		last_rightmove;
 	vec3_t		lastClearOrigin;
 	int			consecutiveBlockedMoves;
+	int			sandboxFollowSide;
+	int			sandboxFollowSideUntil;
 	int			blockedDebounceTime;
 	int			shoveCount;
 	vec3_t		blockedDest;

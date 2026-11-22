@@ -1226,57 +1226,34 @@ NPC_FindNearestEnemy
 -------------------------
 */
 
-#define	MAX_RADIUS_ENTS			256	//NOTE: This can cause entities to be lost
-#define NEAR_DEFAULT_RADIUS		256
-
 int NPC_FindNearestEnemy( gentity_t *ent )
 {
-	int			iradiusEnts[ MAX_RADIUS_ENTS ];
-	gentity_t	*radEnt;
-	vec3_t		mins, maxs;
-	int			nearestEntID = -1;
-	float		nearestDist = (float)WORLD_SIZE*(float)WORLD_SIZE;
-	float		distance;
-	int			numEnts, numChecks = 0;
-	int			i;
-
-	//Setup the bbox to search in
-	for ( i = 0; i < 3; i++ )
+	// The server visits spatial sectors in tree order. All linked scenery
+	// counts towards this query, including props that are never enemies.
+	// NPC evaluation is serial; keep the full query off the AI call stack.
+	static int candidates[MAX_GENTITIES];
+	vec3_t mins, maxs;
+	int nearest = -1;
+	float nearestDistance = (float)WORLD_SIZE * (float)WORLD_SIZE;
+	for (int axis = 0; axis < 3; ++axis)
 	{
-		mins[i] = ent->r.currentOrigin[i] - NPCS.NPCInfo->stats.visrange;
-		maxs[i] = ent->r.currentOrigin[i] + NPCS.NPCInfo->stats.visrange;
+		mins[axis] = ent->r.currentOrigin[axis] - NPCS.NPCInfo->stats.visrange;
+		maxs[axis] = ent->r.currentOrigin[axis] + NPCS.NPCInfo->stats.visrange;
 	}
 
-	//Get a number of entities in a given space
-	numEnts = trap->EntitiesInBox( mins, maxs, iradiusEnts, MAX_RADIUS_ENTS );
-
-	for ( i = 0; i < numEnts; i++ )
+	const int count = trap->EntitiesInBox(mins, maxs, candidates, ARRAY_LEN(candidates));
+	for (int i = 0; i < count; ++i)
 	{
-		radEnt = &g_entities[iradiusEnts[i]];
-		//Don't consider self
-		if ( radEnt == ent )
+		gentity_t *candidate = &g_entities[candidates[i]];
+		if (candidate == ent || (!candidate->client && !candidate->takedamage))
 			continue;
-
-		//Must be valid
-		if ( NPC_ValidEnemy( radEnt ) == qfalse )
+		const float distance = DistanceSquared(ent->r.currentOrigin, candidate->r.currentOrigin);
+		if (distance >= nearestDistance || !NPC_ValidEnemy(candidate) || !NPC_TargetVisible(candidate))
 			continue;
-
-		numChecks++;
-		//Must be visible
-		if ( NPC_TargetVisible( radEnt ) == qfalse )
-			continue;
-
-		distance = DistanceSquared( ent->r.currentOrigin, radEnt->r.currentOrigin );
-
-		//Found one closer to us
-		if ( distance < nearestDist )
-		{
-			nearestEntID = radEnt->s.number;
-			nearestDist = distance;
-		}
+		nearest = candidate->s.number;
+		nearestDistance = distance;
 	}
-
-	return nearestEntID;
+	return nearest;
 }
 
 /*
@@ -1284,6 +1261,11 @@ int NPC_FindNearestEnemy( gentity_t *ent )
 NPC_PickEnemyExt
 -------------------------
 */
+
+qboolean NPC_IsHostileAlertOwner(gentity_t *source)
+{
+	return source && source->client && NPC_ValidEnemy(source);
+}
 
 gentity_t *NPC_PickEnemyExt( qboolean checkAlerts )
 {
@@ -1309,10 +1291,14 @@ gentity_t *NPC_PickEnemyExt( qboolean checkAlerts )
 
 			if ( event->level >= AEL_DISCOVERED )
 			{
-				//If it's the player, attack him
-				//OJKFIXME: clientnum 0
-				if ( event->owner == &g_entities[0] )
+				// A heard shot gives the NPC its source position, even when the
+				// shooter is outside its field of view.
+				if (event->owner->s.number < level.maxclients && NPC_IsHostileAlertOwner(event->owner))
+				{
+					VectorCopy(event->position, NPCS.NPCInfo->enemyLastSeenLocation);
+					NPCS.NPCInfo->enemyLastSeenTime = level.time;
 					return event->owner;
+				}
 
 				//If it's on our team, then take its enemy as well
 				if ( ( event->owner->client ) && ( event->owner->client->playerTeam == NPCS.NPC->client->playerTeam ) )

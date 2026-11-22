@@ -660,55 +660,15 @@ void AI_GroupUpdateSquadstates( AIGroupInfo_t *group, gentity_t *member, int new
 	}
 }
 
+#include "g_jar_squad_merge.inc"
+
 qboolean AI_RefreshGroup( AIGroupInfo_t *group )
 {
 	gentity_t	*member;
 	int			i;//, j;
 
-	//see if we should merge with another group
-	for ( i = 0; i < MAX_FRAME_GROUPS; i++ )
-	{
-		if ( &level.groups[i] == group )
-		{
-			break;
-		}
-		else
-		{
-			if ( level.groups[i].enemy == group->enemy )
-			{//2 groups with same enemy
-				if ( level.groups[i].numGroup+group->numGroup < (MAX_GROUP_MEMBERS - 1) )
-				{//combining the members would fit in one group
-					qboolean deleteWhenDone = qtrue;
-					int j;
-
-					//combine the members of mine into theirs
-					for ( j = 0; j < group->numGroup; j++ )
-					{
-						member = &g_entities[group->member[j].number];
-						if ( level.groups[i].enemy == NULL )
-						{//special case for groups without enemies, must be in range
-							if ( !AI_ValidateNoEnemyGroupMember( &level.groups[i], member ) )
-							{
-								deleteWhenDone = qfalse;
-								continue;
-							}
-						}
-						//remove this member from this group
-						AI_DeleteGroupMember( group, j );
-						//keep marker at same place since we deleted this guy and shifted everyone up one
-						j--;
-						//add them to the earlier group
-						AI_InsertGroupMember( &level.groups[i], member );
-					}
-					//return and delete this group
-					if ( deleteWhenDone )
-					{
-						return qfalse;
-					}
-				}
-			}
-		}
-	}
+	if ( AI_MergeIntoEarlierGroup( group ) )
+		return qfalse;
 	//clear numStates
 	for ( i = 0; i < NUM_SQUAD_STATES; i++ )
 	{
@@ -896,12 +856,7 @@ void AI_UpdateGroups( void )
 	// Discard invalid members in every group before any merge runs.
 	for ( i = 0; i < MAX_FRAME_GROUPS; i++ )
 	{
-		AIGroupInfo_t *group = &level.groups[i];
-		for ( int j = group->numGroup - 1; j >= 0; j-- )
-		{
-			if ( !AI_LivingGroupMember( group->member[j].number ) )
-				AI_DeleteGroupMember( group, j );
-		}
+		AI_PruneSquadRoster(&level.groups[i]);
 	}
 	//Clear all Groups
 	for ( i = 0; i < MAX_FRAME_GROUPS; i++ )

@@ -35,6 +35,7 @@ parser.add_argument('--network-directional', action='store_true', help='Verify f
 parser.add_argument('--network-searchlight', action='store_true', help='Verify searchlight occlusion, private detection, and Undo on the native wire')
 parser.add_argument('--network-portals', action='store_true', help='Verify portable camera panel state and Undo on the native wire')
 parser.add_argument('--network-angular', action='store_true', help='Verify portable angular movers on the native wire')
+parser.add_argument('--network-crowd', action='store_true', help='Join a running 96-NPC fight with simulated props and compare client snapshots for 30 simulated seconds')
 parser.add_argument('--network-console-npcs', action='store_true', help='Verify native console NPC admission, overlap, Undo and cleanup')
 parser.add_argument('--wire-probe', type=Path, help='Path to jar_mp_transport_tests.exe for --network-clients')
 parser.add_argument('--vehicle-motion', action='store_true', help='Qualify JRW6 native vehicle momentum save/restore')
@@ -55,14 +56,15 @@ args = parser.parse_args()
 section_scenarios = (args.network_section, args.network_hazard_sections, args.network_city_section,
                      args.network_sentinel_section, args.network_hoth_section, args.network_rift_section,
                      args.network_shaft_section, args.network_korriban_section, args.network_yavin_section)
+interactive_scenarios = (args.network_directional, args.network_searchlight, args.network_portals,
+                         args.network_console_npcs, args.network_space, args.network_crowd)
 section_interaction = (args.network_sentinel_section or args.network_shaft_section or args.network_rift_section or
-                       args.network_korriban_section or args.network_yavin_section or args.network_directional or
-                       args.network_searchlight or args.network_portals or args.network_console_npcs or args.network_space)
-section_fixture = (any(section_scenarios) or args.network_directional or args.network_searchlight or
-                   args.network_portals or args.network_angular or args.network_console_npcs or args.network_space)
+                       args.network_korriban_section or args.network_yavin_section or any(interactive_scenarios))
+fixture_count = sum(section_scenarios) + sum(interactive_scenarios) + args.network_angular
+section_fixture = fixture_count > 0
 if args.network_lights or args.network_music or args.network_pure or args.network_movement or section_fixture:
     args.network_clients = True
-if sum(section_scenarios) + args.network_directional + args.network_searchlight + args.network_portals + args.network_angular + args.network_console_npcs + args.network_space > 1:
+if fixture_count > 1:
     parser.error('Run each open fixture scenario separately')
 if section_fixture and (args.network_music or args.network_lights):
     parser.error('Portable BSP scenarios use a separate open fixture map from the retail-map wire checks')
@@ -288,7 +290,7 @@ with (run / 'stdout.log').open('wb') as log:
                                   movement_markers=args.network_movement, directional_trigger=args.network_directional,
                                   searchlight=args.network_searchlight, portals=args.network_portals,
                                   angular=args.network_angular, console_npcs=args.network_console_npcs,
-                                  space_volume=args.network_space)
+                                  space_volume=args.network_space, crowd_session=args.network_crowd)
             if args.network_sentinel_section:
                 from mp_world_smoke import check_sentinel_journal
                 check_sentinel_journal(run, mod, rcon)

@@ -218,7 +218,7 @@ RE_AddRefEntityToScene
 =====================
 */
 #include "../../code/qcommon/jar_portal.h"
-#include "../../code/rd-common/tr_portal_submit.inc"
+#include "../rd-common/tr_portal_submit.inc"
 
 void RE_AddRefEntityToScene( const refEntity_t *ent ) {
 	if ( !tr.registered ) {

@@ -1,3 +1,45 @@
+# JA:R 1.350.0
+
+- The Classic multiplayer renderer takes less time to draw animated crowds. It resolves each bone once per mesh surface and processes vertex transforms and diffuse lighting in parallel on supported CPUs. Models keep their existing detail, animation and visibility.
+
+# JA:R 1.349.0
+
+- Multiplayer frame profiling starts with the first complete frame after enabling `com_speeds`. Turning it on during play could previously report time since game startup as a single frame.
+
+# JA:R 1.348.0
+
+- Multiplayer Portal Surfaces keep showing their linked camera when resized above 1,024 units or below 16 units. Both renderers accept the same dimensions as the server.
+- Classic draws the sky in portable camera feeds and uses the panel's proportions for its field of view. Both multiplayer renderers omit the camera housing at the lens while drawing its feed.
+- Fixed missing triangles in multiplayer Rend2 maps. When combining several map faces into one draw, Rend2 now uploads every face and uses their combined bounds. The defect was visible as holes in the ground on Flatgrass.
+
+# JA:R 1.347.0
+
+- Multiplayer NPCs can find the nearest visible enemy in a prop-heavy scene. A search considers the full area around the NPC and skips visibility traces for targets farther than an enemy it can already see.
+
+# JA:R 1.346.0
+
+- Multiplayer NPCs can hear a nearby player firing behind them, including a joined player while the first player is dead or disconnected. Sight and hearing follow their own range and visibility checks.
+- NPC alerts expire together when due. Removing an actor or disconnecting a player clears its alerts before the slot can be reused.
+
+# JA:R 1.345.0
+
+- Multiplayer NPCs ignore indestructible scenery when searching for enemies. A crate with health assigned by Sandbox no longer draws fire away from a player or hostile NPC.
+- Friendly Sandbox NPCs following a player can keep moving around a row of props when their direct path is blocked. They still check for solid ground before each step.
+
+# JA:R 1.344.0
+
+- The multiplayer Physgun plays the stock Force-grip pose when holding a humanoid NPC or player. Letting go restores the actor's previous animation and releases it with its throwing momentum.
+- Throwing an on-foot actor keeps the momentum of the swing when release falls between a guest's aim updates. Holding still or hitting a wall clears the old swing.
+
+# JA:R 1.343.0
+
+- Multiplayer hosts and clients using the server's LAN rate override now receive large crowd snapshots in batches of up to four fragments per server frame. This reduces the delay between updates during busy fights. Download and Internet rate limits still apply.
+
+# JA:R 1.342.0
+
+- Multiplayer NPCs no longer merge patrols or combat squads across factions, even when they share an enemy. NPCs that switch teams leave their old squad on its next update.
+- Squad merging skips empty slots after despawn. Nearby allied patrols can still merge, including when they exactly fill a squad.
+
 # JA:R 1.341.0
 
 - Multiplayer squads now use each NPC's own path to the enemy. Sorting keeps every member and distinguishes unreachable paths; an NPC cannot select itself as its nearest buddy.

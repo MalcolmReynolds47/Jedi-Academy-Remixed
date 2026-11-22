@@ -28,7 +28,9 @@ void RB_EndSurface( void ) {
 		return;
 	}
 
-	if ( skyboxportal )
+	// A monitor draws into its own framebuffer. The main view's earlier
+	// skybox pass cannot supply its background.
+	if ( skyboxportal && !backEnd.viewParms.portalMonitor )
 	{
 		// world
 		if(!(backEnd.refdef.rdflags & RDF_SKYBOXPORTAL))

@@ -19,7 +19,7 @@ static qboolean NPC_TacticalFirearm(int weapon)
 	}
 }
 
-static qboolean NPC_SafeTacticalStep(const vec3_t direction)
+static qboolean NPC_SafeTacticalStep(const vec3_t direction, trace_t *obstacle)
 {
 	const gentity_t *npc = NPCS.NPC;
 	vec3_t mins, end, ground, sample;
@@ -27,9 +27,9 @@ static qboolean NPC_SafeTacticalStep(const vec3_t direction)
 	VectorCopy(npc->r.mins, mins);
 	mins[2] += 18.0f; // Native step height.
 	VectorMA(npc->r.currentOrigin, 64.0f, direction, end);
-	trap->Trace(&trace, npc->r.currentOrigin, mins, npc->r.maxs, end,
+	trap->Trace(obstacle, npc->r.currentOrigin, mins, npc->r.maxs, end,
 	            npc->s.number, npc->clipmask, qfalse, 0, 0);
-	if (trace.startsolid || trace.allsolid || trace.fraction < 1.0f)
+	if (obstacle->startsolid || obstacle->allsolid || obstacle->fraction < 1.0f)
 		return qfalse;
 
 	for (int distance = 32; distance <= 64; distance += 32)
@@ -45,7 +45,49 @@ static qboolean NPC_SafeTacticalStep(const vec3_t direction)
 	return qtrue;
 }
 
-static qboolean NPC_TacticalMove(const vec3_t heading)
+static void NPC_TacticalWalk(vec3_t direction)
+{
+	NPCS.NPCInfo->combatMove = qtrue;
+	NPCS.client->ps.speed = NPCS.NPCInfo->stats.runSpeed;
+	G_UcmdMoveForDir(NPCS.NPC, &NPCS.ucmd, direction);
+}
+
+static qboolean NPC_FollowAlongWall(const vec3_t heading, const trace_t *wall)
+{
+	if (wall->fraction == 1.0f || wall->startsolid || wall->allsolid ||
+	    fabsf(wall->plane.normal[2]) >= 0.7f || wall->entityNum == ENTITYNUM_NONE ||
+	    (wall->entityNum != ENTITYNUM_WORLD && g_entities[wall->entityNum].client))
+		return qfalse;
+
+	vec3_t tangent = {-wall->plane.normal[1],wall->plane.normal[0],0};
+	VectorNormalize(tangent);
+	gNPC_t *info = NPCS.NPCInfo;
+	int side = info->sandboxFollowSide;
+	if (!side || level.time >= info->sandboxFollowSideUntil)
+	{
+		const float bias = DotProduct(tangent, heading);
+		side = fabsf(bias) > .1f ? (bias > 0 ? 1 : -1) : (NPCS.NPC->s.number & 1 ? 1 : -1);
+	}
+	VectorScale(tangent, side, tangent);
+	trace_t step;
+	if (!NPC_SafeTacticalStep(tangent, &step))
+	{
+		// An uneven face can need clearance before the follower can pass.
+		tangent[0] += .4f * wall->plane.normal[0];
+		tangent[1] += .4f * wall->plane.normal[1];
+		VectorNormalize(tangent);
+		if (!NPC_SafeTacticalStep(tangent, &step))
+			return qfalse;
+	}
+	// Adjacent props can form one wall. Keep the same side through the
+	// seams and short clear steps, even when the owner is behind the NPC.
+	info->sandboxFollowSide = side;
+	info->sandboxFollowSideUntil = level.time + 1000;
+	NPC_TacticalWalk(tangent);
+	return qtrue;
+}
+
+static qboolean NPC_TacticalMove(const vec3_t heading, qboolean following)
 {
 	// Keep the same preferred side when repeatedly negotiating an obstruction.
 	const float side = NPCS.NPC->s.number & 1 ? 1.0f : -1.0f;
@@ -54,13 +96,14 @@ static qboolean NPC_TacticalMove(const vec3_t heading)
 	{
 		vec3_t direction;
 		RotatePointAroundVector(direction, (vec3_t){0, 0, 1}, heading, turns[i]);
-		if (!NPC_SafeTacticalStep(direction))
-			continue;
-
-		NPCS.NPCInfo->combatMove = qtrue;
-		NPCS.client->ps.speed = NPCS.NPCInfo->stats.runSpeed;
-		G_UcmdMoveForDir(NPCS.NPC, &NPCS.ucmd, direction);
-		return qtrue;
+		trace_t step;
+		if (NPC_SafeTacticalStep(direction, &step))
+		{
+			NPC_TacticalWalk(direction);
+			return qtrue;
+		}
+		if (!i && following && NPC_FollowAlongWall(heading, &step))
+			return qtrue;
 	}
 	return qfalse;
 }
@@ -72,7 +115,7 @@ static void NPC_FollowSandboxLeader(gentity_t *leader)
 	heading[2] = 0;
 	if (VectorNormalize(heading) <= 112.0f)
 		return;
-	if (NPC_TacticalMove(heading) || !trap->Nav_GetNumNodes())
+	if (NPC_TacticalMove(heading, qtrue) || !trap->Nav_GetNumNodes())
 	{
 		NPC_FaceEntity(leader, qfalse);
 		return;
@@ -130,7 +173,7 @@ static qboolean NPC_SandboxTactics(void)
 	{
 		G_ClearEnemy(npc);
 		if ((info->scriptFlags & SCF_LOOK_FOR_ENEMIES) && !(info->scriptFlags & SCF_DONT_FIRE))
-			NPC_FindEnemy(qfalse);
+			NPC_FindEnemy((info->scriptFlags & SCF_IGNORE_ALERTS) == 0);
 	}
 
 	if (!npc->enemy)
@@ -186,6 +229,6 @@ static qboolean NPC_SandboxTactics(void)
 	else if (clearShot && distance <= 448.0f)
 		return qtrue;
 	if (distance > 1.0f)
-		NPC_TacticalMove(heading);
+		NPC_TacticalMove(heading, qfalse);
 	return qtrue;
 }

@@ -1145,16 +1145,31 @@ def check_sentinel_interaction(sock, probe, section, save):
     # The native positioning command applies a forward impulse. Start toward
     # the west side of the pad and aim along its wider axis to retain contact.
     pad = (x + cosine * 3654 - sine * -880, y + sine * 3654 + cosine * -880, z + 1387)
-    time.sleep(1.1)
-    position_wire_client(sock, probe, pad, round(root['yaw']), 32)
-    for _ in range(32):
-        sock.send(probe.packet('move 0 0 0'))
+
+    def touch(point, angle, touched):
+        # Unlike a graphical client, the probe sends movement only on demand.
+        # A stale first command can apply the teleport impulse for 200 ms in
+        # one step, skipping the pad or pickup before testing contact.
         frame = await_state(sock, probe, 'snapshot')
-        if sentinel_children(frame)[0][lift][2] == 3:
-            break
-    else:
-        raise AssertionError(f'Sentinel pad did not trigger from {frame[19]}, target {pad}')
-    rising = frame
+        sync_deadline = time.monotonic() + 4
+        while time.monotonic() < sync_deadline:
+            sent = int(frame[1])
+            sock.send(probe.packet('move 0 0 0'))
+            frame = await_state(sock, probe, 'snapshot', lambda f: int(f[29]) >= sent)
+            if int(frame[1]) - int(frame[29]) <= 100:
+                break
+        else:
+            raise AssertionError('Could not synchronize Sentinel test input before teleport')
+        frame = position_wire_client(sock, probe, point, angle, 32)
+        deadline = int(frame[1]) + 2000
+        while not touched(frame) and int(frame[1]) < deadline:
+            previous = int(frame[29])
+            sock.send(probe.packet('move 0 0 0 25'))
+            frame = await_state(sock, probe, 'snapshot', lambda f: int(f[29]) > previous)
+        assert touched(frame), f'No Sentinel contact from {frame[19]}, target {point}'
+        return frame
+
+    rising = touch(pad, round(root['yaw']), lambda f: sentinel_children(f)[0][lift][2] == 3)
     # The pad test establishes activation. Clear the actor from the lift's
     # path before checking an unobstructed cycle and its saved timers.
     position_wire_client(sock, probe, (0, 0, 32), 0, 64)
@@ -1169,10 +1184,8 @@ def check_sentinel_interaction(sock, probe, section, save):
     rifle_xy = (x + cosine * 4224 - sine * 832, y + sine * 4224 + cosine * 832)
     rifle = next(entity for entity, row in section['pickups'].items() if math.dist(row[3][:2], rifle_xy) < 1)
     rx, ry, rz = section['pickups'][rifle][3]
-    sock.send(probe.packet('setviewpos %d %d %d 0' % tuple(map(round, (rx, ry, rz + 24)))))
-    sock.send(probe.packet('move 0 0 0'))
-    collected = await_state(sock, probe, 'snapshot', lambda frame:
-                            sentinel_children(frame)[1].get(rifle, (0, 0, 0))[2] & (1 << 23))
+    collected = touch((rx, ry, rz + 24), 0, lambda f:
+                      sentinel_children(f)[1].get(rifle, (0, 0, 0))[2] & (1 << 23))
     rcon, directory = save
     from mp_world_smoke import decode
     assert 'Saved sentinel_active revision 1: 1 objects' in rcon('jar_world_save sentinel_active')
@@ -1440,7 +1453,7 @@ class LocalPureArchives:
 def check_network_clients(port, executable, run, protocol, light_ids=None, music_id=None, pure_game_data=None,
                           section_ids=None, *, map_name='mp/ffa3', physgun_id=None, section_save=None,
                           movement_markers=False, directional_trigger=False, searchlight=False, portals=False, angular=False,
-                          console_npcs=False, space_volume=False):
+                          console_npcs=False, space_volume=False, crowd_session=False):
     assert Path(executable).is_file(), f'Missing native wire probe: {executable}'
     clients = []
     lights = {}
@@ -1482,6 +1495,9 @@ def check_network_clients(port, executable, run, protocol, light_ids=None, music
             assert following == '0'
             state.update(snapshot_time=int(server_time), snapshot_entities=int(entities), health=int(health))
             clients.append((name, sock, probe, state))
+            if i == 0 and crowd_session:
+                from mp_crowd_session import load_crowd
+                crowd = load_crowd(clients[0], section_save)
             if i == 0 and section_ids:
                 section = spawn_sections(clients[0], section_ids)
             if i == 0 and music_id:
@@ -1493,6 +1509,9 @@ def check_network_clients(port, executable, run, protocol, light_ids=None, music
                 lights[kind] = spawn_light(clients[0], kind, ident)
 
         assert clients[0][3]['slot'] != clients[1][3]['slot']
+        if crowd_session:
+            from mp_crowd_session import check_crowd
+            check_crowd(clients, section_save, crowd, run)
         if movement_markers:
             result = check_movement_markers(clients)
             (run / 'movement-markers.json').write_text(json.dumps(result, indent=2)+'\n', encoding='utf-8')

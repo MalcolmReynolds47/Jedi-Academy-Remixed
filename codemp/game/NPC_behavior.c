@@ -572,16 +572,10 @@ void NPC_BSFollowLeader (void)
 			if ( !(NPCS.NPCInfo->scriptFlags&SCF_IGNORE_ALERTS) )
 			{
 				int eventID = NPC_CheckAlertEvents( qtrue, qtrue, -1, qfalse, AEL_MINOR );
-				if ( level.alertEvents[eventID].level >= AEL_SUSPICIOUS && (NPCS.NPCInfo->scriptFlags&SCF_LOOK_FOR_ENEMIES) )
+				if ( eventID >= 0 && level.alertEvents[eventID].level >= AEL_SUSPICIOUS && (NPCS.NPCInfo->scriptFlags&SCF_LOOK_FOR_ENEMIES) )
 				{
 					NPCS.NPCInfo->lastAlertID = level.alertEvents[eventID].ID;
-					if ( !level.alertEvents[eventID].owner ||
-						!level.alertEvents[eventID].owner->client ||
-						level.alertEvents[eventID].owner->health <= 0 ||
-						level.alertEvents[eventID].owner->client->playerTeam != NPCS.NPC->client->enemyTeam )
-					{//not an enemy
-					}
-					else
+					if ( NPC_IsHostileAlertOwner(level.alertEvents[eventID].owner) )
 					{
 						//FIXME: what if can't actually see enemy, don't know where he is... should we make them just become very alert and start looking for him?  Or just let combat AI handle this... (act as if you lost him)
 						G_SetEnemy( NPCS.NPC, level.alertEvents[eventID].owner );

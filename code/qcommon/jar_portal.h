@@ -30,9 +30,12 @@ inline bool Basis(const float a[3][3]){
  const float cross[3]={a[0][1]*a[1][2]-a[0][2]*a[1][1],a[0][2]*a[1][0]-a[0][0]*a[1][2],a[0][0]*a[1][1]-a[0][1]*a[1][0]};
  return cross[0]*a[2][0]+cross[1]*a[2][1]+cross[2]*a[2][2]>.998f;
 }
-inline bool Valid(const View&v){
- Settings s;s.width=v.width;s.height=v.height;if(!Valid(s)||v.mirror<0||v.mirror>1||!Basis(v.axis)||!Basis(v.cameraAxis))return false;
+inline bool ValidPose(const View&v){
+ if(v.mirror<0||v.mirror>1||!Basis(v.axis)||!Basis(v.cameraAxis))return false;
  for(int i=0;i<3;++i)if(!std::isfinite(v.origin[i])||!std::isfinite(v.cameraOrigin[i])||std::fabs(v.origin[i])>65535||std::fabs(v.cameraOrigin[i])>65535)return false;return true;
+}
+inline bool Valid(const View&v){
+ Settings s;s.width=v.width;s.height=v.height;return Valid(s)&&ValidPose(v);
 }
 // Clockwise as seen from behind, matching PlaneFromPoints and native poly normals.
 inline void Corners(const View&v,float p[4][3]){

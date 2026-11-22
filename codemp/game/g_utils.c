@@ -800,6 +800,7 @@ void G_FreeEntity( gentity_t *ed ) {
 	if ( ed->client || ed->NPC ) {
 		AI_ForgetGroupEntity( ed );
 	}
+	G_ForgetAlertOwner(ed);
 	JAR_MP_Forget(ed->s.number);
 
 	//rww - this may seem a bit hackish, but unfortunately we have no access

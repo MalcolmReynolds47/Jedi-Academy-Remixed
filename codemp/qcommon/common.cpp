@@ -1514,7 +1514,10 @@ void Com_Frame( void ) {
 		//
 		// main event loop
 		//
-		if ( com_speeds->integer ) {
+		// The command buffer can toggle com_speeds between timestamps. Only
+		// report frames measured from the beginning.
+		const bool measureFrame = com_speeds->integer != 0;
+		if ( measureFrame ) {
 			timeBeforeFirstEvents = Sys_Milliseconds ();
 		}
 
@@ -1571,7 +1574,7 @@ void Com_Frame( void ) {
 		//
 		// server side
 		//
-		if ( com_speeds->integer ) {
+		if ( measureFrame ) {
 			timeBeforeServer = Sys_Milliseconds ();
 		}
 
@@ -1601,7 +1604,7 @@ void Com_Frame( void ) {
 			// run event loop a second time to get server to client packets
 			// without a frame of latency
 			//
-			if ( com_speeds->integer ) {
+			if ( measureFrame ) {
 				timeBeforeEvents = Sys_Milliseconds ();
 			}
 			Com_EventLoop();
@@ -1611,19 +1614,19 @@ void Com_Frame( void ) {
 			//
 			// client side
 			//
-			if ( com_speeds->integer ) {
+			if ( measureFrame ) {
 				timeBeforeClient = Sys_Milliseconds ();
 			}
 
 			CL_Frame( msec );
 
-			if ( com_speeds->integer ) {
+			if ( measureFrame ) {
 				timeAfter = Sys_Milliseconds ();
 			}
 		}
 		else
 		{
-			if ( com_speeds->integer )
+			if ( measureFrame )
 			{
 				timeBeforeEvents = timeBeforeClient = timeAfter = Sys_Milliseconds ();
 			}
@@ -1632,7 +1635,7 @@ void Com_Frame( void ) {
 		//
 		// report timing information
 		//
-		if ( com_speeds->integer ) {
+		if ( measureFrame && com_speeds->integer ) {
 			int			all, sv, ev, cl;
 
 			all = timeAfter - timeBeforeServer;
