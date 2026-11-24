@@ -1,0 +1,13 @@
+Jedi Academy Remixed for 64-bit Windows
+
+1. Install Jedi Academy and close the game.
+2. Use Extract All on the ZIP. Choose a folder outside your game.
+3. Open Install JA-R.cmd in the extracted folder. Press Enter to confirm the
+   detected Steam installation, or paste your Jedi Academy game folder.
+4. When setup finishes, open GameData and run jar_mp.x86_64.exe for multiplayer
+   or jar_sp.x86_64.exe for single-player.
+
+The ZIP includes the game launchers, mod files and tools used to prepare media
+from your own game. You can read Install JA-R.cmd and install.py before running
+them. Setup runs offline and saves replaced files under GameData/JA-R Backups.
+You can remove the extracted download after setup finishes.

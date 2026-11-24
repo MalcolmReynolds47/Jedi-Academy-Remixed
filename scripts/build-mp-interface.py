@@ -1,9 +1,38 @@
 """Package the existing SP font/UI bytes for MP, without other SP asset families."""
 import argparse
+import copy
 import hashlib
 import json
+import struct
 from pathlib import Path
 import zipfile
+from jar_zip_members import append_member
+
+
+def copy_deflated(src, dst, name):
+    """Reuse a verified, locally generated compressed member in CPython's ZIP writer."""
+    info = copy.copy(src.getinfo(name))
+    if info.compress_type != zipfile.ZIP_DEFLATED or info.flag_bits or info.file_size >= 2**31:
+        # Accept other source ZIP layouts through the normal stdlib writer.
+        dst.writestr(zipfile.ZipInfo(name, (2026, 10, 12, 0, 0, 0)), src.read(name),
+                     compress_type=zipfile.ZIP_DEFLATED, compresslevel=6)
+        return
+    src.fp.seek(info.header_offset)
+    local = src.fp.read(30)
+    if local[:4] != b'PK\x03\x04' or len(local) != 30:
+        raise zipfile.BadZipFile(name)
+    name_size, extra_size = struct.unpack_from('<HH', local, 26)
+    src.fp.seek(name_size + extra_size, 1)
+    info.date_time = (2026, 10, 12, 0, 0, 0)
+    def blocks():
+        left = info.compress_size
+        while left:
+            block = src.fp.read(min(left, 1024 * 1024))
+            if not block:
+                raise zipfile.BadZipFile(name)
+            yield block
+            left -= len(block)
+    append_member(dst, info, blocks())
 
 p = argparse.ArgumentParser()
 p.add_argument('--source', type=Path, required=True)
@@ -18,7 +47,7 @@ with zipfile.ZipFile(a.source) as src:
     with zipfile.ZipFile(a.output, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as dst:
         for n in names:
             data = src.read(n)
-            dst.writestr(zipfile.ZipInfo(n, (2026, 10, 12, 0, 0, 0)), data, compress_type=zipfile.ZIP_DEFLATED, compresslevel=6)
+            copy_deflated(src, dst, n)
             manifest['files'].append({'path': n, 'sha256': hashlib.sha256(data).hexdigest()})
         dst.writestr(zipfile.ZipInfo('jar/interface-manifest.json', (2026, 10, 12, 0, 0, 0)), json.dumps(manifest, indent=2))
     with zipfile.ZipFile(a.output) as dst:
@@ -26,7 +55,6 @@ with zipfile.ZipFile(a.source) as src:
         for row in manifest['files']:
             data = dst.read(row['path'])
             assert hashlib.sha256(data).hexdigest() == row['sha256']
-            assert data == src.read(row['path']), row['path']
         for style in ('sans', 'serif'):
             for suffix in ('fontdat', 'tga'):
                 assert len(dst.read(f'jar/font/{style}/fonts/arialnb.{suffix}')) > 0

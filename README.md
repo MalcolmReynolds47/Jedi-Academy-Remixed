@@ -2,7 +2,7 @@
 
 Jedi Academy Remixed adds a multiplayer sandbox to *Star Wars Jedi Knight: Jedi Academy*. Build inside a running match and populate it with NPCs, props, and vehicles. JA:R is built on [OpenJK](https://github.com/JACoders/OpenJK).
 
-**[Download the Windows installer](https://github.com/MalcolmReynolds47/Jedi-Academy-Remixed/releases/latest/download/JA-R-Windows-x64-Setup.exe)** for 64-bit Windows. Install Jedi Academy first and close the game. Run setup, check the detected game folder, and click **Install**. When it finishes, click **Play multiplayer**. For single-player, open the game folder and run `jar_sp.x86_64.exe`.
+**[Download JA:R for Windows (ZIP)](https://github.com/MalcolmReynolds47/Jedi-Academy-Remixed/releases/latest/download/JA-R-Windows-x64.zip)**. Close Jedi Academy, extract the entire ZIP outside the game folder, and open **Install JA-R.cmd**. Press Enter to confirm the detected Steam folder or paste your game folder. When setup finishes, run `jar_mp.x86_64.exe` in GameData for multiplayer or `jar_sp.x86_64.exe` for single-player.
 
 - Open the spawn menu with **Q** to place characters, vehicles, and props.
 - Use the **Toolgun** to weld props together, hang them from ropes, or add hinges and thrusters to make moving parts.

@@ -6,16 +6,20 @@ Requires Pillow. Generated filenames and shader names never override stock names
 """
 from __future__ import annotations
 import argparse
+from concurrent.futures import ThreadPoolExecutor
+from collections import deque
 import hashlib
 import io
 import json
 import math
+import os
 from pathlib import Path
 import re
 import shutil
 import struct
 import zipfile
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from jar_zip_members import append_member, deflate_member
 
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE_EXT = ('.tga', '.jpg', '.png')
@@ -138,17 +142,20 @@ def build(game_data: Path, output: Path):
     counts = {}
     used = set()
     with zipfile.ZipFile(temporary, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as pack:
-        def put(name, data):
-            name = name.lower()
+        def reserve(name):
             if name in used:
                 raise ValueError(f'Duplicate generated asset: {name}')
             if name.startswith('/') or '..' in name or '\\' in name:
                 raise ValueError(f'Unsafe generated asset: {name}')
+            used.add(name)
+
+        def put(name, data):
+            name = name.lower()
+            reserve(name)
             # Classic's TGA loader rejects palette/RLE top-origin variants.
             # Normalize imported textures too, keeping the decoded pixels intact.
             if name.endswith('.tga') and (data[2] not in (2,3,10) or data[16] not in (24,32) or (data[2]==10 and data[17]&0x30)):
                 data=image_bytes(Image.open(io.BytesIO(data)).convert('RGBA'),'.tga')
-            used.add(name)
             # Stable archive timestamp makes regeneration deterministic.
             info = zipfile.ZipInfo(name, (2026, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
@@ -172,16 +179,33 @@ def build(game_data: Path, output: Path):
 
         # Every retail UI image in these namespaces, including animMap frames.
         ui_images = [n for n in base.entries if n.startswith(UI_ROOTS) and n.endswith(IMAGE_EXT)]
-        for index, name in enumerate(ui_images):
-            if name.startswith('gfx/2d/charsgrid'):
-                continue  # font selector owns these
-            image = Image.open(io.BytesIO(base.read(name))).convert('RGBA')
+        def render_ui(name):
+            raw = base.read(name)
+            image = Image.open(io.BytesIO(raw)).convert('RGBA')
+            outputs = []
             for factor, style in ((2, 'up2'), (4, 'up4')):
                 target = f'jar/ui/{style}/{name}'
-                put(target, image_bytes(upscale(image, factor, factor == 4), Path(name).suffix))
-                record(base, name, target)
-            if index % 100 == 0:
-                print(f'UI artwork: {index}/{len(ui_images)}', flush=True)
+                data = image_bytes(upscale(image, factor, factor == 4), Path(name).suffix)
+                outputs.append(deflate_member(target, data, (2026, 1, 1, 0, 0, 0)))
+            return name, hashlib.sha256(raw).hexdigest(), outputs
+
+        # Pillow releases the GIL during resizing. Limit live bitmaps and write in retail order.
+        workers = min(4, os.cpu_count() or 1)
+        names = [name for name in ui_images if not name.startswith('gfx/2d/charsgrid')]
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            pending = deque(pool.submit(render_ui, name) for name in names[:workers])
+            for index in range(len(names)):
+                name, checksum, outputs = pending.popleft().result()
+                if index + workers < len(names):
+                    pending.append(pool.submit(render_ui, names[index + workers]))
+                archive, info = base.entries[name]
+                for member, compressed in outputs:
+                    reserve(member.filename)
+                    append_member(pack, member, (compressed,))
+                    provenance.append(dict(sourceArchive=Path(archive.filename).name, sourceEntry=info.filename,
+                                           destination=member.filename, sourceSHA256=checksum))
+                if index % 100 == 0:
+                    print(f'UI artwork: {index}/{len(names)}', flush=True)
         counts['retailUIImages'] = len(ui_images)
 
         # Real high-resolution vector glyphs, retaining retail spacing and bounds.

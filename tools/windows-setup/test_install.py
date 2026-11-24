@@ -1,5 +1,6 @@
 """Exercise replacement, rollback and repair without an installed game."""
 from pathlib import Path
+import json
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
@@ -25,6 +26,16 @@ class DeploymentTest(unittest.TestCase):
 
     def deploy(self):
         install.deploy(self.payload, self.game, None)
+
+    def test_media_reuse_checks_recipe_file_list_and_installed_bytes(self):
+        receipt = self.game / install.RECEIPT
+        receipt.parent.mkdir()
+        receipt.write_text(json.dumps({"recipe": "current", "files": {"a": install.digest(self.game / "a")}}))
+        self.assertTrue(install.reuse_media(self.game, "current", ["a"]))
+        self.assertFalse(install.reuse_media(self.game, "changed", ["a"]))
+        self.assertFalse(install.reuse_media(self.game, "current", ["a", "b"]))
+        (self.game / "a").write_bytes(b"damaged")
+        self.assertFalse(install.reuse_media(self.game, "current", ["a"]))
 
     def test_upgrade_and_reinstall(self):
         self.deploy()

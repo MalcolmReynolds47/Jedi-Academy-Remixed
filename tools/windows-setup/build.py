@@ -21,7 +21,8 @@ SP, MP = "JediAcademyRemixed", "JediAcademyRemixedMP"
 CRT = ("concrt140.dll", "msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll",
        "msvcp140_atomic_wait.dll", "msvcp140_codecvt_ids.dll", "vcruntime140.dll", "vcruntime140_1.dll")
 BUILDERS = ("build-appearance", "build-mp-interface", "build-mp-effects", "build-mp-legacy-droids",
-            "build-yt1300", "build-mp-player-models", "build-legacy-npcs", "build-sandbox-icons", "jar_catalog_assets")
+            "build-yt1300", "build-mp-player-models", "build-legacy-npcs", "build-sandbox-icons", "jar_catalog_assets",
+            "jar_zip_members")
 
 
 def dependency(directory, name):
@@ -106,6 +107,14 @@ def main():
     scratch.mkdir(parents=True, exist_ok=True)
     downloads = ROOT / "build/downloads"
     downloads.mkdir(exist_ok=True)
+    if args.output.suffix.lower() == ".zip":
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        make_payload(args.native, downloads, args.output)
+        with ZipFile(args.output, "a", ZIP_DEFLATED) as archive:
+            for name in ("Install JA-R.cmd", "START-HERE.txt"):
+                archive.writestr(name, (HERE / name).read_text(encoding="utf-8").replace("\n", "\r\n").encode())
+        print(sha256(args.output.read_bytes()).hexdigest(), args.output.name)
+        return
     payload = scratch / "payload.zip"
     make_payload(args.native, downloads, payload)
     version = release_version()
